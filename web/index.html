@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>HRVSTMN</title>
+<script src="coi-serviceworker.js"></script>
+<style>
+  :root {
+    --base00: #000000; --base01: #404040; --base02: #606060; --base03: #808080;
+    --base04: #c0c0c0; --base05: #d0d0d0; --base07: #ffffff;
+    --base08: #ff0000; --base09: #ff9900; --base0A: #ff0099; --base0B: #33ff00;
+    --base0C: #00ffff; --base0D: #0066ff; --base0E: #cc00ff;
+  }
+  html, body { margin: 0; height: 100%; background: var(--base00); color: var(--base05);
+    font-family: ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace; overflow: hidden;
+    -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; image-rendering: pixelated; }
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 16px; background: var(--base00); padding: 16px; text-align: center; }
+  #overlay[hidden] { display: none; }
+  #logo { margin: 0; color: var(--base0A); font-size: clamp(6px, 1.6vw, 15px); line-height: 1.15; }
+  #logo span:nth-child(2) { color: var(--base0E); } #logo span:nth-child(3) { color: var(--base0D); }
+  #logo span:nth-child(4) { color: var(--base0C); } #logo span:nth-child(5) { color: var(--base0B); }
+  #status { color: var(--base04); }
+  #status .bar { color: var(--base0B); }
+  #err { max-width: 900px; max-height: 50vh; overflow: auto; text-align: left; white-space: pre-wrap;
+    color: var(--base08); border: 1px solid var(--base01); padding: 12px; font-size: 12px; }
+  #err[hidden] { display: none; }
+  button { font: inherit; color: var(--base05); background: var(--base01); border: 1px solid var(--base02);
+    border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+  button:active { background: var(--base02); }
+  #pad { display: none; justify-content: space-between; align-items: center; padding: 8px 16px 16px; gap: 12px; }
+  body.touch #pad { display: flex; }
+  .dpad { display: grid; grid-template-columns: repeat(3, 52px); grid-template-rows: repeat(3, 52px); gap: 4px; }
+  .dpad button { padding: 0; font-size: 20px; }
+  .dpad .u { grid-column: 2; grid-row: 1; } .dpad .l { grid-column: 1; grid-row: 2; }
+  .dpad .r { grid-column: 3; grid-row: 2; } .dpad .d { grid-column: 2; grid-row: 3; }
+  .acts { display: grid; grid-template-columns: repeat(3, 60px); gap: 6px; }
+  .acts button { padding: 10px 0; font-size: 13px; }
+  .acts .use { color: var(--base0B); } .acts .act { color: var(--base0A); }
+  #hint { color: var(--base02); font-size: 12px; text-align: center; padding: 4px; }
+  body.touch #hint { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"><canvas id="term" aria-label="HRVSTMN game screen"></canvas></div>
+  <div id="hint">arrows/WASD move &middot; space use tool &middot; x act &middot; tab tools &middot; i rucksack &middot; ? help &middot; saves in this browser</div>
+  <div id="pad">
+    <div class="dpad">
+      <button class="u" data-key="up" aria-label="up">&#9650;</button>
+      <button class="l" data-key="left" aria-label="left">&#9664;</button>
+      <button class="r" data-key="right" aria-label="right">&#9654;</button>
+      <button class="d" data-key="down" aria-label="down">&#9660;</button>
+    </div>
+    <div class="acts">
+      <button class="use" data-key="space">USE</button>
+      <button class="act" data-key="x">ACT</button>
+      <button data-key="tab">TOOL</button>
+      <button data-key="i">BAG</button>
+      <button data-key="esc">MENU</button>
+      <button data-key="?">HELP</button>
+    </div>
+  </div>
+</div>
+<div id="overlay">
+<pre id="logo"><span> _   _ ____  __     __ ____ _____ __  __ _   _ </span>
+<span>| | | |  _ \ \ \   / // ___|_   _|  \/  | \ | |</span>
+<span>| |_| | |_) | \ \ / / \___ \ | | | |\/| |  \| |</span>
+<span>|  _  |  _ &lt;   \ V /   ___) || | | |  | | |\  |</span>
+<span>|_| |_|_| \_\   \_/   |____/ |_| |_|  |_|_| \_|</span></pre>
+  <div id="status">Starting...</div>
+  <pre id="err" hidden></pre>
+  <button id="again" hidden>Play again</button>
+</div>
+<script src="main.js"></script>
+</body>
+</html>
