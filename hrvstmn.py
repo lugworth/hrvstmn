@@ -699,6 +699,7 @@ def build_mountain():
             if m.tile(x, y) == 'grass' and not m.near(x, y, ('path', 'water', 'sign', 'cave')) \
                     and rng.random() < 0.09:
                 m.set(x, y, 'tree')
+    building(m, 37, 2, 7, 5, 'GOTZ', '09', 'carpenter')
     return m
 
 
@@ -882,6 +883,109 @@ def build_interior(bid, exit_to):
     return m, entry, spots
 
 
+# ---- carpentry & cooking ----------------------------------------------------
+TILES.update({
+    'kitchen': ('&', '09', '01', False),
+    'shelf': ('H', '09', '01', False),
+    'bath': ('U', '0C', '01', False),
+})
+HOURS['carpenter'] = (10, 16, {2})
+BUILDINGS['carpenter'] = "Gotz's Workshop"
+NPCS['Gotz'] = npc('G', '09', 'carpenter', loves=['Curry Rice'],
+                   likes=['Stew', 'Grilled Fish', 'Wild Grape', 'Hot Milk'], hates=['Toy Flower'],
+                   lines=[["I'm Gotz. Carpenter. Bring lumber and gold and I'll build what you need.",
+                           "A good house starts with good lumber. Chop branches and stumps."],
+                          ["That farmhouse of yours could use some work. Just saying."],
+                          ["You're a hard worker. I respect that."]])
+
+# name: (gold, lumber, prerequisite, description)
+EXPANSIONS = {
+    'Kitchen':        (2000, 50, None, 'A kitchen counter for cooking.'),
+    'Extension':      (5000, 150, 'Kitchen', 'A second room with a bookshelf.'),
+    'Bathroom':       (3000, 80, 'Extension', 'A bath that restores stamina once a day.'),
+    'Big Bed':        (1500, 40, None, 'A sturdier bed: +20 max stamina.'),
+    'Coop Expansion': (2500, 100, None, 'Room for 16 chickens instead of 8.'),
+}
+BUILD_DAYS = 3
+UTENSILS = {'Knife': 600, 'Frying Pan': 800, 'Pot': 800, 'Mixer': 1000}
+FRUITS = {'Strawberry', 'Pineapple', 'Wild Grape', 'Tomato'}
+
+# dish: (ingredients [(item or 'any:<category>', qty)], utensil, stamina, sell price)
+RECIPES = {
+    'Salad':           ([('any:crop', 2)], 'Knife', 20, 150),
+    'Pickled Turnip':  ([('Turnip', 2)], None, 15, 160),
+    'Fried Potatoes':  ([('Potato', 2)], 'Frying Pan', 25, 200),
+    'Popcorn':         ([('Corn', 1)], 'Frying Pan', 20, 160),
+    'Strawberry Jam':  ([('Strawberry', 3)], 'Pot', 15, 150),
+    'Boiled Egg':      ([('Egg', 1)], 'Pot', 15, 80),
+    'Omelet':          ([('Egg', 1), ('Milk', 1)], 'Frying Pan', 35, 200),
+    'Hot Milk':        ([('Milk', 1)], 'Pot', 25, 120),
+    'Herb Tea':        ([('Medicinal Herb', 2)], 'Pot', 30, 60),
+    'Stew':            ([('any:crop', 2), ('Milk', 1)], 'Pot', 45, 300),
+    'Grilled Fish':    ([('any:fish', 1)], 'Frying Pan', 30, 200),
+    'Sashimi':         ([('any:fish', 1)], 'Knife', 25, 180),
+    'Sushi':           ([('any:fish', 1), ('Rice', 1)], 'Knife', 40, 350),
+    'Mushroom Rice':   ([('Mushroom', 1), ('Rice', 1)], 'Pot', 40, 300),
+    'Curry Rice':      ([('Rice', 1), ('any:crop', 2), ('Red Grass', 1)], 'Pot', 60, 400),
+    'Pumpkin Pudding': ([('Pumpkin', 1), ('Egg', 1), ('Milk', 1)], 'Pot', 60, 600),
+    'Fruit Juice':     ([('any:fruit', 2)], 'Mixer', 20, 150),
+    'Vegetable Juice': ([('any:crop', 1)], 'Mixer', 15, 100),
+}
+for _dish, (_ing, _ut, _st, _sell) in RECIPES.items():
+    ITEMS[_dish] = (_sell, _st, 'dish')
+for _u in UTENSILS:
+    ITEMS[_u] = (0, 0, 'utensil')
+ITEMS['Rice'] = (0, 5, 'ingredient')
+
+for _n, _loves, _likes in [
+        ('Mary', ['Mushroom Rice'], ['Herb Tea']),
+        ('Karen', ['Sashimi'], ['Popcorn', 'Fried Potatoes']),
+        ('Popuri', ['Strawberry Jam'], ['Fruit Juice', 'Omelet']),
+        ('Elli', ['Pumpkin Pudding'], ['Herb Tea', 'Hot Milk']),
+        ('Ann', ['Curry Rice'], ['Stew', 'Fried Potatoes']),
+        ('Thomas', ['Sushi'], ['Stew']),
+        ('Gray', [], ['Grilled Fish', 'Curry Rice']),
+        ('Cliff', [], ['Stew', 'Omelet', 'Grilled Fish']),
+        ('Rick', [], ['Omelet', 'Boiled Egg']),
+        ('May', ['Fruit Juice'], ['Strawberry Jam', 'Hot Milk']),
+        ('Doug', [], ['Curry Rice', 'Sushi']),
+        ('Doctor', [], ['Herb Tea', 'Salad'])]:
+    NPCS[_n]['loves'] += _loves
+    NPCS[_n]['likes'] += _likes
+
+
+def build_house_upgraded(flags):
+    """The farmhouse, rebuilt from build_house() according to completed expansions."""
+    base = build_house()
+    if 'Extension' in flags:
+        m = Map('house', 23, base.h, 'floor', base.title, indoor=True)
+        for y in range(base.h):
+            for x in range(base.w):
+                m.t[y][x] = base.t[y][x]
+        m.deco, m.doors, m.warps, m.signs = base.deco, base.doors, base.warps, base.signs
+        m.border('iwall')
+        for y in range(1, m.h - 1):
+            m.set(14, y, 'floor' if y == 3 else 'iwall')
+        m.set(16, 1, 'shelf')
+        m.set(17, 1, 'shelf')
+        m.set(18, 3, 'table')
+        m.set(19, 3, 'table')
+        if 'Bathroom' in flags:
+            m.set(21, 1, 'bath')
+            m.set(21, 2, 'bath')
+    else:
+        m = base
+    if 'Kitchen' in flags:
+        m.set(9, 1, 'kitchen')
+        m.set(10, 1, 'kitchen')
+        m.deco[(9, 1)] = ('[', '09')
+        m.deco[(10, 1)] = ('&', '08')
+    if 'Big Bed' in flags:
+        m.set(3, 1, 'bed')
+        m.deco[(3, 1)] = (']', '0A')
+    return m
+
+
 DIRS = {'up': (0, -1), 'w': (0, -1), 'k': (0, -1),
         'down': (0, 1), 's': (0, 1), 'j': (0, 1),
         'left': (-1, 0), 'a': (-1, 0), 'h': (-1, 0),
@@ -971,6 +1075,7 @@ class Game:
                             self.hp[(x, y)] = 6
         self.spawn_forage()
         self.animals = []
+        self.init_carpentry()
         self.started = True
 
     @property
@@ -1020,7 +1125,7 @@ class Game:
     SAVE_FIELDS = ['name', 'farm', 'year', 'season', 'day', 'weather', 'tomorrow', 'gold',
                    'max_stamina', 'inv', 'tool', 'levels', 'water', 'upgrading', 'bin',
                    'chickens', 'fed', 'eggs', 'friend', 'married', 'shipped_total',
-                   'animals', 'fest_wins']
+                   'animals', 'fest_wins', 'house_flags', 'project']
 
     def save(self):
         d = {k: getattr(self, k) for k in self.SAVE_FIELDS}
@@ -1052,6 +1157,7 @@ class Game:
         self.hp = {unkey(s): v for s, v in d['hp'].items()}
         self.forage = {mp: {unkey(s): i for s, i in f.items()} for mp, f in d['forage'].items()}
         self.stamina = self.max_stamina
+        self.rebuild_house()
 
     # ---- main loop -------------------------------------------------------
     def run(self):
@@ -1527,6 +1633,8 @@ class Game:
             self.fest_calendar()
         elif tile in ('counter', 'bookcase'):
             self.interior_interact(tile, p)
+        elif tile in ('kitchen', 'bath', 'shelf'):
+            self.use_furniture(tile)
         elif tile == 'sign':
             text = m.signs.get(p, '')
             if text == 'farm':
@@ -1657,7 +1765,7 @@ class Game:
 
     def coop(self):
         while True:
-            info = [f"  Chickens: {self.chickens}/8   Fed today: {self.fed}",
+            info = [f"  Chickens: {self.chickens}/{self.coop_cap()}   Fed today: {self.fed}",
                     f"  Eggs waiting: {self.eggs}   Chicken Feed: {self.inv.get('Chicken Feed', 0)}"]
             sel = self.menu('Chicken Coop', ['Fill feed boxes', 'Collect eggs', 'Leave'], info=info)
             if sel == 0:
@@ -1961,7 +2069,11 @@ class Game:
         if bid == 'supermarket':
             return [('Buy seeds', self.buy_seeds),
                     ('Buy Bread (100G)', lambda: self.buy('Bread', 100)),
-                    ('Buy Blue Feather (1000G)', lambda: self.buy('Blue Feather', 1000, 1))]
+                    ('Buy Blue Feather (1000G)', lambda: self.buy('Blue Feather', 1000, 1)),
+                    ('Buy kitchen goods', self.buy_kitchen_goods)]
+        if bid == 'carpenter':
+            return [('Buy Lumber (50G)', lambda: self.buy('Lumber', 50)),
+                    ('Order a house expansion', self.order_expansion)]
         if bid == 'poultry':
             return [('Buy a chicken (1500G)', self.buy_chicken),
                     ('Buy Chicken Feed (10G)', lambda: self.buy('Chicken Feed', 10))]
@@ -2015,7 +2127,7 @@ class Game:
             self.buy(crops[sel] + ' Seeds', CROPS[crops[sel]][1])
 
     def buy_chicken(self):
-        if self.chickens >= 8:
+        if self.chickens >= self.coop_cap():
             self.say("Your coop is full!", 'Lillia')
         elif self.gold < 1500:
             self.say("A chicken is 1500G. Come back when you've saved up.", 'Lillia')
@@ -2504,6 +2616,7 @@ class Game:
                 self.water = CAN_CAP[self.levels[t]]
             report.append(f"Saibara finished your {LEVELS[self.levels[t]]} {t}!")
             self.upgrading = None
+        report += self.carpentry_day()
         if self.season != 3:
             m = self.maps['farm']
             objs = self.objs['farm']
@@ -2980,6 +3093,163 @@ class Game:
         self.say("Visit town to buy seeds and meet everyone. Talk to folks every day - and a gift "
                  "never hurts! You have 500G and two bags of Turnip seeds to start. Good luck!", t)
         self.say("Press ? at any time for help.", None)
+
+    # ---- carpentry & cooking ---------------------------------------------
+
+    def init_carpentry(self):
+        self.house_flags = []
+        self.project = None
+        self.bathed = False
+        self.rebuild_house()
+
+    def rebuild_house(self):
+        self.maps['house'] = build_house_upgraded(getattr(self, 'house_flags', []))
+
+    def coop_cap(self):
+        return 16 if 'Coop Expansion' in getattr(self, 'house_flags', []) else 8
+
+    def carpentry_day(self):
+        self.bathed = False
+        if not self.project or self.absday() < self.project[1]:
+            return []
+        name = self.project[0]
+        self.project = None
+        if name not in self.house_flags:
+            self.house_flags.append(name)
+        if name == 'Big Bed':
+            self.max_stamina += 20
+        self.rebuild_house()
+        return [f"Gotz finished building your {name}! {EXPANSIONS[name][3]}"]
+
+    def order_expansion(self):
+        if self.project:
+            left = max(1, self.project[1] - self.absday())
+            self.say(f"I'm still building your {self.project[0]}. {left} more day"
+                     f"{'s' if left > 1 else ''}.", 'Gotz')
+            return
+        names = list(EXPANSIONS)
+        opts = []
+        for n in names:
+            gold, lumber, req, _ = EXPANSIONS[n]
+            if n in self.house_flags:
+                opts.append(f"{n:15s} (built)")
+            else:
+                opts.append(f"{n:15s} {gold:5d}G + {lumber:3d} Lumber")
+
+        def info(s):
+            gold, lumber, req, desc = EXPANSIONS[names[s]]
+            lines = [f"  {desc}"]
+            if req and req not in self.house_flags:
+                lines.append(f"  Requires: {req}")
+            lines.append(f"  You have {self.gold}G and {self.inv.get('Lumber', 0)} Lumber")
+            return lines
+        sel = self.menu('House expansions', opts, info=info)
+        if sel is None:
+            return
+        n = names[sel]
+        gold, lumber, req, _ = EXPANSIONS[n]
+        if n in self.house_flags:
+            self.say("Already built that one. Solid work, if I say so myself.", 'Gotz')
+        elif req and req not in self.house_flags:
+            self.say(f"I need to build the {req} first.", 'Gotz')
+        elif self.gold < gold or self.inv.get('Lumber', 0) < lumber:
+            self.say(f"That'll be {gold}G and {lumber} Lumber. Come back when you have it.", 'Gotz')
+        elif self.confirm(f"Build the {n} for {gold}G + {lumber} Lumber?"):
+            self.gold -= gold
+            self.take('Lumber', lumber)
+            self.project = [n, self.absday() + BUILD_DAYS]
+            self.say(f"Right. I'll have your {n} done in {BUILD_DAYS} days.", 'Gotz')
+
+    def buy_kitchen_goods(self):
+        goods = list(UTENSILS) + ['Rice']
+        prices = dict(UTENSILS, Rice=100)
+        opts = [f"{g:11s} {prices[g]:5d}G" + ('  (owned)' if g in UTENSILS and g in self.inv else '')
+                for g in goods]
+        sel = self.menu(f"Kitchen goods   {self.gold}G", opts,
+                        info=["  Utensils unlock recipes. You need a Kitchen to cook."])
+        if sel is None:
+            return
+        g = goods[sel]
+        if g in UTENSILS and g in self.inv:
+            self.say(f"You already have a {g}.", None)
+        else:
+            self.buy(g, prices[g], 1 if g in UTENSILS else 99)
+
+    def use_furniture(self, tile):
+        if tile == 'kitchen':
+            self.cook()
+        elif tile == 'bath':
+            if self.bathed:
+                self.say("You already had a bath today.", None)
+            else:
+                self.bathed = True
+                self.stamina = min(self.max_stamina, self.stamina + 30)
+                self.say("Ahh... a hot bath. You feel refreshed. (+30 stamina)", None)
+        else:
+            self.show_lines('Recipe Book', [self.recipe_line(r) for r in RECIPES])
+
+    def recipe_line(self, dish):
+        ing, ut, _, _ = RECIPES[dish]
+        parts = [f"{q} any {t[4:]}" if t.startswith('any:') else f"{q} {t}" for t, q in ing]
+        return f"{dish:16s} {', '.join(parts)}" + (f"  [{ut}]" if ut else '')
+
+    def ingredient_plan(self, dish):
+        """Pick which rucksack items a recipe would use (cheapest first), or None."""
+        left = dict(self.inv)
+        plan = {}
+        for tok, q in sorted(RECIPES[dish][0], key=lambda iq: iq[0].startswith('any:')):
+            if tok.startswith('any:'):
+                kind = tok[4:]
+                pool = sorted((i for i in left if left[i] > 0 and (
+                    i in FRUITS if kind == 'fruit' else ITEMS.get(i, (0, 0, ''))[2] == kind)),
+                    key=lambda i: ITEMS[i][0])
+            else:
+                pool = [tok] if left.get(tok, 0) > 0 else []
+            for i in pool:
+                use = min(q, left[i])
+                left[i] -= use
+                plan[i] = plan.get(i, 0) + use
+                q -= use
+                if not q:
+                    break
+            if q:
+                return None
+        return plan
+
+    def cook(self):
+        while True:
+            dishes = list(RECIPES)
+            opts = []
+            for d in dishes:
+                ut = RECIPES[d][1]
+                ok = (not ut or ut in self.inv) and self.ingredient_plan(d) is not None
+                opts.append(f"{'*' if ok else ' '} {d}")
+
+            def info(s):
+                d = dishes[s]
+                _, ut, st, sell = RECIPES[d]
+                lines = ['  ' + self.recipe_line(d)[17:], f"  +{st} stamina, sells {sell}G"]
+                if ut and ut not in self.inv:
+                    lines.append(f"  Needs a {ut} (Supermarket)")
+                plan = self.ingredient_plan(d)
+                if plan:
+                    lines.append('  Uses: ' + ', '.join(f"{q} {i}" for i, q in plan.items()))
+                return lines
+            sel = self.menu('Kitchen   (* = can cook)', opts, info=info)
+            if sel is None:
+                return
+            d = dishes[sel]
+            ut = RECIPES[d][1]
+            plan = self.ingredient_plan(d)
+            if ut and ut not in self.inv:
+                self.say(f"You need a {ut} to make {d}.", None)
+            elif plan is None:
+                self.say(f"You don't have the ingredients for {d}.", None)
+            else:
+                for i, q in plan.items():
+                    self.take(i, q)
+                self.give(d)
+                self.msg(f"You cooked {d}!", '0A')
 
 
 def main():
