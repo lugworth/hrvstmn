@@ -271,6 +271,18 @@ ITEMS.update({
     'Bread': (0, 20, 'food'), 'Milk': (0, 15, 'food'), 'Bodigizer': (0, 100, 'food'),
 })
 
+# ---- barn animals: data ----
+ITEMS.update({
+    'Fodder': (0, 0, 'material'), 'Milker': (0, 0, 'tool'), 'Clippers': (0, 0, 'tool'),
+    'Brush': (0, 0, 'tool'), 'Small Milk': (100, 10, 'animal'), 'Medium Milk': (150, 15, 'animal'),
+    'Large Milk': (200, 20, 'animal'), 'Wool': (100, 0, 'animal'), 'Large Wool': (200, 0, 'animal'),
+})
+BARN_CAP = 8
+ANIMALS = {'cow': ('Cow', 5000), 'sheep': ('Sheep', 4000)}
+WOOL_DAYS = 7
+COW_NAMES = ['Bessie', 'Daisy', 'Clover', 'Buttercup', 'Moo', 'Mocha', 'Dotty', 'Penny']
+SHEEP_NAMES = ['Fluffy', 'Cotton', 'Woolly', 'Snowball', 'Puff', 'Lamby', 'Cloud', 'Tuft']
+
 TOOLS = ['Sickle', 'Hoe', 'Hammer', 'Axe', 'Watering Can', 'Fishing Rod']
 UPGRADABLE = ['Hoe', 'Hammer', 'Axe', 'Watering Can']
 LEVELS = ['Basic', 'Copper', 'Silver', 'Gold', 'Mystrile']
@@ -583,6 +595,9 @@ def build_farm():
         for x in range(27, 47):
             if rng.random() < 0.18:
                 m.set(x, y, 'tree')
+    m.rect(26, 1, 38, 6, 'grass')
+    building(m, 27, 1, 11, 5, 'BARN', '08', 'barn')
+    m.set(32, 6, 'path')
     return m
 
 
@@ -778,6 +793,7 @@ class Game:
                         if kind in ('stump', 'boulder'):
                             self.hp[(x, y)] = 6
         self.spawn_forage()
+        self.animals = []
         self.started = True
 
     @property
@@ -826,7 +842,8 @@ class Game:
     # ---- save / load -----------------------------------------------------
     SAVE_FIELDS = ['name', 'farm', 'year', 'season', 'day', 'weather', 'tomorrow', 'gold',
                    'max_stamina', 'inv', 'tool', 'levels', 'water', 'upgrading', 'bin',
-                   'chickens', 'fed', 'eggs', 'friend', 'married', 'shipped_total']
+                   'chickens', 'fed', 'eggs', 'friend', 'married', 'shipped_total',
+                   'animals']
 
     def save(self):
         d = {k: getattr(self, k) for k in self.SAVE_FIELDS}
@@ -1040,6 +1057,8 @@ class Game:
             self.warp('farm', 8, 6, (0, 1))
         elif door == 'coop':
             self.coop()
+        elif door == 'barn':
+            self.barn()
         elif door == 'mine':
             self.enter_mine(1)
         else:
@@ -1471,6 +1490,161 @@ class Game:
             else:
                 return
 
+    # ---- barn animals ----------------------------------------------------
+    def animal_line(self, a):
+        h = a['aff'] // 10
+        status = []
+        if not a['fed']:
+            status.append('hungry')
+        if a['kind'] == 'cow' and a['ready']:
+            status.append('milk ready')
+        if a['kind'] == 'sheep' and a['wool'] >= WOOL_DAYS:
+            status.append('wool ready')
+        kind = ANIMALS[a['kind']][0]
+        return f"{a['name']:10s} {kind:5s} [{'#' * h}{'.' * (10 - h)}] {', '.join(status)}"
+
+    def barn(self):
+        sel = 0
+        while True:
+            unfed = sum(1 for a in self.animals if not a['fed'])
+            tools = ', '.join(t for t in ('Milker', 'Clippers', 'Brush') if self.inv.get(t))
+            info = [f"  Animals: {len(self.animals)}/{BARN_CAP}   Hungry: {unfed}"
+                    f"   Fodder: {self.inv.get('Fodder', 0)}",
+                    f"  Tools: {tools or 'none (sold at Yodel Ranch)'}"]
+            opts = ['Fill fodder boxes'] + [self.animal_line(a) for a in self.animals] + ['Leave']
+            sel = self.menu('Barn', opts, sel=min(sel, len(opts) - 1), info=info)
+            if sel is None or sel == len(opts) - 1:
+                return
+            if sel == 0:
+                self.barn_feed()
+            else:
+                self.animal_care(self.animals[sel - 1])
+                if self.mapname == 'house':
+                    return
+
+    def barn_feed(self):
+        if not self.animals:
+            self.say("The barn is empty. Barley sells cows and sheep at Yodel Ranch.", None)
+            return
+        hungry = [a for a in self.animals if not a['fed']]
+        if not hungry:
+            self.say("Every fodder box is already full.", None)
+            return
+        n = min(len(hungry), self.inv.get('Fodder', 0))
+        if not n:
+            self.say("You're out of Fodder. Yodel Ranch sells it.", None)
+            return
+        self.take('Fodder', n)
+        for a in hungry[:n]:
+            a['fed'] = True
+        self.msg(f"You filled {n} fodder box{'es' if n > 1 else ''}. Moo!", '09')
+
+    def animal_care(self, a):
+        while True:
+            name = a['name']
+            opts = ['Talk']
+            if self.inv.get('Brush'):
+                opts.append('Brush')
+            if a['kind'] == 'cow' and self.inv.get('Milker'):
+                opts.append('Milk')
+            if a['kind'] == 'sheep' and self.inv.get('Clippers'):
+                opts.append('Shear')
+            opts.append('Back')
+            sel = self.menu(self.animal_line(a), opts)
+            if sel is None or opts[sel] == 'Back':
+                return
+            act = opts[sel]
+            if act == 'Talk':
+                if a['talked']:
+                    self.say(f"{name} looks at you contentedly.", name)
+                else:
+                    a['talked'] = True
+                    a['aff'] = min(100, a['aff'] + 1)
+                    sound = 'Moooo!' if a['kind'] == 'cow' else 'Baaaa!'
+                    self.say(f"{sound} {name} seems happy to see you.", name)
+            elif act == 'Brush':
+                if a['brushed']:
+                    self.say(f"{name}'s coat is already shiny.", name)
+                else:
+                    a['brushed'] = True
+                    a['aff'] = min(100, a['aff'] + 2)
+                    self.msg(f"You brushed {name}. {name} looks pleased!", '0B')
+                    self.spend(1)
+            elif act == 'Milk':
+                if not a['ready']:
+                    self.say(f"{name} has no milk right now. Feed {name} today and try tomorrow.",
+                             None)
+                else:
+                    a['ready'] = False
+                    a['aff'] = min(100, a['aff'] + 1)
+                    item = ('Large Milk' if a['aff'] >= 80 else 'Medium Milk' if a['aff'] >= 40
+                            else 'Small Milk')
+                    self.give(item)
+                    self.msg(f"You milked {name}: {item}!", '07')
+                    self.spend(2)
+            elif act == 'Shear':
+                if a['wool'] < WOOL_DAYS:
+                    left = WOOL_DAYS - a['wool']
+                    self.say(f"{name}'s wool needs {left} more well-fed day{'s' if left > 1 else ''}"
+                             " to grow back.", None)
+                else:
+                    a['wool'] = 0
+                    a['aff'] = min(100, a['aff'] + 1)
+                    item = 'Large Wool' if a['aff'] >= 70 else 'Wool'
+                    self.give(item)
+                    self.msg(f"You sheared {name}: {item}!", '07')
+                    self.spend(2)
+            if self.mapname == 'house':  # passed out mid-care: the day is over
+                return
+
+    def buy_animal(self, kind):
+        label, price = ANIMALS[kind]
+        if len(self.animals) >= BARN_CAP:
+            self.say("Your barn is full!", 'Barley')
+            return
+        if self.gold < price:
+            self.say(f"A {label.lower()} is {price}G. Come back when you've saved up.", 'Barley')
+            return
+        if not self.confirm(f"Buy a {label.lower()} for {price}G?"):
+            return
+        names = COW_NAMES if kind == 'cow' else SHEEP_NAMES
+        taken = {a['name'] for a in self.animals}
+        default = next((n for n in names if n not in taken), f"{label}{len(self.animals) + 1}")
+        name = self.text_input(f"Name your {label.lower()}:", default)[:10]
+        self.gold -= price
+        self.animals.append({'name': name, 'kind': kind, 'aff': 10, 'fed': False, 'ready': False,
+                             'wool': 0, 'talked': False, 'brushed': False})
+        self.say(f"{name} will be waiting in your barn. Fill the fodder box every day!", 'Barley')
+
+    def buy_barn_tool(self, item, price):
+        if self.inv.get(item):
+            self.say(f"You already have a {item}.", 'Barley')
+        elif self.gold < price:
+            self.say(f"The {item} is {price}G.", 'Barley')
+        elif self.confirm(f"Buy a {item} for {price}G?"):
+            self.gold -= price
+            self.give(item)
+            self.msg(f"Bought a {item}.", '09')
+
+    def barn_new_day(self, report):
+        hungry = 0
+        for a in self.animals:
+            if a['fed']:
+                if a['kind'] == 'cow':
+                    a['ready'] = True
+                else:
+                    a['wool'] = min(WOOL_DAYS, a['wool'] + 1)
+            else:
+                hungry += 1
+                a['aff'] = max(0, a['aff'] - 5)
+            a['fed'] = a['talked'] = a['brushed'] = False
+        if hungry:
+            report.append(f"{hungry} barn animal{'s' if hungry > 1 else ''} went hungry yesterday.")
+        ready = [a['name'] for a in self.animals if (a['kind'] == 'cow' and a['ready'])
+                 or (a['kind'] == 'sheep' and a['wool'] >= WOOL_DAYS)]
+        if ready:
+            report.append(f"Ready in the barn: {', '.join(ready)}.")
+
     # ---- town buildings --------------------------------------------------
     def visit(self, bid):
         name = BUILDINGS[bid]
@@ -1515,7 +1689,13 @@ class Game:
         if bid == 'mayor':
             return [('Ask about your farm', self.farm_report)]
         if bid == 'yodel':
-            return [('Buy Milk (150G)', lambda: self.buy('Milk', 150))]
+            return [('Buy Milk (150G)', lambda: self.buy('Milk', 150)),
+                    ('Buy a cow (5000G)', lambda: self.buy_animal('cow')),
+                    ('Buy a sheep (4000G)', lambda: self.buy_animal('sheep')),
+                    ('Buy Fodder (20G)', lambda: self.buy('Fodder', 20)),
+                    ('Buy Milker (2000G)', lambda: self.buy_barn_tool('Milker', 2000)),
+                    ('Buy Clippers (1800G)', lambda: self.buy_barn_tool('Clippers', 1800)),
+                    ('Buy Brush (800G)', lambda: self.buy_barn_tool('Brush', 800))]
         return []
 
     def buy(self, item, price, limit=99):
@@ -1663,6 +1843,7 @@ class Game:
             self.eggs += self.fed
             report.append(f"Your chickens laid {self.fed} egg{'s' if self.fed > 1 else ''}.")
         self.fed = 0
+        self.barn_new_day(report)
         if self.upgrading and self.absday() >= self.upgrading[1]:
             t = self.upgrading[0]
             self.levels[t] += 1
@@ -1905,6 +2086,13 @@ class Game:
         if self.chickens:
             s.put(x, y, 'Coop', '03')
             s.put(x + 6, y, f"{self.chickens} hens, {self.eggs} eggs", '07')
+        if self.animals:
+            y += 1
+            hungry = sum(1 for a in self.animals if not a['fed'])
+            s.put(x, y, 'Barn', '03')
+            s.put(x + 6, y, (f"{len(self.animals)} animals" +
+                             (f", {hungry} hungry" if hungry else ', all fed'))[:w - 6],
+                  '08' if hungry else '07')
         y += 2
         help_lines = [('SPC', 'use tool'), ('X', 'act / talk'), ('TAB', 'next tool'),
                       ('I', 'rucksack'), ('?', 'help'), ('Q', 'quit')]
