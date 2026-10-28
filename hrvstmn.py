@@ -470,6 +470,34 @@ HELP = [
 ]
 
 
+# ---- festivals ------------------------------------------------------------
+# (season, day): (name, start hour, end hour, event kind)
+FESTIVALS = {
+    (0, 1): ("New Year's Day", 9, 17, 'newyear'),
+    (0, 8): ('Goddess Festival', 10, 18, 'goddess'),
+    (0, 18): ('Flower Festival', 10, 18, 'dance'),
+    (0, 22): ('Chicken Sumo', 10, 16, 'sumo'),
+    (1, 8): ('Egg Hunt', 10, 16, 'egghunt'),
+    (1, 20): ('Crop Festival', 10, 18, 'crops'),
+    (1, 24): ('Fireworks Festival', 18, 22, 'fireworks'),
+    (2, 13): ('Harvest Festival', 10, 18, 'harvest'),
+    (2, 20): ('Moon Viewing', 18, 22, 'moon'),
+    (3, 14): ('Thanksgiving', 10, 18, 'thanks'),
+    (3, 24): ('Starry Night', 18, 22, 'starry'),
+    (3, 30): ("New Year's Eve", 18, 23, 'nye'),
+}
+BIRTHDAYS = {
+    'Mary': (3, 20), 'Karen': (2, 15), 'Popuri': (1, 3), 'Elli': (0, 16), 'Ann': (1, 17),
+    'Thomas': (1, 25), 'Gray': (3, 6), 'Cliff': (1, 6), 'Rick': (2, 27), 'May': (3, 26),
+    'Jeff': (3, 29), 'Saibara': (1, 21), 'Doug': (1, 12), 'Doctor': (2, 19),
+    'Lillia': (0, 19), 'Barley': (1, 26), 'Carter': (2, 6), 'Basil': (1, 11),
+}
+# spots villagers gather around the Rose Square fountain
+FEST_SPOTS = [(31, 11), (33, 10), (36, 10), (39, 11), (41, 12), (41, 14), (39, 16),
+              (36, 16), (33, 16), (31, 14), (32, 12), (40, 13)]
+ITEMS['Cake'] = (0, 30, 'food')
+
+
 # --------------------------------------------------------------------------
 # Maps
 # --------------------------------------------------------------------------
@@ -759,6 +787,7 @@ class Game:
         self.married = None
         self.shipped_total = 0
         self.prayed = False
+        self.fest_wins, self.fest_attended, self.fest_declined = [], False, False
         self.npc_pos = {}
         self.mine_floor = 0
         self.ladder = None
@@ -826,7 +855,8 @@ class Game:
     # ---- save / load -----------------------------------------------------
     SAVE_FIELDS = ['name', 'farm', 'year', 'season', 'day', 'weather', 'tomorrow', 'gold',
                    'max_stamina', 'inv', 'tool', 'levels', 'water', 'upgrading', 'bin',
-                   'chickens', 'fed', 'eggs', 'friend', 'married', 'shipped_total']
+                   'chickens', 'fed', 'eggs', 'friend', 'married', 'shipped_total',
+                   'fest_wins']
 
     def save(self):
         d = {k: getattr(self, k) for k in self.SAVE_FIELDS}
@@ -958,6 +988,8 @@ class Game:
         return True
 
     def is_out(self, n):
+        if self.fest_is_out(n) is not None:
+            return True
         d = NPCS[n]
         if not d['out'] or n == self.married:
             return False
@@ -967,6 +999,7 @@ class Game:
         return a * 60 <= self.minutes < b * 60
 
     def update_npcs(self):
+        self.fest_sync()
         for n, d in NPCS.items():
             if self.is_out(n):
                 if n not in self.npc_pos:
@@ -1016,6 +1049,7 @@ class Game:
         if not self.walkable(self.mapname, nx, ny) or self.npc_at(nx, ny):
             return
         self.px, self.py = nx, ny
+        self.fest_check()
         if (nx, ny) in m.warps:
             mp, wx, wy = m.warps[(nx, ny)]
             self.warp(mp, wx, wy)
@@ -1312,12 +1346,14 @@ class Game:
                 self.new_day('sleep')
         elif tile == 'tv':
             show = random.choice(["a cooking show", "the news", "a samurai drama", "a farming tips show"])
-            self.say(f"Tomorrow's forecast: {self.tomorrow}.  Afterwards, {show} comes on.", 'TV')
+            self.say(f"Tomorrow's forecast: {self.tomorrow}.{self.fest_news()}  Afterwards, {show} comes on.",
+                     'TV')
         elif tile == 'cal':
             left = 30 - self.day
             nxt = SEASONS[(self.season + 1) % 4]
             self.say(f"Today is {self.date_str()}. {left} day{'s' if left != 1 else ''} until {nxt}.",
                      'Calendar')
+            self.fest_calendar()
         elif tile == 'sign':
             text = m.signs.get(p, '')
             if text == 'farm':
@@ -1332,6 +1368,8 @@ class Game:
         return '[' + '#' * h + '.' * (10 - h) + ']', col
 
     def talk(self, n):
+        if self.fest_talk(n):
+            return
         d = NPCS[n]
         if self.held:
             item = self.held
@@ -1350,6 +1388,7 @@ class Game:
                 pts, line = -4, f"...A {item}? I don't really like this."
             else:
                 pts, line = 1, f"Oh, a {item}? For me? Thanks."
+            pts, line = self.birthday_gift(n, pts, line)
             self.friend[n] = clamp(self.friend[n] + pts, 0, 100)
             self.gifted.add(n)
             self.say(line, n)
@@ -1473,6 +1512,8 @@ class Game:
 
     # ---- town buildings --------------------------------------------------
     def visit(self, bid):
+        if self.fest_closed(bid):
+            return
         name = BUILDINGS[bid]
         o, c, closed = HOURS[bid]
         if self.weekday in closed or not (o * 60 <= self.minutes < c * 60):
@@ -1618,6 +1659,369 @@ class Game:
             lines.append(f"   {n:8s} {self.hearts(n)[0]}")
         self.show_lines('Mayor Thomas: Your Farm', lines)
 
+    # ---- festivals -------------------------------------------------------
+    def fest_date(self, offset=0):
+        n = self.day - 1 + offset
+        return (self.season + n // 30) % 4, n % 30 + 1
+
+    def fest_on(self, offset=0):
+        return FESTIVALS.get(self.fest_date(offset))
+
+    def fest_active(self):
+        f = self.fest_on()
+        return f if f and f[1] * 60 <= self.minutes < f[2] * 60 else None
+
+    def birthdays(self, offset=0):
+        when = self.fest_date(offset)
+        return [n for n, d in BIRTHDAYS.items() if d == when]
+
+    def fest_sync(self):
+        """Gather everyone around the fountain while a festival is on."""
+        f = self.fest_active()
+        saved = getattr(self, '_fest_saved', None)
+        if f and saved is None:
+            self._fest_saved = {n: d['where'] for n, d in NPCS.items()}
+            for i, n in enumerate(NPCS):
+                x, y = FEST_SPOTS[i % len(FEST_SPOTS)]
+                NPCS[n]['where'] = ('town', x, y)
+            self.npc_pos = {}
+            if not self.fest_attended:
+                self.msg(f"The {f[0]} has begun in Rose Square!", '0A')
+        elif not f and saved is not None:
+            for n, w in saved.items():
+                NPCS[n]['where'] = w
+            self._fest_saved = None
+            self.npc_pos = {}
+
+    def fest_is_out(self, n):
+        if n == self.married or not self.fest_active():
+            return None
+        return True
+
+    def fest_check(self):
+        f = self.fest_active()
+        if not f or self.mapname != 'town' or self.fest_attended or self.fest_declined:
+            return
+        if not (29 <= self.px <= 43 and 8 <= self.py <= 19):
+            return
+        if self.confirm(f"The {f[0]} is underway! Join in?"):
+            self.fest_run(f)
+        else:
+            self.fest_declined = True
+            self.msg("Talk to Mayor Thomas when you're ready to join in.")
+
+    def fest_talk(self, n):
+        f = self.fest_active()
+        if n != 'Thomas' or not f or self.held or self.fest_attended:
+            return False
+        if self.confirm(f"Join the {f[0]}?"):
+            self.fest_run(f)
+            return True
+        return False
+
+    def fest_run(self, f):
+        name, _, end, kind = f
+        self.fest_attended = True
+        self.say(f"Welcome, everyone, to the {name}! Ho ho!", 'Thomas')
+        getattr(self, 'fest_ev_' + kind)()
+        self.minutes = max(self.minutes, end * 60)
+        self.say(f"The {name} draws to a close, and everyone heads home.", None)
+        self.update_npcs()
+        self.last = time.time()
+
+    def fest_new_day(self, report):
+        self.fest_attended = self.fest_declined = False
+        f = self.fest_on()
+        if f:
+            report.append(f"Today is the {f[0]}! Head to Rose Square between {fmt_hour(f[1])} "
+                          f"and {fmt_hour(f[2])}. Shops are closed.")
+        t = self.fest_on(1)
+        if t:
+            report.append(f"Tomorrow is the {t[0]}.")
+        for n in self.birthdays():
+            report.append(f"It's {n}'s birthday today! A gift would mean a lot.")
+
+    def fest_closed(self, bid):
+        f = self.fest_on()
+        if not f or bid == 'church':
+            return False
+        self.say(f"A sign on the door: 'Closed today for the {f[0]}. See you in Rose Square!'", None)
+        return True
+
+    def birthday_gift(self, n, pts, line):
+        if n not in self.birthdays():
+            return pts, line
+        if pts > 0:
+            return pts * 2 + 2, line + " And on my birthday! You remembered!"
+        return pts, line + " ...On my birthday, too."
+
+    def fest_news(self):
+        parts = []
+        f = self.fest_on()
+        if f:
+            parts.append(f"Today: the {f[0]} in Rose Square, {fmt_hour(f[1])}-{fmt_hour(f[2])}.")
+        t = self.fest_on(1)
+        if t:
+            parts.append(f"Tomorrow: the {t[0]}.")
+        for n in self.birthdays():
+            parts.append(f"Happy birthday to {n}!")
+        for n in self.birthdays(1):
+            parts.append(f"Tomorrow is {n}'s birthday.")
+        return ('  ' + ' '.join(parts)) if parts else ''
+
+    def fest_calendar(self):
+        lines = []
+        for off in range(0, 31):
+            s, d = self.fest_date(off)
+            when = f"{'today' if off == 0 else 'tomorrow' if off == 1 else f'in {off} days':10s}"
+            f = FESTIVALS.get((s, d))
+            if f:
+                lines.append(f" {SEASONS[s]:6s} {d:2d}  {when}  {f[0]}")
+            for n in self.birthdays(off):
+                lines.append(f" {SEASONS[s]:6s} {d:2d}  {when}  {n}'s birthday")
+        self.show_lines('Upcoming events', (lines or [' Nothing planned.'])[:12])
+
+    def fest_bachs(self):
+        return [n for n, d in NPCS.items() if d['bach']]
+
+    def fest_bond(self, n, pts):
+        self.friend[n] = clamp(self.friend[n] + pts, 0, 100)
+
+    def fest_pick(self, title, names):
+        opts = [f"{n:8s} {self.hearts(n)[0]}" for n in names] + ['No one']
+        sel = self.menu(title, opts)
+        return names[sel] if sel is not None and sel < len(names) else None
+
+    def fest_win(self, name):
+        if name not in self.fest_wins:
+            self.fest_wins.append(name)
+
+    def fest_ev_newyear(self):
+        self.say("Let's welcome the new year together! Doug made rice cakes for everyone!", 'Thomas')
+        self.stamina = self.max_stamina
+        for n in NPCS:
+            self.fest_bond(n, 2)
+        self.say("You share rice cakes and good wishes with the whole town. "
+                 "(Stamina restored, everyone likes you a little more.)", None)
+
+    def fest_ev_goddess(self):
+        self.say("Every spring the young women of town dance to thank the Harvest Goddess.", 'Thomas')
+        self.say("Mary, Karen, Popuri, Elli and Ann step into the square in flowing white dresses.",
+                 None)
+        n = self.fest_pick('Who do you cheer for?', self.fest_bachs())
+        if n:
+            self.fest_bond(n, 5)
+            self.say(f"You cheer for {n}. She catches your eye mid-dance and smiles.", None)
+        self.give('Strawberry Seeds')
+        self.say("A warm breeze carries the Goddess's blessing. You receive a bag of "
+                 "Strawberry Seeds.", None)
+
+    def fest_ev_dance(self):
+        self.say("The square is covered in flowers. Now, everyone, find a partner and dance!",
+                 'Thomas')
+        n = self.fest_pick('Ask someone to dance', self.fest_bachs())
+        if not n:
+            self.say("You watch the dancers from the edge of the square.", None)
+        elif self.friend[n] >= 20 or n == self.married:
+            self.fest_bond(n, 8)
+            self.say("I'd love to! ...You're not a bad dancer, you know.", n)
+        else:
+            self.fest_bond(n, 1)
+            self.say("Oh! Um... maybe next year? I don't know you that well yet.", n)
+
+    def fest_mash(self, duration, rival, title):
+        """Alternate left/right as fast as possible. Returns presses counted."""
+        start, n, last = time.time(), 0, None
+        W, H = self.scr.w, self.scr.h
+        while True:
+            el = time.time() - start
+            if el >= duration:
+                break
+
+            def draw(el=el, n=n):
+                bx, by = (W - 50) // 2, H // 2 - 4
+                self.scr.box(bx, by, 50, 7, '0D', '00', title)
+                bar = 32
+                you = min(bar, n * bar // max(1, rival + 8))
+                them = min(bar, int(rival * el / duration) * bar // max(1, rival + 8))
+                self.scr.put(bx + 2, by + 2, 'You   [' + '#' * you + '.' * (bar - you) + ']', '0B')
+                self.scr.put(bx + 2, by + 3, 'Rival [' + '#' * them + '.' * (bar - them) + ']', '08')
+                self.scr.put(bx + 2, by + 5, f"LEFT / RIGHT alternately!   {duration - el:3.1f}s",
+                             '07', '00', True)
+            self.render()
+            draw()
+            self.scr.flush()
+            k = self.scr.getkey(0.03)
+            if k in ('left', 'a', 'h', 'right', 'd', 'l'):
+                side = 'L' if k in ('left', 'a', 'h') else 'R'
+                if side != last:
+                    n += 1
+                    last = side
+        self.last = time.time()
+        return n
+
+    def fest_ev_sumo(self):
+        self.say("Chicken Sumo! Each farmer's hen tries to push the other out of the ring!", 'Thomas')
+        if not self.chickens:
+            self.say("You don't have a chicken to enter, so you watch Rick's hen win again.", None)
+            return
+        rival = random.randint(16, 32)
+        self.say("Cheer your hen on by alternating LEFT and RIGHT as fast as you can. 5 seconds!",
+                 'Rick')
+        score = self.fest_mash(5.0, rival, 'Chicken Sumo')
+        if score >= rival:
+            self.gold += 500
+            self.give('Chicken Feed', 10)
+            self.fest_win('Chicken Sumo')
+            self.fest_bond('Rick', 3)
+            self.say(f"Your hen shoves Rick's hen clean out of the ring! You win 500G and "
+                     f"10 Chicken Feed. ({score} vs {rival})", 'Thomas')
+        else:
+            self.fest_bond('Rick', 1)
+            self.say(f"Rick's hen holds the ring. Better luck next year! ({score} vs {rival})", 'Rick')
+
+    def fest_ev_egghunt(self):
+        self.say("Eggs are hidden in nine flower bushes around the square. You get three peeks. "
+                 "Find two or more to win!", 'Thomas')
+        eggs = set(random.sample(range(9), 3))
+        opened, cur, tries, found = set(), 4, 3, 0
+        W, H = self.scr.w, self.scr.h
+        while tries > 0:
+            def draw():
+                bx, by = (W - 36) // 2, H // 2 - 6
+                self.scr.box(bx, by, 36, 11, '0D', '00', f'Egg Hunt  peeks left: {tries}')
+                for i in range(9):
+                    cx, cy = bx + 5 + (i % 3) * 10, by + 2 + (i // 3) * 2
+                    if i in opened:
+                        txt, fg = ('( o )', '07') if i in eggs else ('(   )', '02')
+                    else:
+                        txt, fg = '(***)', '0B'
+                    self.scr.put(cx, cy, txt, fg, '01' if i == cur else '00', i == cur)
+                self.scr.put(bx + 3, by + 9, 'arrows move, X to search', '02')
+            k = self.modal(draw)
+            if k in DIRS:
+                dx, dy = DIRS[k]
+                cur = clamp(cur % 3 + dx, 0, 2) + 3 * clamp(cur // 3 + dy, 0, 2)
+            elif k in OK_KEYS and cur not in opened:
+                opened.add(cur)
+                tries -= 1
+                if cur in eggs:
+                    found += 1
+                    self.msg("You found an egg!", '07')
+            elif k in CANCEL_KEYS:
+                break
+        if found:
+            self.give('Egg', found)
+        if found >= 2:
+            self.gold += 300
+            self.fest_win('Egg Hunt')
+            self.say(f"You found {found} eggs! First prize: 300G - and you keep the eggs!", 'Thomas')
+        else:
+            self.fest_bond('May', 2)
+            self.say(f"You found {found} egg{'s' if found != 1 else ''}. May found the most "
+                     "and wins this year. She's thrilled!", 'Thomas')
+
+    def fest_ev_crops(self):
+        self.say("Farmers, bring out your finest crop! The judges will choose the best.", 'Thomas')
+        crops = [i for i in sorted(self.inv) if ITEMS[i][2] == 'crop']
+        if not crops:
+            self.say("You have no crops to enter. You admire everyone else's vegetables.", None)
+            return
+        sel = self.menu('Enter which crop?', [f"{c} (worth {ITEMS[c][0]}G)" for c in crops])
+        if sel is None:
+            self.say("You decide to just watch the judging.", None)
+            return
+        crop = crops[sel]
+        mine = ITEMS[crop][0] * random.uniform(0.9, 1.5)
+        rivals = {n: random.uniform(40, 240) for n in ('Rick', 'Basil', 'Barley')}
+        best = max(rivals, key=rivals.get)
+        if mine > rivals[best]:
+            self.gold += 1000
+            self.fest_win('Crop Festival')
+            self.say(f"First prize goes to {self.name}'s magnificent {crop}! (+1000G)", 'Thomas')
+        else:
+            self.gold += 100
+            self.say(f"{best}'s entry takes first prize. Your {crop} earns an honorable "
+                     "mention. (+100G)", 'Thomas')
+
+    def fest_companion(self, ask, scene, line):
+        names = [n for n in self.fest_bachs() if n != self.married]
+        if self.married:
+            names.insert(0, self.married)
+        n = self.fest_pick(ask, names)
+        if not n:
+            self.say(scene, None)
+        elif self.friend[n] >= 10 or n == self.married:
+            self.fest_bond(n, 6)
+            self.say(f"{scene} {n} stays by your side the whole time.", None)
+            self.say(line, n)
+        else:
+            self.fest_bond(n, 1)
+            self.say("Sorry, I promised to spend tonight with my family.", n)
+            self.say(scene, None)
+
+    def fest_ev_fireworks(self):
+        self.fest_companion("Watch the fireworks with...",
+                            "BOOM! Fireworks bloom over the river in red, blue and pink.",
+                            "Wow... they're beautiful. I'm glad I'm watching them with you.")
+
+    def fest_ev_moon(self):
+        self.fest_companion("View the moon with...",
+                            "The full moon rises over Mother's Hill, round and bright.",
+                            "The moon is so pretty tonight. ...So is the company.")
+
+    def fest_ev_harvest(self):
+        self.say("Everyone adds an ingredient to the giant pot! Then we all share the stew!",
+                 'Thomas')
+        items = [i for i in sorted(self.inv) if ITEMS[i][2] in ('crop', 'forage', 'fish', 'animal')]
+        sel = self.menu('Add what to the pot?', items + ['Nothing']) if items else None
+        if sel is None or sel >= len(items):
+            self.say("Everyone else's ingredients make a fine stew anyway.", None)
+        else:
+            item = items[sel]
+            self.take(item)
+            pts = 3 if ITEMS[item][0] >= 100 else 2
+            for n in NPCS:
+                self.fest_bond(n, pts)
+            self.say(f"Your {item} makes the stew delicious! Everyone thanks you.", None)
+        self.stamina = self.max_stamina
+        self.say("You eat until you're full. (Stamina restored)", None)
+
+    def fest_ev_thanks(self):
+        self.say("Thanksgiving! It's a day to give thanks to the people you care about.", 'Thomas')
+        cakes = [n for n in self.fest_bachs() if self.friend[n] >= 40 or n == self.married]
+        for n in cakes:
+            self.give('Cake')
+            self.say("Happy Thanksgiving! I baked this for you. ...Don't make a big deal of it!", n)
+        if not cakes:
+            self.say("No one gave you a cake this year... Maybe next year.", None)
+
+    def fest_ev_starry(self):
+        n = self.married
+        if not n:
+            best = max(self.fest_bachs(), key=lambda b: self.friend[b])
+            n = best if self.friend[best] >= 30 else None
+        if n:
+            self.fest_bond(n, 10)
+            self.say(f"Snow falls softly. {n} finds you by the fountain and takes your hand.", None)
+            self.say("They say a wish made on Starry Night always comes true. I already know "
+                     "what I'll wish for.", n)
+        else:
+            self.fest_bond('Thomas', 3)
+            self.say("You spend Starry Night with Mayor Thomas, eating his famous pot roast. "
+                     "Ho ho!", None)
+
+    def fest_ev_nye(self):
+        self.say(f"Another year in Mineral Town comes to an end! Thank you all, and thank you, "
+                 f"{self.name}!", 'Thomas')
+        self.stamina = self.max_stamina
+        for n in NPCS:
+            self.fest_bond(n, 1)
+        self.show_lines(f"Year {self.year} in review", [
+            f"  Gold: {self.gold}G", f"  Total shipped: {self.shipped_total}G",
+            f"  Chickens: {self.chickens}", f"  Spouse: {self.married or '-'}",
+            f"  Festival prizes: {', '.join(self.fest_wins) or 'none yet'}"])
+
     # ---- days ------------------------------------------------------------
     def pass_out(self, text):
         if self.passing_out:
@@ -1679,6 +2083,7 @@ class Game:
                     objs[(x, y)] = 'weed'
         self.spawn_forage()
         self.talked, self.gifted, self.prayed = set(), set(), False
+        self.fest_new_day(report)
         if reason == 'passout':
             self.stamina = self.max_stamina // 2
             report.append("You woke up at home, still aching. (half stamina)")
