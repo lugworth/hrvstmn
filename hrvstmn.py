@@ -501,6 +501,10 @@ TILES = {
     'mfloor': ('.', '01', '00', True),
     'up': ('<', '0C', '00', True),
     'down': ('>', '0C', '00', True),
+    'counter': ('=', '09', '01', False),
+    'furn': ('?', '04', '00', False),
+    'bookcase': ('|', '0E', '00', False),
+    'exit': ('+', '09', '01', True),
 }
 
 
@@ -692,6 +696,149 @@ def build_mine(floor):
     return m, rocks, ladder
 
 
+# ---- interiors ----------------------------------------------------------
+# '#' wall  '.' floor  'D' door out  '=' shop counter  'B' bookcase
+# 'k' shopkeeper spot (behind the counter)  '1'-'3' resident spots
+INTERIOR_LEGEND = {
+    'H': ('furn', 'H', '09'),  # shelves
+    'P': ('furn', '=', '02'),  # pew
+    'F': ('furn', '&', '08'),  # forge
+    'A': ('furn', 'T', '04'),  # anvil
+    'b': ('furn', '=', '0D'),  # bed
+    'c': ('furn', 'h', '03'),  # chair
+    'o': ('furn', 'o', '09'),  # barrel / milk can
+    'p': ('furn', '*', '0B'),  # potted plant
+    'S': ('furn', '^', '08'),  # fireplace
+    'M': ('furn', '+', '08'),  # medicine cabinet
+    'C': ('furn', 'c', '07'),  # chicken pen
+    'y': ('furn', '"', '09'),  # hay
+    't': ('table', None, None),
+    'B': ('bookcase', None, None),
+    '=': ('counter', None, None),
+    '#': ('iwall', None, None),
+}
+BOOK_COLS = ['0D', '0E', '08', '0B', '09', '0C']
+
+INTERIOR_LAYOUTS = {
+    'supermarket': [
+        "###################",
+        "#HHH#....k....#HHH#",
+        "#...#=========#...#",
+        "#.................#",
+        "#.HH..HH...HH..HH.#",
+        "#.HH..HH...HH..HH.#",
+        "#.................#",
+        "#p......1........p#",
+        "#########D#########",
+    ],
+    'blacksmith': [
+        "#################",
+        "#FF#....k....#oo#",
+        "#FF#=========#..#",
+        "#...............#",
+        "#.A.....1.....o.#",
+        "#...............#",
+        "########D########",
+    ],
+    'inn': [
+        "#####################",
+        "#S..#.....k.....#b.b#",
+        "#...#===========#...#",
+        "#...................#",
+        "#.ctc...ctc...ctc...#",
+        "#...........1.......#",
+        "#..2.........3......#",
+        "#o.................o#",
+        "##########D##########",
+    ],
+    'clinic': [
+        "#################",
+        "#M.b.b#..k..#MMM#",
+        "#.....#=====#...#",
+        "#...............#",
+        "#.cc........1...#",
+        "#p.............p#",
+        "########D########",
+    ],
+    'library': [
+        "###################",
+        "#BBBBBB#.k.#BBBBBB#",
+        "#......#===#......#",
+        "#.................#",
+        "#.BB.BB..1..BB.BB.#",
+        "#.................#",
+        "#.ctc.........ctc.#",
+        "#p...............p#",
+        "#########D#########",
+    ],
+    'church': [
+        "#################",
+        "#p....#.k.#....p#",
+        "#.....#===#.....#",
+        "#...............#",
+        "#.PPPP.....PPPP.#",
+        "#...............#",
+        "#.PPPP.....PPPP.#",
+        "#.......1.......#",
+        "########D########",
+    ],
+    'mayor': [
+        "###############",
+        "#Hb#..k..#..p.#",
+        "#..#=====#....#",
+        "#.............#",
+        "#.ctc.....1...#",
+        "#.............#",
+        "#######D#######",
+    ],
+    'poultry': [
+        "###################",
+        "#yy#....k....#CCCC#",
+        "#yy#=========#....#",
+        "#.................#",
+        "#.CC..CC.....1....#",
+        "#.............2...#",
+        "#o...............o#",
+        "#########D#########",
+    ],
+    'yodel': [
+        "###################",
+        "#yy#....k....#ooo.#",
+        "#yy#=========#....#",
+        "#.................#",
+        "#.ctc.....1.......#",
+        "#...............p.#",
+        "#########D#########",
+    ],
+}
+
+
+def build_interior(bid, exit_to):
+    """Build an indoor Map for building `bid`. `exit_to` is (map, x, y) outside its door.
+    Returns (map, entry_xy, spots) where spots maps 'k'/'1'.. to positions."""
+    rows = INTERIOR_LAYOUTS[bid]
+    w, h = len(rows[0]), len(rows)
+    assert all(len(r) == w for r in rows), f"ragged interior layout: {bid}"
+    m = Map(f'in_{bid}', w, h, 'floor', BUILDINGS[bid], indoor=True)
+    spots, entry = {}, None
+    for y, row in enumerate(rows):
+        for x, ch in enumerate(row):
+            if ch in INTERIOR_LEGEND:
+                t, g, fg = INTERIOR_LEGEND[ch]
+                m.t[y][x] = t
+                if g:
+                    m.deco[(x, y)] = (g, fg)
+                elif t == 'bookcase':
+                    m.deco[(x, y)] = ('|[]'[(x + y) % 3], BOOK_COLS[(x * 5 + y * 3) % 6])
+            elif ch == 'D':
+                m.t[y][x] = 'exit'
+                m.warps[(x, y)] = exit_to
+                entry = (x, y - 1)
+            elif ch != '.':
+                spots[ch] = (x, y)
+    return m, entry, spots
+
+
 DIRS = {'up': (0, -1), 'w': (0, -1), 'k': (0, -1),
         'down': (0, 1), 's': (0, 1), 'j': (0, 1),
         'left': (-1, 0), 'a': (-1, 0), 'h': (-1, 0),
@@ -735,6 +882,7 @@ class Game:
         self.acc = 0.0
         self.npc_acc = 0.0
         self.passing_out = False
+        self.build_interiors()
 
     # ---- state ---------------------------------------------------------
     def new_game(self, name, farm):
@@ -943,6 +1091,9 @@ class Game:
         for n, p in self.npc_pos.items():
             if p == (x, y) and NPCS[n]['where'][0] == mapname:
                 return n
+        n = self.indoor_npc_at(x, y, mapname)
+        if n:
+            return n
         if mapname == 'house' and self.married and (x, y) == SPOUSE_POS:
             return self.married
         return None
@@ -976,6 +1127,7 @@ class Game:
                         self.npc_pos[n] = spot
             else:
                 self.npc_pos.pop(n, None)
+        self.update_indoor_npcs()
 
     def free_spot(self, mp, x, y):
         for r in range(0, 7):
@@ -999,6 +1151,7 @@ class Game:
             if self.walkable(mp, nx, ny, True) and not self.npc_at(nx, ny) \
                     and (nx, ny) != (self.px, self.py):
                 self.npc_pos[n] = (nx, ny)
+        self.move_indoor_npcs()
 
     def target(self):
         return self.px + self.face[0], self.py + self.face[1]
@@ -1318,6 +1471,8 @@ class Game:
             nxt = SEASONS[(self.season + 1) % 4]
             self.say(f"Today is {self.date_str()}. {left} day{'s' if left != 1 else ''} until {nxt}.",
                      'Calendar')
+        elif tile in ('counter', 'bookcase'):
+            self.interior_interact(tile, p)
         elif tile == 'sign':
             text = m.signs.get(p, '')
             if text == 'farm':
@@ -1473,16 +1628,31 @@ class Game:
 
     # ---- town buildings --------------------------------------------------
     def visit(self, bid):
+        if not self.building_open(bid):
+            return
+        if bid in self.interiors:
+            self.enter_interior(bid)
+            return
+        self.shop_menu(bid)
+
+    def building_open(self, bid):
         name = BUILDINGS[bid]
         o, c, closed = HOURS[bid]
         if self.weekday in closed or not (o * 60 <= self.minutes < c * 60):
             days = ', '.join(WEEKDAYS[d] for d in sorted(closed))
             self.say(f"The {name} is closed. Open {fmt_hour(o)} - {fmt_hour(c)}"
                      f"{', closed ' + days if days else ''}.", None)
-            return
+            return False
+        return True
+
+    def shop_menu(self, bid, people_fn=None):
+        name = BUILDINGS[bid]
         while True:
-            people = [n for n, d in NPCS.items()
-                      if d['home'] == bid and not self.is_out(n) and n != self.married]
+            if people_fn:
+                people = people_fn()
+            else:
+                people = [n for n, d in NPCS.items()
+                          if d['home'] == bid and not self.is_out(n) and n != self.married]
             shop = self.shop_options(bid)
             opts = [s[0] for s in shop] + [f"Talk to {p}" for p in people] + ['Leave']
             sel = self.menu(f"{name}   {self.gold}G", opts)
@@ -1492,6 +1662,86 @@ class Game:
                 shop[sel][1]()
             else:
                 self.talk(people[sel - len(shop)])
+
+    # ---- interiors -------------------------------------------------------
+    def build_interiors(self):
+        """Create an interior for every building door that has a layout."""
+        self.interiors = {}       # bid -> {'map', 'entry', 'spots'}
+        self.interior_bid = {}    # interior map name -> bid
+        self.indoor_npcs = {}     # npc -> {'map', 'pos', 'home', 'fixed'}
+        for mname, m in list(self.maps.items()):
+            for (dx, dy), bid in m.doors.items():
+                if bid not in INTERIOR_LAYOUTS or bid in self.interiors:
+                    continue
+                front = next(((dx + ox, dy + oy) for ox, oy in ((0, 1), (0, -1), (1, 0), (-1, 0))
+                              if TILES[m.tile(dx + ox, dy + oy)][3]), (dx, dy + 1))
+                im, entry, spots = build_interior(bid, (mname, *front))
+                self.maps[im.name] = im
+                self.interiors[bid] = {'map': im.name, 'entry': entry, 'spots': spots}
+                self.interior_bid[im.name] = bid
+
+    def enter_interior(self, bid):
+        info = self.interiors[bid]
+        self.warp(info['map'], *info['entry'], (0, -1))
+        self.msg(f"You step into the {BUILDINGS[bid]}.", '0C')
+
+    def keeper_of(self, bid):
+        return next((n for n, d in NPCS.items() if d['home'] == bid and not d['out']), None)
+
+    def update_indoor_npcs(self):
+        for n, d in NPCS.items():
+            info = self.interiors.get(d['home'])
+            if not info or self.is_out(n) or n == self.married:
+                self.indoor_npcs.pop(n, None)
+                continue
+            if n in self.indoor_npcs:
+                continue
+            bid = d['home']
+            keeper = self.keeper_of(bid)
+            residents = [r for r, rd in NPCS.items() if rd['home'] == bid and r != keeper]
+            spots = info['spots']
+            if n == keeper and 'k' in spots:
+                pos, fixed = spots['k'], True
+            else:
+                i = residents.index(n)
+                pos = spots.get(str(i + 1))
+                if pos is None or self.npc_at(*pos, mapname=info['map']):
+                    anchor = spots.get('1', info['entry'])
+                    pos = self.free_spot(info['map'], *anchor)
+                fixed = False
+            if pos:
+                self.indoor_npcs[n] = {'map': info['map'], 'pos': pos, 'home': pos, 'fixed': fixed}
+
+    def indoor_npc_at(self, x, y, mapname):
+        for n, d in self.indoor_npcs.items():
+            if d['map'] == mapname and d['pos'] == (x, y) and n != self.married:
+                return n
+        return None
+
+    def move_indoor_npcs(self):
+        for n, d in self.indoor_npcs.items():
+            if d['map'] != self.mapname or d['fixed'] or random.random() > 0.35:
+                continue
+            (x, y), (hx, hy) = d['pos'], d['home']
+            dx, dy = random.choice(((1, 0), (-1, 0), (0, 1), (0, -1)))
+            nx, ny = x + dx, y + dy
+            if abs(nx - hx) > 2 or abs(ny - hy) > 2:
+                continue
+            if (nx, ny) == self.interiors[self.interior_bid[d['map']]]['entry']:
+                continue
+            if self.walkable(d['map'], nx, ny, True) and not self.npc_at(nx, ny) \
+                    and (nx, ny) != (self.px, self.py):
+                d['pos'] = (nx, ny)
+
+    def interior_interact(self, tile, p):
+        bid = self.interior_bid.get(self.mapname)
+        if tile == 'bookcase':
+            self.say(random.choice(BOOKS), 'Book')
+            return
+        if not bid:
+            return
+        behind = self.npc_at(p[0] + self.face[0], p[1] + self.face[1])
+        self.shop_menu(bid, lambda: [behind] if behind else [])
 
     def shop_options(self, bid):
         if bid == 'supermarket':
@@ -1841,6 +2091,9 @@ class Game:
         for n, (x, y) in self.npc_pos.items():
             if NPCS[n]['where'][0] == self.mapname:
                 at(x, y, NPCS[n]['g'], NPCS[n]['col'])
+        for n, d in self.indoor_npcs.items():
+            if d['map'] == self.mapname and n != self.married:
+                at(*d['pos'], NPCS[n]['g'], NPCS[n]['col'])
         if self.mapname == 'house' and self.married:
             at(*SPOUSE_POS, NPCS[self.married]['g'], NPCS[self.married]['col'])
         at(self.px, self.py, '@', '07')
