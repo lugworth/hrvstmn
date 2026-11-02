@@ -712,30 +712,20 @@ export const COW_NAMES = ["Bessie", "Daisy", "Clover", "Buttercup", "Moo", "Moch
 export const SHEEP_NAMES = ["Fluffy", "Cotton", "Woolly", "Snowball", "Puff", "Lamby", "Cloud", "Tuft"];
 
 export const TOOLS = ["Sickle", "Hoe", "Hammer", "Axe", "Watering Can", "Fishing Rod"];
-export const UPGRADABLE = ["Hoe", "Hammer", "Axe", "Watering Can"];
-export const LEVELS = ["Basic", "Copper", "Silver", "Gold", "Mystrile"];
-export const LEVEL_COL = ["04", "08", "06", "09", "0C"];
+export const UPGRADABLE = ["Sickle", "Hoe", "Hammer", "Axe", "Watering Can", "Fishing Rod"];
+export const LEVELS = ["Basic", "Copper", "Silver", "Gold", "Mystrile", "Cursed", "Blessed", "Mythic"];
+export const LEVEL_COL = ["04", "09", "05", "0A", "0C", "0E", "07", "0B"];
 export const UPGRADE: Record<number, [number, string]> = {
-  "1": [
-    1000,
-    "Copper"
-  ],
-  "2": [
-    2000,
-    "Silver"
-  ],
-  "3": [
-    3000,
-    "Gold"
-  ],
-  "4": [
-    5000,
-    "Mystrile"
-  ]
+  1: [1000, "Copper"],
+  2: [2000, "Silver"],
+  3: [3000, "Gold"],
+  4: [5000, "Mystrile"],
+  7: [50000, "Mythic Stone"]
 };
 
-export const CAN_CAP = [30, 45, 60, 80, 100];
-export const AREA: [number, number][] = [[1, 0], [3, 0], [2, 1], [3, 1], [5, 1]];
+export const CAN_CAP = [30, 55, 85, 130, 200, 250, 250, 500];
+export const AREA: [number, number][] = [[1, 0], [3, 0], [2, 1], [3, 1], [5, 1], [6, 3], [6, 3], [9, 5]];
+
 
 export const OBJ_GLYPH: Record<string, any> = {
   "weed": [
@@ -2484,30 +2474,597 @@ export function fmt_hour(h: number): string {
 }
 
 export const BOOKS: string[] = [
-  "'Turnips for Beginners': Turnips grow in just 4 days. A fine first crop!",
-  "'Watering Wisdom': Crops only grow on days their soil was watered. Rain does it for you.",
-  "'The Craftsman's Path': Saibara can upgrade your Hoe and Watering Can to work wider areas.",
-  "'Mysteries of the Mine': Deeper floors hide silver, gold... and rarer things. Look for the ladder under rocks.",
-  "'Of Hens and Hearts': A fed chicken lays one egg every morning.",
-  "'Seasonal Sorrows': When the season changes, all crops in the field wither. Plan your harvest!",
-  "'Regrowing Riches': Cucumbers, tomatoes, corn and more regrow after harvest.",
-  "'A Gift Guide': Everyone has favorites. A loved gift warms a heart far more than a talk.",
-  "'The Blue Feather': A blue feather is given to the one you wish to marry. Hearts must be full.",
-  "'Rest & Recovery': Sleeping before midnight restores all your stamina.",
+  "'Turnips for Beginners': Turnips grow in 4 days. Plant in 3x3 or U-shaped blocks so you can reach every crop!",
+  "'Seed Unlocks': Ship 100 each of Turnip, Potato, and Cucumber to unlock Strawberry Seeds at the Supermarket (same for Pumpkin in Summer and Spinach in Fall).",
+  "'The Craftsman's Path': Saibara upgrades all 6 tools from Copper to Mystrile—and even Mythic once all 6 Cursed Tools are Blessed!",
+  "'Mysteries of the Two Mines': Spring Mine holds Copper, Silver, Gold, Mystrile, Orichalc, Adamantite, Goddess Jewels, and the Teleport Stone on F255. The Winter Lake Mine holds Gems, Kappa Jewels, and Cursed Tools on floors 29, 39, 49, 59, 69, and 79.",
+  "'Blessing Cursed Tools': Carter at the Church Confession Booth can remove or bless Cursed Tools. Bless Hoe/Can 10x, equip Sickle/Hammer 10 days, or swing Rod/Axe 255 times!",
+  "'The Seven Harvest Sprites': Behind the Church live Chef, Nappy, Hoggy, Timid, Aqua, Staid, and Bold. Befriend them to 3 hearts with Flour or Grass to hire them or play mini-games!",
+  "'Of Livestock & Makers': Saibara builds Mayonnaise, Cheese, and Yarn Makers with Adamantite. Festival winners produce Golden, P-Type, and rare X-Type goods!",
+  "'The Goddess & The Kappa': Throw offerings into the Goddess Pond on Mother's Hill for a Power Berry, and throw 10 Cucumbers into the Lake for Kappa's Blue Berry (no rain fatigue!).",
+  "'TV & Saturday Shopping': Watch TV on Tuesday for cooking recipes and Saturday for TV Shopping—then order at Doug's Inn telephone!",
+  "'Marriage & Family': See all 4 Heart Events, upgrade your house with a Big Bed, and present the Blue Feather at Red Heart!",
 ];
 
 export const HELP: string[] = [
   "MOVE      arrows / WASD / hjkl",
-  "USE TOOL  space or z",
-  "ACT       x / e / enter   talk, give held item, harvest,",
-  "                          pick up, ship, enter doors, sleep",
-  "TOOLS     tab / shift-tab cycle,  1-6 pick a tool",
-  "          seed bags appear in the cycle; they sow a 3x3 patch",
-  "RUCKSACK  i   hold an item (to gift it) or eat it",
-  "MENU      esc        QUIT  Q",
+  "USE TOOL  space or z (uses equipped tool or sows seeds)",
+  "ACT       x / e / enter   talk, gift held item, harvest, forage,",
+  "                          ship, enter doors, soak in Hot Spring",
+  "TOOLS     tab / shift-tab cycle,  1-6 pick tool",
+  "RUCKSACK  i   hold/eat/wrap items, equip Gems, blow Whistle",
+  "SUMMARY   m   Ranch Summary, Memo, Sprites, Fish & Collectibles",
+  "DIARY     esc Save/Load anywhere (2 slots), Teleport, Status",
   "",
-  "Till soil with the Hoe, sow seeds, water every day.",
-  "Ship produce in the bin ($) - Zack pays out each morning.",
-  "Time only passes outdoors. Sleep in your bed to save.",
-  "Talk to villagers daily and give gifts to raise hearts.",
+  "Zack picks up shipments at 5:00 PM daily. Sleep in bed to advance day.",
+  "Visit the Hot Spring on Mother's Hill or your Bathroom to recover.",
+  "Befriend the 7 Harvest Sprites behind the Church to automate chores!",
 ];
+
+// --- EXPANDED HARVEST MOON: FRIENDS OF MINERAL TOWN DATA ---
+
+Object.assign(WEATHER_COL, {
+  "Typhoon": "08",
+  "Blizzard": "0C",
+});
+
+// Additional Crops & Flowers (Grass, Moondrop, Toy Flower, Pink Cat, Magic Red)
+Object.assign(CROPS, {
+  "Grass": ["Spring", 500, 9, 3, 20, "\"", "0B"],
+  "Moondrop Flower": ["Spring", 300, 6, 0, 60, "*", "09"],
+  "Toy Flower": ["Spring", 400, 12, 0, 100, "*", "07"],
+  "Pink Cat Flower": ["Summer", 300, 6, 0, 70, "*", "0A"],
+  "Magic Red Flower": ["Fall", 600, 10, 0, 200, "*", "08"],
+});
+
+Object.assign(FORAGE, {
+  "Spring": ["Bamboo Shoot", "Blue Grass", "Yellow Grass", "Orange Grass", "Moondrop Flower", "Toy Flower", "Medicinal Herb"],
+  "Summer": ["Blue Grass", "Green Grass", "Red Grass", "Purple Grass", "Indigo Grass", "Pink Cat Flower", "Wild Grape"],
+  "Fall": ["Mushroom", "Poisonous Mushroom", "Truffle", "Green Grass", "Red Grass", "Magic Red Flower", "Apple", "Wild Grape"],
+  "Winter": ["White Grass", "Black Grass", "Blue Grass"],
+});
+
+Object.assign(FORAGE_GLYPH, {
+  "Yellow Grass": ["\"", "09"],
+  "Orange Grass": ["\"", "09"],
+  "Green Grass": ["\"", "0B"],
+  "Purple Grass": ["\"", "0E"],
+  "Indigo Grass": ["\"", "0D"],
+  "Black Grass": ["\"", "03"],
+  "White Grass": ["\"", "07"],
+  "Poisonous Mushroom": ["m", "0E"],
+  "Magic Red Flower": ["*", "08"],
+  "Blue Magic Grass": ["*", "0D"],
+  "Apple": ["a", "08"],
+  "SUGDW Apple": ["a", "08"],
+  "HMSGB Apple": ["a", "0A"],
+  "AEPFE Apple": ["a", "09"],
+  "Honey": ["h", "09"],
+});
+
+Object.assign(TILES, {
+  "spring": ["~", "0C", "01", true],   // Hot Spring water (walkable / soakable)
+  "pond": ["~", "0B", "00", false],    // Goddess Pond
+  "ice": ["=", "0C", "01", true],      // Frozen Lake in Winter
+  "sand": [".", "09", "00", true],     // Mineral Beach sand
+  "mill": ["%", "09", "01", false],    // Corn Mill by Coop
+  "doghouse": ["D", "08", "01", false],
+  "stable": ["H", "09", "01", false],
+  "vase": ["v", "0A", "01", false],
+  "fireplace": ["^", "08", "01", false],
+  "phone": ["P", "0C", "01", false],
+  "trash": ["U", "03", "01", false],
+  "maker": ["M", "0C", "01", false],
+  "incub": ["O", "09", "01", false],
+});
+
+Object.assign(ITEMS, {
+  // Seeds
+  "Grass Seeds": [0, 0, "seed"],
+  "Moondrop Flower Seeds": [0, 0, "seed"],
+  "Toy Flower Seeds": [0, 0, "seed"],
+  "Pink Cat Flower Seeds": [0, 0, "seed"],
+  "Magic Red Flower Seeds": [0, 0, "seed"],
+  "Grass": [20, 0, "forage"],
+  "Magic Red Flower": [200, 0, "forage"],
+  "Blue Magic Grass": [90, 0, "forage"],
+  // Wild Grasses & Forage
+  "Green Grass": [100, 10, "forage"],
+  "Yellow Grass": [120, 12, "forage"],
+  "Orange Grass": [100, 10, "forage"],
+  "Purple Grass": [120, 12, "forage"],
+  "Indigo Grass": [100, 15, "forage"],
+  "Black Grass": [10, 15, "forage"],
+  "White Grass": [150, 25, "forage"],
+  "Poisonous Mushroom": [100, -25, "forage"],
+  "Apple": [50, 8, "forage"],
+  "SUGDW Apple": [500, 15, "forage"],
+  "HMSGB Apple": [500, 15, "forage"],
+  "AEPFE Apple": [500, 15, "forage"],
+  "Honey": [50, 10, "forage"],
+  "Spa-Boiled Egg": [80, 15, "animal"],
+  // Egg & Mayonnaise Quality Ladder
+  "Good Egg": [60, 10, "animal"],
+  "High Egg": [80, 15, "animal"],
+  "Golden Egg": [100, 20, "animal"],
+  "P Egg": [180, 30, "animal"],
+  "X Egg": [350, 50, "animal"],
+  "Small Mayonnaise": [100, 10, "animal"],
+  "Medium Mayonnaise": [150, 15, "animal"],
+  "Large Mayonnaise": [200, 20, "animal"],
+  "Golden Mayonnaise": [300, 30, "animal"],
+  "P Mayonnaise": [450, 45, "animal"],
+  "X Mayonnaise": [800, 75, "animal"],
+  // Milk & Cheese Quality Ladder
+  "Golden Milk": [300, 30, "animal"],
+  "P Milk": [500, 45, "animal"],
+  "X Milk": [800, 75, "animal"],
+  "Small Cheese": [300, 15, "animal"],
+  "Medium Cheese": [400, 20, "animal"],
+  "Large Cheese": [500, 30, "animal"],
+  "Golden Cheese": [600, 40, "animal"],
+  "P Cheese": [750, 55, "animal"],
+  "X Cheese": [1500, 90, "animal"],
+  // Wool & Yarn Quality Ladder
+  "Good Wool": [400, 0, "animal"],
+  "Golden Wool": [600, 0, "animal"],
+  "P Wool": [1000, 0, "animal"],
+  "X Wool": [2000, 0, "animal"],
+  "Small Yarn": [300, 0, "animal"],
+  "Medium Yarn": [700, 0, "animal"],
+  "Large Yarn": [800, 0, "animal"],
+  "Golden Yarn": [1000, 0, "animal"],
+  "P Yarn": [1500, 0, "animal"],
+  "X Yarn": [4000, 0, "animal"],
+  // Spring & Lake Mine Ores, Gems & Artifacts
+  "Junk Ore": [1, 0, "ore"],
+  "Orichalc": [50, 0, "ore"],
+  "Adamantite": [50, 0, "ore"],
+  "Mythic Stone": [20000, 0, "ore"],
+  "Agate": [62, 0, "ore"],
+  "Fluorite": [65, 0, "ore"],
+  "Peridot": [68, 0, "ore"],
+  "Topaz": [70, 0, "ore"],
+  "Ruby": [75, 0, "ore"],
+  "Emerald": [80, 0, "ore"],
+  "Moon Stone": [55, 0, "ore"],
+  "Sand Rose": [60, 0, "ore"],
+  "Pink Diamond": [10000, 0, "ore"],
+  "Alexandrite": [10000, 0, "ore"],
+  // Jewels & Gems
+  "Goddess Jewel": [0, 0, "special"],
+  "Kappa Jewel": [0, 0, "special"],
+  "Truth Jewel": [0, 0, "special"],
+  "Gem of the Goddess": [0, 0, "special"],
+  "Gem of the Kappa": [0, 0, "special"],
+  "Gem of Truth": [0, 0, "special"],
+  "Teleport Stone": [0, 0, "tool"],
+  "Pedometer": [0, 0, "tool"],
+  "Power Berry": [0, 50, "special"],
+  "Mystic Berry": [0, 50, "special"],
+  // Fishing Kings & Sea Treasures
+  "Catfish": [500, 40, "fish"],
+  "Carp": [500, 40, "fish"],
+  "Coelacanth": [1000, 60, "fish"],
+  "Squid": [500, 40, "fish"],
+  "Monkfish": [500, 40, "fish"],
+  "Spa Catfish": [500, 40, "fish"],
+  "Pirate Treasure": [10000, 0, "ore"],
+  "Fossil of Ancient Fish": [5000, 0, "ore"],
+  "Boot": [1, 0, "trash"],
+  "Empty Can": [1, 0, "trash"],
+  "Fish Bones": [1, 0, "trash"],
+  // Shop Goods, Jewelry, Medicines & Ranch Tools
+  "Flour": [50, 5, "ingredient"],
+  "Oil": [50, 2, "ingredient"],
+  "Curry Powder": [50, 2, "ingredient"],
+  "Chocolate": [100, 10, "food"],
+  "Wine": [300, 15, "food"],
+  "Grape Juice": [200, 20, "food"],
+  "Bodigizer XL": [0, 150, "food"],
+  "Turbojolt": [0, 50, "food"],
+  "Turbojolt XL": [0, 100, "food"],
+  "Animal Medicine": [0, 0, "tool"],
+  "Miracle Potion": [0, 0, "tool"],
+  "Bell": [0, 0, "tool"],
+  "Basket": [0, 0, "tool"],
+  "Dog Ball": [0, 0, "tool"],
+  "Frisbee": [0, 0, "tool"],
+  "Record Player": [0, 0, "special"],
+  "Golden Lumber": [100, 0, "material"],
+  "Necklace": [2000, 0, "special"],
+  "Earrings": [2000, 0, "special"],
+  "Bracelet": [2000, 0, "special"],
+  "Brooch": [2000, 0, "special"],
+  "Perfume": [1500, 0, "special"],
+  "Dress": [2500, 0, "special"],
+  "Sunblock": [1000, 0, "special"],
+  "Skin Lotion": [1000, 0, "special"],
+  "Facial Pack": [1000, 0, "special"],
+  // Extra Utensils
+  "Whisk": [0, 0, "utensil"],
+  "Rolling Pin": [0, 0, "utensil"],
+  "Oven": [0, 0, "utensil"],
+  "Seasoning Set": [0, 0, "utensil"],
+  // Extra Cooked Dishes
+  "Failed Dish": [1, -10, "dish"],
+  "Elli Leaves": [0, 250, "dish"],
+  "Relaxation Tea Leaves": [1000, 50, "ingredient"],
+  "Relaxation Tea": [1200, 120, "dish"],
+  "Cookies": [200, 25, "dish"],
+  "Chocolate Cookies": [300, 35, "dish"],
+  "Chocolate Cake": [500, 65, "dish"],
+  "Pancakes": [250, 35, "dish"],
+  "French Fries": [220, 30, "dish"],
+  "Ketchup": [180, 10, "dish"],
+  "Pizza": [450, 55, "dish"],
+  "Cheese Fondue": [400, 50, "dish"],
+  "Noodles": [250, 40, "dish"],
+  "Curry Noodles": [400, 60, "dish"],
+  "Tempura": [320, 45, "dish"],
+  "Miso Soup": [150, 25, "dish"],
+  "Ice Cream": [300, 40, "dish"],
+  "Baked Sweet Potato": [240, 35, "dish"],
+  "Apple Pie": [450, 55, "dish"],
+});
+
+FRUITS.add("Apple");
+FRUITS.add("SUGDW Apple");
+FRUITS.add("HMSGB Apple");
+FRUITS.add("AEPFE Apple");
+
+Object.assign(UTENSILS, {
+  "Knife": 1500,
+  "Frying Pan": 1200,
+  "Pot": 1000,
+  "Mixer": 1200,
+  "Whisk": 500,
+  "Rolling Pin": 750,
+  "Oven": 2500,
+  "Seasoning Set": 2500,
+});
+
+Object.assign(EXPANSIONS, {
+  "Kitchen": [4000, 100, null, "A full kitchen counter for cooking 100+ dishes."],
+  "Extension": [3000, 200, "Kitchen", "House Upgrade 1: Second room, Cabinet & Refrigerator."],
+  "Bathroom": [30000, 580, "Extension", "House Upgrade 2 + Bathroom & Fireplace (+30 Stamina / -20 Fatigue bath)."],
+  "Big Bed": [10000, 200, "Extension", "Required for marriage and adds +20 recovery."],
+  "Coop Expansion": [5000, 420, null, "Expands Coop to 16 chickens and unlocks Mayonnaise Maker."],
+  "Barn Expansion": [6800, 500, null, "Expands Barn to 16 cows/sheep and unlocks Cheese & Yarn Makers."],
+  "Town Cottage": [100000, 999, "Bathroom", "Vacation villa in Town with the New Year's Gameshow TV!"],
+});
+
+Object.assign(RECIPES, {
+  "Cookies": [[["Flour", 1], ["Egg", 1]], "Oven", 25, 200],
+  "Chocolate Cookies": [[["Flour", 1], ["Egg", 1], ["Chocolate", 1]], "Oven", 35, 300],
+  "Cake": [[["Flour", 1], ["Egg", 1], ["Milk", 1]], "Oven", 45, 350],
+  "Chocolate Cake": [[["Flour", 1], ["Egg", 1], ["Milk", 1], ["Chocolate", 1]], "Oven", 65, 500],
+  "Pancakes": [[["Flour", 1], ["Egg", 1], ["Milk", 1], ["Honey", 1]], "Frying Pan", 35, 250],
+  "French Fries": [[["Potato", 1], ["Oil", 1]], "Frying Pan", 30, 220],
+  "Ketchup": [[["Tomato", 1], ["Onion", 1]], "Mixer", 10, 180],
+  "Pizza": [[["Flour", 1], ["Small Cheese", 1], ["Ketchup", 1]], "Oven", 55, 450],
+  "Cheese Fondue": [[["Bread", 1], ["Small Cheese", 1]], "Pot", 50, 400],
+  "Noodles": [[["Flour", 1]], "Rolling Pin", 40, 250],
+  "Curry Noodles": [[["Flour", 1], ["Curry Powder", 1]], "Pot", 60, 400],
+  "Tempura": [[["Flour", 1], ["Egg", 1], ["Oil", 1], ["any:fish", 1]], "Frying Pan", 45, 320],
+  "Miso Soup": [[["any:crop", 1]], "Seasoning Set", 25, 150],
+  "Ice Cream": [[["Milk", 1], ["Egg", 1]], "Whisk", 40, 300],
+  "Baked Sweet Potato": [[["Sweet Potato", 1]], "Oven", 35, 240],
+  "Apple Pie": [[["Apple", 1], ["Flour", 1], ["Egg", 1]], "Oven", 55, 450],
+  "Relaxation Tea": [[["Relaxation Tea Leaves", 1]], "Pot", 120, 1200],
+  "Bodigizer": [[["Red Grass", 1], ["Black Grass", 1], ["Honey", 1]], "Pot", 100, 250],
+  "Bodigizer XL": [[["Bodigizer", 1], ["Blue Grass", 1]], "Mixer", 150, 500],
+  "Turbojolt": [[["Red Grass", 1], ["White Grass", 1], ["Honey", 1]], "Pot", 50, 300],
+  "Turbojolt XL": [[["Turbojolt", 1], ["Green Grass", 1]], "Mixer", 100, 600],
+  "Elli Leaves": [[["Failed Dish", 1], ["Bodigizer", 1], ["Turbojolt", 1]], "Knife", 250, 1000],
+  "X Egg": [[["Egg", 1], ["Good Egg", 1], ["High Egg", 1], ["Golden Egg", 1], ["P Egg", 1]], "Seasoning Set", 50, 350],
+  "X Milk": [[["Small Milk", 1], ["Medium Milk", 1], ["Large Milk", 1], ["Golden Milk", 1], ["P Milk", 1]], "Seasoning Set", 75, 800],
+});
+
+Object.assign(BUILDINGS, {
+  "winery": "Aja Winery",
+  "sprites": "Harvest Sprite Hut",
+  "zack": "Zack & Won's Beach House",
+  "kai_shack": "Kai's Seaside Lodge",
+});
+
+Object.assign(HOURS, {
+  "winery": [9, 14, [5]],
+  "sprites": [6, 22, []],
+  "zack": [11, 16, []],
+  "kai_shack": [11, 19, [6]],
+});
+
+Object.assign(INTERIOR_LAYOUTS, {
+  "winery": [
+    "###################",
+    "#ooo#....k....#ooo#",
+    "#ooo#=========#ooo#",
+    "#.................#",
+    "#.oo..oo...oo..oo.#",
+    "#.........1.......#",
+    "#########D#########"
+  ],
+  "sprites": [
+    "###################",
+    "#b.b.b.#.k.#.b.b.b#",
+    "#.................#",
+    "#.1..2..3...4..5..#",
+    "#.6....ctc.....7..#",
+    "#.................#",
+    "#########D#########"
+  ],
+  "zack": [
+    "#################",
+    "#HH#....k....#oo#",
+    "#..#=========#..#",
+    "#...............#",
+    "#.ctc....1....o.#",
+    "########D########"
+  ],
+});
+
+// Add Remaining Villagers, Harvest Goddess, Kappa, Won, Kai, Duke, Manna, Anna, Sasha, Harris, Zack, Ellen, Stu
+Object.assign(NPCS, {
+  "Harvest Goddess": {
+    g: "G",
+    col: "0C",
+    home: "church",
+    out: [6, 22],
+    where: ["mountain", 47, 7],
+    rain: true,
+    bach: true,
+    loves: ["Strawberry", "Pineapple", "Moondrop Flower", "Toy Flower", "Pink Cat Flower", "Magic Red Flower", "Relaxation Tea"],
+    likes: ["Turnip", "Potato", "Cucumber", "Egg", "Milk", "Apple", "Honey"],
+    hates: ["Junk Ore", "Boot", "Empty Can", "Poisonous Mushroom", "Failed Dish"],
+    lines: [
+      ["Tadaaa! I am the Harvest Goddess! Toss an offering into my pond each day for blessings!"],
+      ["You work so diligently on your farm! Keep collecting the 9 Goddess Jewels in the Spring Mine."],
+      ["You have proven yourself a true master of Mineral Town! My heart is yours."],
+    ],
+  },
+  "Kappa": {
+    g: "K",
+    col: "0B",
+    home: "church",
+    out: [8, 20],
+    where: ["mountain", 15, 7],
+    rain: true,
+    bach: false,
+    loves: ["Cucumber"],
+    likes: ["Small Fish", "Medium Fish", "Large Fish"],
+    hates: ["Junk Ore", "Failed Dish"],
+    lines: [
+      ["...Kappa. (He stares at you from the lake. Try giving him a Cucumber.)"],
+      ["...Good Cucumber. Bring 10 and I will grant you the Mystic Blue Berry."],
+      ["...You hold the power of the lake. Rain will never tire you."],
+    ],
+  },
+  "Won": {
+    g: "W",
+    col: "09",
+    home: "zack",
+    out: [11, 16],
+    where: ["town", 24, 15],
+    rain: false,
+    bach: false,
+    loves: ["Gold", "Mystrile", "Diamond", "Pink Diamond", "Alexandrite", "SUGDW Apple"],
+    likes: ["Apple", "Copper", "Silver", "Jade"],
+    hates: ["Boot", "Empty Can", "Junk Ore"],
+    lines: [
+      ["Hehehe! Welcome, my friend! I am Won, purveyor of rare seeds and exotic treasures!"],
+      ["Looking for Cabbage, Pineapple, or Green Pepper seeds? Or perhaps a Frisbee for your dog?"],
+      ["For a discerning customer like you, I even have a Jewel of Truth and a Record Player!"],
+    ],
+  },
+  "Kai": {
+    g: "k",
+    col: "0E",
+    home: "kai_shack",
+    out: [9, 19],
+    where: ["beach", 20, 12],
+    rain: false,
+    bach: true,
+    loves: ["Pineapple", "Corn", "Large Fish", "Oil", "Flour", "Bread", "Omelet"],
+    likes: ["Egg", "Tomato", "Onion", "Pumpkin"],
+    hates: ["Turnip", "Sweet Potato", "Junk Ore"],
+    lines: [
+      ["Hey! Nothing beats the ocean breeze in summer. Come grab a bite at my shack!"],
+      ["The guys in town think I'm a slacker, but you actually treat me like a friend."],
+      ["Maybe I don't have to leave Mineral Town after summer... if I'm here with you."],
+    ],
+  },
+  "Duke": {
+    g: "u",
+    col: "0E",
+    home: "winery",
+    out: [13, 18],
+    where: ["town", 10, 10],
+    rain: false,
+    bach: false,
+    loves: ["Wine", "Grape Juice", "Wild Grape", "Sashimi", "Grilled Fish", "Cucumber"],
+    likes: ["Eggplant", "Cheese Fondue", "Tomato", "Spinach"],
+    hates: ["Junk Ore", "Failed Dish"],
+    lines: [
+      ["Welcome to Aja Winery! Our vines soak up the sunshine off Mother's Hill."],
+      ["Come fall, we always need extra hands for the grape harvest."],
+      ["Here's to a fine vintage and a fine neighbour!"],
+    ],
+  },
+  "Manna": {
+    g: "n",
+    col: "0A",
+    home: "winery",
+    out: [13, 17],
+    where: ["town", 33, 13],
+    rain: false,
+    bach: false,
+    loves: ["Wine", "Honey", "Pink Cat Flower", "Medium Fish", "Mushroom"],
+    likes: ["Milk", "Moondrop Flower", "Tomato", "Carrot"],
+    hates: ["Failed Dish", "Junk Ore"],
+    lines: [
+      ["Oh, hello dear! Have you met my husband Duke? Once I start talking I never stop,aha!"],
+      ["Our daughter Aja moved to the city, you know. Working alongside Cliff really cheered Duke up!"],
+      ["You're always welcome at the winery—and at Rose Plaza for our daily chat!"],
+    ],
+  },
+  "Zack": {
+    g: "Z",
+    col: "0D",
+    home: "zack",
+    out: [16, 18],
+    where: ["farm", 20, 7],
+    rain: true,
+    bach: false,
+    loves: ["Large Fish", "Orichalc", "Diamond", "Cucumber", "Tomato", "Curry Noodles"],
+    likes: ["Small Fish", "Medium Fish", "Egg", "Apple"],
+    hates: ["Poisonous Mushroom", "Junk Ore"],
+    lines: [
+      ["Hey there! I pick up everything from your shipping bin at 5:00 PM sharp every day."],
+      ["Have you tried ocean fishing off Mineral Beach? My old Fishing Rod still has plenty of luck in it!"],
+      ["Your farm's shipments keep getting bigger! Your grandfather would be proud."],
+    ],
+  },
+  "Harris": {
+    g: "H",
+    col: "0D",
+    home: "mayor",
+    out: [9, 19],
+    where: ["town", 38, 15],
+    rain: true,
+    bach: false,
+    loves: ["Cake", "Hot Milk", "Spa-Boiled Egg", "Small Fish", "Apple Pie"],
+    likes: ["Potato", "Egg", "Honey", "Apple", "Bread"],
+    hates: ["Poisonous Mushroom", "Red Grass"],
+    lines: [
+      ["Good day! Keeping the peace and delivering the mail in Mineral Town is my duty!"],
+      ["Everything's peaceful today... well, except when Won tries peddling strange apples."],
+      ["If I ever work up the courage to write a letter to Aja in the city, I hope it turns out well."],
+    ],
+  },
+});
+
+// Make all 5 original Bachelors also eligible for Heart Events & Blue Feather (Remake + Classic support!)
+for (const bachelor of ["Gray", "Rick", "Cliff", "Doctor", "Kai"]) {
+  if (NPCS[bachelor]) {
+    NPCS[bachelor].bach = true;
+  }
+}
+
+Object.assign(BIRTHDAYS, {
+  "Harvest Goddess": [0, 8],
+  "Won": [3, 19],
+  "Kai": [1, 22],
+  "Duke": [3, 15],
+  "Manna": [2, 11],
+  "Zack": [1, 29],
+  "Harris": [1, 4],
+});
+
+// All 20+ Festivals across Spring, Summer, Fall, and Winter
+Object.assign(FESTIVALS, {
+  "0,1": ["New Year's Festival", 9, 18, "newyear"],
+  "0,8": ["Spring Goddess Festival", 10, 18, "goddess"],
+  "0,14": ["Spring Thanksgiving", 9, 18, "spring_thanks"],
+  "0,18": ["Spring Horse Race", 10, 18, "horserace"],
+  "0,22": ["Cooking Festival", 10, 18, "cooking"],
+  "1,1": ["Beach Day Frisbee Contest", 10, 18, "beach"],
+  "1,7": ["Chicken Sumo Festival", 10, 18, "sumo"],
+  "1,8": ["Egg Hunt", 10, 16, "egghunt"],
+  "1,20": ["Cow Festival", 10, 18, "cowfest"],
+  "1,24": ["Fireworks Festival", 18, 22, "fireworks"],
+  "2,3": ["Music Festival", 18, 22, "music"],
+  "2,9": ["Harvest Festival", 10, 18, "harvest"],
+  "2,13": ["Moon Viewing Festival", 18, 22, "moon"],
+  "2,18": ["Fall Horse Race", 10, 18, "horserace"],
+  "2,21": ["Sheep Festival", 10, 18, "sheepfest"],
+  "2,30": ["Pumpkin Festival", 10, 18, "pumpkin"],
+  "3,2": ["Thomas's Winter Request", 9, 18, "winter_req"],
+  "3,14": ["Winter Thanksgiving", 10, 18, "thanks"],
+  "3,24": ["Starry Night Festival", 18, 22, "starry"],
+  "3,25": ["Stocking Festival", 9, 18, "stocking"],
+  "3,30": ["New Year's Eve Noodles", 18, 23, "nye"],
+});
+
+export interface SpriteDef {
+  name: string;
+  colorName: string;
+  col: string;
+  grass: string;
+  bday: [number, number];
+}
+
+export const SPRITES: SpriteDef[] = [
+  { name: "Chef", colorName: "Red", col: "08", grass: "Red Grass", bday: [2, 14] },
+  { name: "Nappy", colorName: "Orange", col: "09", grass: "Orange Grass", bday: [3, 22] },
+  { name: "Hoggy", colorName: "Yellow", col: "0A", grass: "Yellow Grass", bday: [2, 10] },
+  { name: "Timid", colorName: "Green", col: "0B", grass: "Green Grass", bday: [1, 16] },
+  { name: "Aqua", colorName: "Blue", col: "0C", grass: "Blue Grass", bday: [0, 26] },
+  { name: "Staid", colorName: "Indigo", col: "0D", grass: "Indigo Grass", bday: [2, 15] },
+  { name: "Bold", colorName: "Purple", col: "0E", grass: "Purple Grass", bday: [0, 4] },
+];
+
+export const TV_SHOPPING_ITEMS: [string, number, string][] = [
+  ["Clock", 2000, "Displays exact time in your farmhouse."],
+  ["Mirror", 1000, "Check your appearance and stamina state."],
+  ["Refrigerator", 2500, "Stores food and cooking ingredients."],
+  ["Cabinet", 2500, "Stores ores, gems, and unlocks the Gem of Truth."],
+  ["Knife", 1500, "Kitchen utensil for salads, sashimi, and sushi."],
+  ["Frying Pan", 1200, "Kitchen utensil for stir-fries, omelets, and pancakes."],
+  ["Pot", 1000, "Kitchen utensil for stews, curries, and teas."],
+  ["Mixer", 1200, "Kitchen utensil for juices and XL medicines."],
+  ["Whisk", 500, "Kitchen utensil for ice cream and batters."],
+  ["Rolling Pin", 750, "Kitchen utensil for noodles and pastries."],
+  ["Oven", 2500, "Kitchen utensil for cakes, cookies, pizza, and pies."],
+  ["Seasoning Set", 2500, "Sugar, Salt, Vinegar, Soy Sauce, and Miso for recipes."],
+  ["Rug", 5000, "A plush carpet for your farmhouse floor."],
+  ["Power Berry", 10000, "Increases your maximum Stamina by +10!"],
+];
+
+export const HEART_EVENTS: Record<string, [string, string, string, string]> = {
+  "Mary": [
+    "Black Heart Event: Mary drops a stack of botany books in the Library. You help her gather them, and she shyly thanks you.",
+    "Purple Heart Event: Mary asks your opinion on the rough draft of her novel about a brave farmer and a forest spirit.",
+    "Blue Heart Event: On Mother's Hill, Mary gifts you a pressed bookmark and confesses you inspired her story's hero.",
+    "Yellow Heart Event: Basil and Anna invite you to dinner; Mary beams when you praise her homemade vegetable stew.",
+  ],
+  "Karen": [
+    "Black Heart Event: At the Supermarket, Karen gives you a bag of Grass Seeds on the house to help get your farm started.",
+    "Purple Heart Event: Karen asks you to help pick betweenMoondrop and Pink Cat flower seeds for Sasha's garden.",
+    "Blue Heart Event: At Aja Winery, Duke gifts Karen a bottle of wine brewed the year she was born—and she shares a glass with you.",
+    "Yellow Heart Event: Karen cooks you her signature dish; even though it's a little burnt, eating it with a smile wins her heart.",
+  ],
+  "Popuri": [
+    "Black Heart Event: Popuri chases an escaped hen outside the Poultry Farm; you catch it gently for her.",
+    "Purple Heart Event: Popuri asks if you'd like to give her a tour of your farm—she loves seeing your crops and animals!",
+    "Blue Heart Event: By the Hot Spring, Popuri gives you a keepsake Mud Ball she made and promises to always cheer you on.",
+    "Yellow Heart Event: Lillia and Rick invite you for lunch, and Popuri proudly serves her homemade omelet.",
+  ],
+  "Elli": [
+    "Black Heart Event: Stu scrapes his knee outside the Clinic; you help Elli calm him down while she bandages it.",
+    "Purple Heart Event: Elli asks for your encouragement as she studies late to become a better nurse alongside the Doctor.",
+    "Blue Heart Event: On her day off, Elli brings you homemade sandwiches to test if they're nutritious enough for hard-working farmers.",
+    "Yellow Heart Event: At Mineral Beach, Elli opens up about her grandmother Ellen and how much your kindness means to her.",
+  ],
+  "Ann": [
+    "Black Heart Event: At Doug's Inn, Ann serves you a huge complimentary meal to see if you have a healthy appetite!",
+    "Purple Heart Event: Ann tries cleaning the upper rooms of the Inn and tumbles into your arms, blushing furiously.",
+    "Blue Heart Event: Ann gives you a cherished broken Music Box that belonged to her mother, trusting you with it.",
+    "Yellow Heart Event: Doug pulls you aside at the Inn and admits he'd be proud if someone as hardworking as you looked after Ann.",
+  ],
+  "Harvest Goddess": [
+    "Black Heart Event: The Harvest Goddess rises from the waterfall in a cascade of light to applaud your first 10 offerings.",
+    "Purple Heart Event: She tests your knowledge of Mineral Town's crops and animals, laughing delightedly at your answers.",
+    "Blue Heart Event: She blesses your fields with golden light and gifts you a rare White Grass from the heavens.",
+    "Yellow Heart Event: She reveals that only a true master of the land, mines, and waters may win her hand in marriage.",
+  ],
+};
+
+export const RIVAL_PAIRS: [string, string, string][] = [
+  ["Mary", "Gray", "Gray spends his afternoons reading quietly in Mary's library, bonding over craftsmanship and stories."],
+  ["Karen", "Rick", "Rick and Karen reminisce by the stream about growing up together in Mineral Town."],
+  ["Popuri", "Kai", "Popuri visits Kai's seaside shack, fascinated by his stories of life beyond Mineral Town."],
+  ["Elli", "Doctor", "The Doctor praises Elli's dedication at the Clinic and admits he couldn't run it without her."],
+  ["Ann", "Cliff", "Ann brings Cliff a warm lunch from Doug's Inn and encourages him to make Mineral Town his home."],
+];
+

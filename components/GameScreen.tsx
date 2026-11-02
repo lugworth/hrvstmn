@@ -213,8 +213,12 @@ export default function GameScreen() {
     };
     window.addEventListener('resize', onResize);
 
+    // Check for ?autostart=1 query param
+    const params = new URLSearchParams(window.location.search);
+    const autostart = params.get('autostart') === '1';
+
     // Initialize Game engine
-    const game = new Game(screen);
+    const game = new Game(screen, autostart);
     gameRef.current = game;
 
     // Start game loop in background
@@ -255,7 +259,7 @@ export default function GameScreen() {
       {/* Control hints for desktop keyboard users */}
       {!isTouch && (
         <div id="hint" className="text-[#606060] text-xs text-center py-1 tracking-wide font-mono">
-          arrows/WASD move &middot; space use tool &middot; x act &middot; tab tools &middot; i rucksack &middot; ? help &middot; auto-saved
+          arrows/WASD move &middot; space use tool &middot; x act &middot; tab tools &middot; i rucksack &middot; m memo &middot; esc diary &middot; ? help
         </div>
       )}
 
@@ -263,7 +267,7 @@ export default function GameScreen() {
       <div
         id="pad"
         className={`${
-          isTouch ? 'flex' : 'hidden sm:flex'
+          isTouch ? 'flex' : 'hidden'
         } justify-between items-center px-4 py-2 border-t border-[#404040]/40 bg-[#000000]/90 z-20 gap-3`}
       >
         {/* D-Pad */}

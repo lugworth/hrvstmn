@@ -1,20 +1,110 @@
-// Transpiled HRVSTMN Game Engine
+// Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
 import { Screen } from './screen';
-import { GameMap, build_farm, build_town, build_mountain, build_house, build_interior, build_house_upgraded, build_mine } from './map';
 import {
-  PALETTE, SECS_PER_10MIN, SAVE_KEY, SEASONS, WEEKDAYS, SEASON_COL, WEATHER_COL,
-  CROPS, FORAGE, FORAGE_GLYPH, ITEMS, BARN_CAP, ANIMALS, WOOL_DAYS, COW_NAMES, SHEEP_NAMES,
-  TOOLS, UPGRADABLE, LEVELS, LEVEL_COL, UPGRADE, CAN_CAP, AREA, OBJ_GLYPH, HOURS, BUILDINGS,
-  NPCS, SPOUSE_LINES, FESTIVALS, BIRTHDAYS, FEST_SPOTS, TILES, INTERIOR_LAYOUTS, INTERIOR_LEGEND,
-  EXPANSIONS, BUILD_DAYS, UTENSILS, FRUITS, RECIPES, DIRS, OK_KEYS, CANCEL_KEYS, SPOUSE_POS,
-  HOUSE_WAKE, LOGO, pkey, unkey, clamp, fmt_time, fmt_hour, BOOKS, HELP
+  GameMap,
+  build_farm,
+  build_town,
+  build_mountain,
+  build_beach,
+  build_house,
+  build_interior,
+  build_house_upgraded,
+  build_mine,
+} from './map';
+import {
+  SECS_PER_10MIN,
+  SAVE_KEY,
+  SEASONS,
+  WEEKDAYS,
+  SEASON_COL,
+  WEATHER_COL,
+  CROPS,
+  FORAGE,
+  FORAGE_GLYPH,
+  ITEMS,
+  BARN_CAP,
+  ANIMALS,
+  WOOL_DAYS,
+  COW_NAMES,
+  SHEEP_NAMES,
+  TOOLS,
+  UPGRADABLE,
+  LEVELS,
+  LEVEL_COL,
+  UPGRADE,
+  CAN_CAP,
+  OBJ_GLYPH,
+  HOURS,
+  BUILDINGS,
+  NPCS,
+  SPOUSE_LINES,
+  FESTIVALS,
+  BIRTHDAYS,
+  FEST_SPOTS,
+  TILES,
+  INTERIOR_LAYOUTS,
+  EXPANSIONS,
+  BUILD_DAYS,
+  UTENSILS,
+  FRUITS,
+  RECIPES,
+  DIRS,
+  OK_KEYS,
+  CANCEL_KEYS,
+  SPOUSE_POS,
+  HOUSE_WAKE,
+  LOGO,
+  pkey,
+  clamp,
+  fmt_time,
+  fmt_hour,
+  BOOKS,
+  HELP,
+  SPRITES,
+  TV_SHOPPING_ITEMS,
+  HEART_EVENTS,
+  RIVAL_PAIRS,
 } from './constants';
 import {
-  py_len, py_range, py_choice, py_randint, py_slice, py_item, py_in,
-  py_dict_get, py_dict_items, py_dict_keys, py_dict_values, py_dict_setdefault, py_del, py_rng,
-  py_sum, py_sorted, py_next, py_add, py_eq, enumerate, py_iter, py_wrap, py_mult
+  CoordSet,
+  parseCoordKey,
+  py_len,
+  py_range,
+  py_slice,
+  py_item,
+  py_in,
+  py_dict_get,
+  py_dict_items,
+  py_del,
+  py_pop,
+  py_rng,
+  py_sum,
+  py_sorted,
+  py_next,
+  py_add,
+  py_eq,
+  enumerate,
+  py_iter,
+  py_wrap,
+  py_mult,
 } from './runtime_helpers';
+import {
+  getMaxStamina,
+  getToolArea,
+  calculateStaminaSpend,
+  getHeartInfo,
+  calculateGiftPoints,
+  getEggQuality,
+  getMilkQuality,
+  getWoolQuality,
+  convertWithMaker,
+  rollSpringMineDrop,
+  rollLakeMineDrop,
+  CURSED_TOOL_FLOORS,
+  GODDESS_JEWEL_FLOORS,
+  KAPPA_JEWEL_FLOORS,
+} from './rules';
 
 export class Game {
   [key: string]: any;
@@ -22,17 +112,17 @@ export class Game {
   scr!: Screen;
   started: boolean = false;
   running: boolean = true;
+  autostart: boolean = false;
   msgs: [string, string][] = [];
   maps: Record<string, GameMap> = {};
   last: number = 0;
   acc: number = 0.0;
   npc_acc: number = 0.0;
   passing_out: boolean = false;
-  interior_data: Record<string, { entry: [number, number]; spots: Record<string, [number, number]> }> = {};
   interiors: Record<string, any> = {};
   interior_bid: Record<string, string> = {};
   indoor_npcs: Record<string, any> = {};
-  _fest_saved: Record<string, any> = {};
+  _fest_saved: Record<string, any> | null = null;
 
   name: string = 'Pete';
   farm: string = 'Moon';
@@ -43,35 +133,86 @@ export class Game {
   weather: string = 'Sunny';
   tomorrow: string = 'Sunny';
   gold: number = 500;
-  stamina: number = 100;
-  max_stamina: number = 100;
+  stamina: number = 150;
+  max_stamina: number = 150;
+  fatigue: number = 0;
+  power_berries: number = 0;
+  berry_sources: string[] = [];
+  has_mystic_berry: boolean = false;
+
   inv: Record<string, number> = {};
   held: string | null = null;
   tool: string = 'Hoe';
   levels: Record<string, number> = {};
+  tool_exp: Record<string, number> = {};
+  cursed_uses: Record<string, number> = {};
+  cursed_days: Record<string, number> = {};
+  cursed_blesses: Record<string, number> = {};
   water: number = 30;
   upgrading: [string, number] | null = null;
-  tilled: Set<string> = new Set();
-  wet: Set<string> = new Set();
-  crops: Record<string, any> = {};
-  objs: { farm: Record<string, string>; mine: Record<string, string> } = { farm: {}, mine: {} };
+
+  tilled: CoordSet = new CoordSet();
+  wet: CoordSet = new CoordSet();
+  crops: Record<string, [string, number]> = {};
+  objs: Record<string, Record<string, string>> = { farm: {}, mine: {} };
   hp: Record<string, number> = {};
-  forage: Record<string, Record<string, string>> = { mountain: {} };
+  forage: Record<string, Record<string, string>> = { mountain: {}, beach: {} };
   bin: Record<string, number> = {};
+  shipped_counts: Record<string, number> = {};
+  zack_paid_today: boolean = false;
+
   chickens: number = 0;
+  chicken_aff: number = 20;
+  chicken_fest_won: boolean = false;
+  outdoor_hours: number = 0;
+  incubator_days: number = 0;
   fed: number = 0;
   eggs: number = 0;
+
+  dog_aff: number = 20;
+  dog_frisbee_dist: number = 15;
+  horse_aff: number = 20;
+  horse_grown: boolean = true;
+  riding_horse: boolean = false;
+  medals: number = 50;
+
   friend: Record<string, number> = {};
+  sprite_aff: Record<string, number> = {};
+  sprite_jobs: Record<string, { task: string; days: number; skill: number }> = {};
+  heart_events_seen: string[] = [];
+  rival_events_seen: string[] = [];
   talked: Set<string> = new Set();
   gifted: Set<string> = new Set();
+
   married: string | null = null;
+  marriage_day: number = -1;
+  child_name: string | null = null;
+  child_days: number = 0;
+
   shipped_total: number = 0;
+  steps: number = 0;
+  fish_caught: Record<string, number> = {};
+  goddess_gifts: number = 0;
+  kappa_gifts: number = 0;
+  goddess_jewels: number = 0;
+  kappa_jewels: number = 0;
+  truth_jewels: number = 0;
+  honey_picked: boolean = false;
+  vase_flower: string | null = null;
+  fireplace_lit: boolean = false;
+  tv_watched_saturday: string | null = null;
+  tv_order: [string, number] | null = null;
+  makers: string[] = [];
+
   prayed: boolean = false;
   fest_wins: string[] = [];
   fest_attended: boolean = false;
   fest_declined: boolean = false;
-  npc_pos: Record<string, any> = {};
+  npc_pos: Record<string, [number, number]> = {};
+  mine_type: 'spring' | 'lake' = 'spring';
   mine_floor: number = 0;
+  max_spring_floor: number = 0;
+  max_lake_floor: number = 0;
   ladder: [number, number] | null = null;
   mapname: string = 'house';
   px: number = 1;
@@ -80,134 +221,260 @@ export class Game {
   animals: any[] = [];
   house_flags: string[] = [];
   project: [string, number] | null = null;
-  bath_used: boolean = false;
-  SAVE_FIELDS = ['name', 'farm', 'year', 'season', 'day', 'weather', 'tomorrow', 'gold',
-    'max_stamina', 'inv', 'tool', 'levels', 'water', 'upgrading', 'bin',
-    'chickens', 'fed', 'eggs', 'friend', 'married', 'shipped_total',
-    'animals', 'fest_wins', 'house_flags', 'project'];
+  bathed: boolean = false;
 
-  constructor(scr: any) {
+  SAVE_FIELDS = [
+    'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
+    'stamina', 'max_stamina', 'fatigue', 'power_berries', 'berry_sources', 'has_mystic_berry',
+    'inv', 'held', 'tool', 'levels', 'tool_exp', 'cursed_uses', 'cursed_days', 'cursed_blesses',
+    'water', 'upgrading', 'bin', 'shipped_counts', 'chickens', 'chicken_aff', 'chicken_fest_won',
+    'outdoor_hours', 'incubator_days', 'fed', 'eggs', 'dog_aff', 'dog_frisbee_dist',
+    'horse_aff', 'horse_grown', 'medals', 'friend', 'sprite_aff', 'sprite_jobs',
+    'heart_events_seen', 'rival_events_seen', 'married', 'marriage_day', 'child_name', 'child_days',
+    'shipped_total', 'steps', 'fish_caught', 'goddess_gifts', 'kappa_gifts',
+    'goddess_jewels', 'kappa_jewels', 'truth_jewels', 'vase_flower', 'makers',
+    'fest_wins', 'house_flags', 'project', 'max_spring_floor', 'max_lake_floor',
+  ];
+
+  constructor(scr: Screen, autostart: boolean = false) {
     this.scr = scr;
+    this.autostart = autostart;
     this.started = false;
     this.running = true;
     this.msgs = [];
-    this.maps = { ["farm"]: build_farm(), ["town"]: build_town(), ["mountain"]: build_mountain(), ["house"]: build_house() };
-    this.last = (Date.now() / 1000);
+    this.maps = {
+      farm: build_farm(),
+      town: build_town(),
+      mountain: build_mountain(),
+      beach: build_beach(),
+      house: build_house(),
+    };
+    this.last = Date.now() / 1000;
     this.acc = 0.0;
     this.npc_acc = 0.0;
     this.passing_out = false;
-    ((this as any).build_interiors());
+    this.build_interiors();
   }
 
-  new_game(name: any, farm: any): any {
-    let kind: any = undefined; let m: any = undefined; let r: any = undefined; let rng: any = undefined; let x: any = undefined; let y: any = undefined;
-    [this.name, this.farm] = [name, farm];
-    [this.year, this.season, this.day, this.minutes] = [1, 0, 1, py_mult(6, 60)];
-    [this.weather, this.tomorrow] = ["Sunny", ((this as any).roll_weather(0, 2))];
-    [this.gold, this.stamina, this.max_stamina] = [500, 100, 100];
-    this.inv = { ["Turnip Seeds"]: 2 };
+  setBodyState(state: 'title' | 'playing' | 'paused') {
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.dataset.state = state;
+    }
+  }
+
+  new_game(name: string, farm: string): void {
+    this.name = name;
+    this.farm = farm;
+    this.year = 1;
+    this.season = 0;
+    this.day = 1;
+    this.minutes = 6 * 60;
+    this.weather = 'Sunny';
+    this.tomorrow = this.roll_weather(0, 2);
+    this.gold = 500;
+    this.power_berries = 0;
+    this.berry_sources = [];
+    this.has_mystic_berry = false;
+    this.max_stamina = getMaxStamina(0);
+    this.stamina = this.max_stamina;
+    this.fatigue = 0;
+    this.inv = { 'Turnip Seeds': 2, 'Pedometer': 1 };
     this.held = null;
-    this.tool = "Hoe";
-    this.levels = Object.fromEntries(py_iter(UPGRADABLE).map((t: any) => [t, 0]));
-    this.water = py_item(CAN_CAP, 0);
+    this.tool = 'Hoe';
+    this.levels = Object.fromEntries(UPGRADABLE.map((t) => [t, 0]));
+    this.tool_exp = Object.fromEntries(UPGRADABLE.map((t) => [t, 0]));
+    this.cursed_uses = {};
+    this.cursed_days = {};
+    this.cursed_blesses = {};
+    this.water = CAN_CAP[0];
     this.upgrading = null;
-    [this.tilled, this.wet, this.crops] = [new Set(), new Set(), {  }];
-    this.objs = { ["farm"]: {  }, ["mine"]: {  } };
-    this.hp = {  };
-    this.forage = { ["mountain"]: {  } };
-    this.bin = {  };
+    this.tilled = new CoordSet();
+    this.wet = new CoordSet();
+    this.crops = {};
+    this.objs = { farm: {}, mine: {} };
+    this.hp = {};
+    this.forage = { mountain: {}, beach: {} };
+    this.bin = {};
+    this.shipped_counts = {};
+    this.zack_paid_today = false;
     this.chickens = 0;
+    this.chicken_aff = 20;
+    this.chicken_fest_won = false;
+    this.outdoor_hours = 0;
+    this.incubator_days = 0;
     this.fed = 0;
     this.eggs = 0;
-    this.friend = Object.fromEntries(py_iter(NPCS).map((n: any) => [n, 0]));
-    [this.talked, this.gifted] = [new Set(), new Set()];
+    this.dog_aff = 25;
+    this.dog_frisbee_dist = 15;
+    this.horse_aff = 25;
+    this.horse_grown = true;
+    this.riding_horse = false;
+    this.medals = 50;
+    this.friend = Object.fromEntries(Object.keys(NPCS).map((n) => [n, 0]));
+    this.sprite_aff = Object.fromEntries(SPRITES.map((s) => [s.name, 15]));
+    this.sprite_jobs = Object.fromEntries(
+      SPRITES.map((s) => [s.name, { task: 'none', days: 0, skill: 10 }])
+    );
+    this.heart_events_seen = [];
+    this.rival_events_seen = [];
+    this.talked = new Set();
+    this.gifted = new Set();
     this.married = null;
+    this.marriage_day = -1;
+    this.child_name = null;
+    this.child_days = 0;
     this.shipped_total = 0;
+    this.steps = 0;
+    this.fish_caught = {};
+    this.goddess_gifts = 0;
+    this.kappa_gifts = 0;
+    this.goddess_jewels = 0;
+    this.kappa_jewels = 0;
+    this.truth_jewels = 0;
+    this.honey_picked = false;
+    this.vase_flower = null;
+    this.fireplace_lit = false;
+    this.tv_watched_saturday = null;
+    this.tv_order = null;
+    this.makers = [];
     this.prayed = false;
-    [this.fest_wins, this.fest_attended, this.fest_declined] = [[], false, false];
-    this.npc_pos = {  };
+    this.fest_wins = [];
+    this.fest_attended = false;
+    this.fest_declined = false;
+    this.npc_pos = {};
+    this.mine_type = 'spring';
     this.mine_floor = 0;
+    this.max_spring_floor = 0;
+    this.max_lake_floor = 0;
     this.ladder = null;
-    this.mapname = "house";
+    this.mapname = 'house';
     [this.px, this.py] = HOUSE_WAKE;
-    this.face = [0, (-1)];
-    rng = py_rng().Random();
-    m = py_item(this.maps, "farm");
-    for (let y of py_iter(py_range(m.h))) {
-      for (let x of py_iter(py_range(m.w))) {
-        if (py_eq(py_item(py_item(m.t, y), x), "field")) {
-          r = rng.random();
-          kind = ((r < 0.12) ? "weed" : ((r < 0.19) ? "stone" : ((r < 0.25) ? "branch" : ((r < 0.262) ? "stump" : ((r < 0.274) ? "boulder" : null)))));
+    this.face = [0, -1];
+
+    const rng = py_rng();
+    const m = this.maps['farm'];
+    for (let y = 0; y < m.h; y++) {
+      for (let x = 0; x < m.w; x++) {
+        if (m.t[y][x] === 'field') {
+          const r = rng.random();
+          const kind =
+            r < 0.12
+              ? 'weed'
+              : r < 0.19
+                ? 'stone'
+                : r < 0.25
+                  ? 'branch'
+                  : r < 0.262
+                    ? 'stump'
+                    : r < 0.274
+                      ? 'boulder'
+                      : null;
           if (kind) {
-            py_item(this.objs, "farm")[pkey(x, y)] = kind;
-            if (py_in(kind, ["stump", "boulder"])) {
+            this.objs['farm'][pkey(x, y)] = kind;
+            if (kind === 'stump' || kind === 'boulder') {
               this.hp[pkey(x, y)] = 6;
             }
           }
         }
       }
     }
-    ((this as any).spawn_forage());
+    this.spawn_forage();
     this.animals = [];
-    ((this as any).init_carpentry());
+    this.init_carpentry();
     this.started = true;
+    this.setBodyState('playing');
   }
 
-  get map(): any {
-    return py_item(this.maps, this.mapname);
+  get map(): GameMap {
+    return this.maps[this.mapname];
   }
 
-  absday(year: any = null, season: any = null, day: any = null): any {
-    year = (py_eq(year, null) ? this.year : year);
-    season = (py_eq(season, null) ? this.season : season);
-    day = (py_eq(day, null) ? this.day : day);
-    return (py_add(py_add(py_mult((year - 1), 120), py_mult(season, 30)), day) - 1);
+  absday(year: number | null = null, season: number | null = null, day: number | null = null): number {
+    const y = year === null ? this.year : year;
+    const s = season === null ? this.season : season;
+    const d = day === null ? this.day : day;
+    return (y - 1) * 120 + s * 30 + d - 1;
   }
 
-  get weekday(): any {
-    return (((this as any).absday()) % 7);
+  get weekday(): number {
+    return this.absday() % 7;
   }
 
-  get season_name(): any {
-    return py_item(SEASONS, this.season);
+  get season_name(): string {
+    return SEASONS[this.season];
   }
 
-  date_str(): any {
-    return `${this.season_name} ${this.day} (${py_item(WEEKDAYS, this.weekday)}), Year ${this.year}`;
+  date_str(): string {
+    return `${this.season_name} ${this.day} (${WEEKDAYS[this.weekday]}), Year ${this.year}`;
   }
 
-  roll_weather(season: any, day: any): any {
-    let r: any = undefined;
-    if (py_eq(day, 1)) {
-      return "Sunny";
+  roll_weather(season: number, day: number): string {
+    if (day === 1 || FESTIVALS[`${season},${day}`]) {
+      return 'Sunny';
     }
-    r = py_rng().random();
-    if (py_eq(season, 3)) {
-      return ((r < 0.25) ? "Snow" : "Sunny");
+    const r = py_rng().random();
+    if (season === 3) {
+      if (r < 0.04) return 'Blizzard';
+      return r < 0.28 ? 'Snow' : 'Sunny';
     }
-    return ((r < py_item([0.2, 0.1, 0.15], season)) ? "Rain" : "Sunny");
+    if (season === 1 && r < 0.04) {
+      return 'Typhoon';
+    }
+    return r < [0.2, 0.12, 0.15][season] ? 'Rain' : 'Sunny';
   }
 
-  msg(text: any, col: any = "05"): any {
+  msg(text: string, col: string = '05'): void {
     this.msgs.push([text, col]);
-    this.msgs = py_slice(this.msgs, (-30), null);
+    this.msgs = py_slice(this.msgs, -30, null);
   }
 
-  give(item: any, n: any = 1): any {
-    this.inv[item] = py_add(py_dict_get(this.inv, item, 0), n);
+  give(item: string, n: number = 1): void {
+    this.inv[item] = (this.inv[item] || 0) + n;
   }
 
-  take(item: any, n: any = 1): any {
+  take(item: string, n: number = 1): void {
+    if (!this.inv[item]) return;
     this.inv[item] -= n;
-    if ((py_item(this.inv, item) <= 0)) {
-      py_del(this.inv, item);
-      if (py_eq(this.held, item)) {
+    if (this.inv[item] <= 0) {
+      delete this.inv[item];
+      if (this.held === item) {
         this.held = null;
       }
     }
   }
 
-  save(): void {
+  give_power_berry(source: string): boolean {
+    if (this.berry_sources.includes(source) || this.power_berries >= 10) {
+      return false;
+    }
+    this.berry_sources.push(source);
+    this.power_berries += 1;
+    this.max_stamina = getMaxStamina(this.power_berries);
+    this.stamina = this.max_stamina;
+    this.fatigue = 0;
+    this.msg(`You ate a Power Berry! Max Stamina +10 (${this.max_stamina})!`, '0A');
+    return true;
+  }
+
+  give_truth_jewel(source: string): boolean {
+    const key = `truth:${source}`;
+    if (this.berry_sources.includes(key) || this.truth_jewels >= 9) {
+      return false;
+    }
+    this.berry_sources.push(key);
+    this.truth_jewels += 1;
+    this.give('Truth Jewel', 1);
+    if (this.truth_jewels >= 9) {
+      this.take('Truth Jewel', 9);
+      this.give('Gem of Truth', 1);
+      this.msg('All 9 Jewels combined into the GEM OF TRUTH! Exact Stamina/Fatigue unlocked!', '0C');
+    } else {
+      this.msg(`Found a Jewel of Truth! (${this.truth_jewels}/9)`, '0C');
+    }
+    return true;
+  }
+
+  save(slot: number = 1): void {
     const d: Record<string, any> = {};
     for (const k of this.SAVE_FIELDS) {
       d[k] = (this as any)[k];
@@ -220,24 +487,26 @@ export class Game {
     d['forage'] = { ...this.forage };
     try {
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(SAVE_KEY, JSON.stringify(d));
+        const key = slot === 2 ? `${SAVE_KEY}-2` : SAVE_KEY;
+        localStorage.setItem(key, JSON.stringify(d));
       }
     } catch (e) {
       console.error('Save failed', e);
     }
   }
 
-  load(): void {
+  load(slot: number = 1): void {
     let jsonStr = '';
     try {
       if (typeof localStorage !== 'undefined') {
-        jsonStr = localStorage.getItem(SAVE_KEY) || '';
+        const key = slot === 2 ? `${SAVE_KEY}-2` : SAVE_KEY;
+        jsonStr = localStorage.getItem(key) || '';
       }
     } catch (e) {
       console.error('Load failed', e);
     }
     if (!jsonStr) {
-      throw new Error('No save file found');
+      throw new Error(`No save file in Slot ${slot}`);
     }
     const d = JSON.parse(jsonStr);
     this.new_game(d.name || 'Pete', d.farm || 'Moon');
@@ -251,214 +520,321 @@ export class Game {
         this.friend[n] = 0;
       }
     }
-    this.tilled = new Set(d.tilled || []);
-    this.wet = new Set(d.wet || []);
+    for (const s of SPRITES) {
+      if (!(s.name in this.sprite_aff)) {
+        this.sprite_aff[s.name] = 15;
+      }
+      if (!(s.name in this.sprite_jobs)) {
+        this.sprite_jobs[s.name] = { task: 'none', days: 0, skill: 10 };
+      }
+    }
+    this.tilled = new CoordSet(d.tilled || []);
+    this.wet = new CoordSet(d.wet || []);
     this.crops = { ...(d.crops || {}) };
     this.objs.farm = { ...(d.objs || {}) };
     this.hp = { ...(d.hp || {}) };
-    this.forage = { ...(d.forage || { mountain: {} }) };
-    this.stamina = this.max_stamina;
+    this.forage = { mountain: {}, beach: {}, ...(d.forage || {}) };
+    this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
+    this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
     this.rebuild_house();
+    this.setBodyState('playing');
   }
 
-  async run(): Promise<any> {
-    let k: any = undefined;
-    (await (this as any).title());
-    this.last = (Date.now() / 1000);
+  async run(): Promise<void> {
+    if (this.autostart) {
+      this.new_game('Pete', 'Moon');
+      this.msg('Welcome to Mineral Town! Use Arrows/WASD to move, SPACE to use tool, X to act.', '0B');
+      this.render();
+      this.scr.flush();
+    } else {
+      this.setBodyState('title');
+      await this.title();
+    }
+    this.last = Date.now() / 1000;
     while (this.running) {
-      k = (await this.scr.getKey((1 / 20)));
-      while ((k && this.running)) {
-        (await (this as any).handle(k));
-        k = (await this.scr.getKey(0));
+      let k = await this.scr.getKey(1 / 20);
+      while (k && this.running) {
+        await this.handle(k);
+        k = await this.scr.getKey(0);
       }
-      (await (this as any).update());
-      ((this as any).render());
+      await this.update();
+      this.render();
       this.scr.flush();
     }
   }
 
-  async update(): Promise<any> {
-    let dt: any = undefined; let now: any = undefined;
-    now = (Date.now() / 1000);
-    dt = Math.min((now - this.last), 0.25);
+  async update(): Promise<void> {
+    const now = Date.now() / 1000;
+    const dt = Math.min(now - this.last, 0.25);
     this.last = now;
-    if ((!this.map.indoor)) {
+    if (!this.map.indoor) {
       this.acc += dt;
-      while ((this.acc >= SECS_PER_10MIN)) {
+      while (this.acc >= SECS_PER_10MIN) {
         this.acc -= SECS_PER_10MIN;
-        (await (this as any).advance(10));
+        await this.advance(10);
       }
     }
     this.npc_acc += dt;
-    if ((this.npc_acc > 0.7)) {
+    if (this.npc_acc > 0.7) {
       this.npc_acc = 0;
-      ((this as any).move_npcs());
+      this.move_npcs();
     }
   }
 
-  async advance(mins: any): Promise<any> {
-    let before: any = undefined;
-    before = this.minutes;
+  process_zack_pickup(): number {
+    let total = 0;
+    for (const [item, qty] of Object.entries(this.bin)) {
+      const price = ITEMS[item] ? ITEMS[item][0] : 0;
+      total += price * qty;
+      this.shipped_counts[item] = (this.shipped_counts[item] || 0) + qty;
+    }
+    if (total > 0) {
+      this.gold += total;
+      this.shipped_total += total;
+      this.bin = {};
+    }
+    return total;
+  }
+
+  async advance(mins: number): Promise<void> {
+    const before = this.minutes;
     this.minutes += mins;
-    if ((before < py_mult(18, 60)) && (py_mult(18, 60) <= this.minutes)) {
-      ((this as any).msg("The sun is setting. Shops are closing soon.", "09"));
+
+    // Equipped Gem of the Goddess / Gem of the Kappa passive regeneration
+    if (this.held === 'Gem of the Goddess' || this.inv['Gem of the Goddess']) {
+      this.stamina = Math.min(this.max_stamina, this.stamina + 2);
     }
-    if ((before < py_mult(24, 60)) && (py_mult(24, 60) <= this.minutes)) {
-      ((this as any).msg("It's midnight. You should get to bed!", "08"));
+    if (this.held === 'Gem of the Kappa' || this.inv['Gem of the Kappa']) {
+      this.fatigue = Math.max(0, this.fatigue - 2);
     }
-    if ((this.minutes >= py_mult(26, 60))) {
-      (await (this as any).pass_out("It's 2AM... you collapse from exhaustion where you stand."));
+
+    // 5:00 PM (17:00) Zack shipping pickup
+    if (before < 17 * 60 && this.minutes >= 17 * 60 && !this.zack_paid_today) {
+      this.zack_paid_today = true;
+      const earned = this.process_zack_pickup();
+      if (earned > 0) {
+        this.msg(`5:00 PM: Zack picked up your shipment! +${earned}G.`, '09');
+      }
+    }
+
+    if (before < 18 * 60 && 18 * 60 <= this.minutes) {
+      this.msg('The sun is setting. Shops are closing soon.', '09');
+    }
+    if (before < 24 * 60 && 24 * 60 <= this.minutes) {
+      this.fatigue = Math.min(100, this.fatigue + 10);
+      this.msg("It's midnight. Staying up late builds Fatigue!", '08');
+    }
+    if (this.minutes >= 26 * 60) {
+      await this.pass_out("It's 2:00 AM... you collapse from exhaustion where you stand.");
       return;
     }
-    ((this as any).update_npcs());
+    this.update_npcs();
   }
 
-  async handle(k: any): Promise<any> {
-    let t: any = undefined;
-    if (py_in(k, DIRS)) {
-      (await (this as any).move(...((py_iter(py_item(DIRS, k)) || []) as [any, any, any])));
-    } else {
-      if (py_in(k, ["space", "z"])) {
-        (await (this as any).use_tool());
-      } else {
-        if (py_in(k, ["x", "e", "enter"])) {
-          (await (this as any).interact());
-        } else {
-          if (py_eq(k, "tab")) {
-            ((this as any).cycle_tool(1));
-          } else {
-            if (py_eq(k, "btab")) {
-              ((this as any).cycle_tool((-1)));
-            } else {
-              if ((py_eq(py_len(k), 1) && py_in(k, "123456"))) {
-                t = py_item(TOOLS, (Math.floor(Number(k)) - 1));
-                if ((this.upgrading && py_eq(py_item(this.upgrading, 0), t))) {
-                  ((this as any).msg(`Saibara is still working on your ${t}.`, "08"));
-                } else {
-                  this.tool = t;
-                }
-              } else {
-                if (py_eq(k, "i")) {
-                  (await (this as any).rucksack());
-                } else {
-                  if (py_eq(k, "?")) {
-                    (await (this as any).show_lines("Help", HELP));
-                  } else {
-                    if (py_eq(k, "esc")) {
-                      (await (this as any).pause_menu());
-                    } else {
-                      if (py_in(k, ["Q", "ctrl-c"])) {
-                        (await (this as any).quit_prompt());
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+  async handle(k: string): Promise<void> {
+    if (k in DIRS) {
+      const [dx, dy] = DIRS[k];
+      await this.move(dx, dy);
+      if (this.riding_horse && this.mapname === 'farm') {
+        await this.move(dx, dy);
       }
+    } else if (k === 'space' || k === 'z') {
+      await this.use_tool();
+    } else if (k === 'x' || k === 'e' || k === 'enter') {
+      await this.interact();
+    } else if (k === 'tab') {
+      this.cycle_tool(1);
+    } else if (k === 'btab') {
+      this.cycle_tool(-1);
+    } else if (k.length === 1 && '123456'.includes(k)) {
+      const t = TOOLS[Number(k) - 1];
+      if (this.levels[this.tool] === 5 && this.tool !== t) {
+        this.msg(`Your ${this.tool} is CURSED and cannot be unequipped! Visit Carter at Church.`, '08');
+      } else if (this.upgrading && this.upgrading[0] === t) {
+        this.msg(`Saibara is still working on your ${t}.`, '08');
+      } else {
+        this.tool = t;
+      }
+    } else if (k === 'i') {
+      await this.rucksack();
+    } else if (k === 'm') {
+      await this.ranch_summary();
+    } else if (k === '?') {
+      await this.show_lines('Help & Controls', HELP);
+    } else if (k === 'esc') {
+      await this.pause_menu();
+    } else if (k === 'Q' || k === 'ctrl-c') {
+      await this.quit_prompt();
     }
   }
 
-  async pause_menu(): Promise<any> {
-    let sel: any = undefined;
-    sel = (await (this as any).menu("Paused", ["Resume", "Rucksack", "Help", "Quit"]));
-    if (py_eq(sel, 1)) {
-      (await (this as any).rucksack());
-    } else {
-      if (py_eq(sel, 2)) {
-        (await (this as any).show_lines("Help", HELP));
-      } else {
-        if (py_eq(sel, 3)) {
-          (await (this as any).quit_prompt());
-        }
+  async pause_menu(): Promise<void> {
+    this.setBodyState('paused');
+    const opts = [
+      'Resume',
+      'Rucksack (i)',
+      'Ranch Summary & Memo (m)',
+      'Save Diary — Slot 1',
+      'Save Diary — Slot 2',
+      'Load Diary — Slot 1',
+      'Load Diary — Slot 2',
+    ];
+    if (this.inv['Teleport Stone']) {
+      opts.push('Use Teleport Stone');
+    }
+    opts.push('Help (?)', 'Quit');
+
+    const sel = await this.menu('Diary & Pause Menu', opts);
+    this.setBodyState('playing');
+    if (sel === null || opts[sel] === 'Resume') return;
+    const choice = opts[sel];
+    if (choice === 'Rucksack (i)') {
+      await this.rucksack();
+    } else if (choice === 'Ranch Summary & Memo (m)') {
+      await this.ranch_summary();
+    } else if (choice === 'Save Diary — Slot 1') {
+      this.save(1);
+      this.msg('Saved game in Diary Slot 1.', '0B');
+    } else if (choice === 'Save Diary — Slot 2') {
+      this.save(2);
+      this.msg('Saved game in Diary Slot 2.', '0B');
+    } else if (choice === 'Load Diary — Slot 1') {
+      try {
+        this.load(1);
+        this.msg('Loaded Diary Slot 1.', '0C');
+      } catch (e: any) {
+        await this.say(e.message || 'No save in Slot 1.');
       }
+    } else if (choice === 'Load Diary — Slot 2') {
+      try {
+        this.load(2);
+        this.msg('Loaded Diary Slot 2.', '0C');
+      } catch (e: any) {
+        await this.say(e.message || 'No save in Slot 2.');
+      }
+    } else if (choice === 'Use Teleport Stone') {
+      await this.use_teleport_stone();
+    } else if (choice === 'Help (?)') {
+      await this.show_lines('Help & Controls', HELP);
+    } else if (choice === 'Quit') {
+      await this.quit_prompt();
     }
   }
 
-  async quit_prompt(): Promise<any> {
-    if ((await (this as any).confirm("Quit? Progress since you last slept is lost."))) {
+  async use_teleport_stone(): Promise<void> {
+    const dests: [string, string, number, number][] = [
+      ['Farmhouse', 'house', 7, 5],
+      ['Farm Field', 'farm', 14, 10],
+      ['Rose Square (Town)', 'town', 36, 14],
+      ['Mineral Beach Pier', 'beach', 32, 10],
+      ["Mother's Hill Hot Spring", 'mountain', 8, 14],
+      ['Goddess Pond & Spring Mine', 'mountain', 50, 6],
+      ['Lake Mine Island (Mother\'s Hill Lake)', 'mountain', 14, 6],
+    ];
+    const sel = await this.menu(
+      'Teleport Stone — Warp Where?',
+      dests.map((d) => d[0])
+    );
+    if (sel !== null) {
+      const [label, mp, x, y] = dests[sel];
+      this.riding_horse = false;
+      this.warp(mp, x, y, [0, 1]);
+      this.msg(`Warped to ${label}!`, '0C');
+    }
+  }
+
+  async quit_prompt(): Promise<void> {
+    if (await this.confirm('Save to Slot 1 and Quit?')) {
+      this.save(1);
       this.running = false;
     }
   }
 
-  npc_at(x: any, y: any, mapname: any = null): any {
-    let n: any = undefined; let p: any = undefined;
-    mapname = (mapname || this.mapname);
-    for (let [n, p] of py_iter(py_dict_items(this.npc_pos))) {
-      if ((py_eq(p, [x, y]) && py_eq(py_item(py_item(py_item(NPCS, n), "where"), 0), mapname))) {
+  npc_at(x: number, y: number, mapname: string | null = null): string | null {
+    const mp = mapname || this.mapname;
+    for (const [n, p] of Object.entries(this.npc_pos)) {
+      if (p[0] === x && p[1] === y && NPCS[n]?.where && NPCS[n].where[0] === mp) {
         return n;
       }
     }
-    n = ((this as any).indoor_npc_at(x, y, mapname));
-    if (n) {
-      return n;
-    }
-    if ((py_eq(mapname, "house") && this.married && py_eq([x, y], SPOUSE_POS))) {
+    const indoor = this.indoor_npc_at(x, y, mp);
+    if (indoor) return indoor;
+    if (mp === 'house' && this.married && x === SPOUSE_POS[0] && y === SPOUSE_POS[1]) {
       return this.married;
     }
     return null;
   }
 
-  walkable(mapname: any, x: any, y: any, for_npc: any = false): any {
-    let m: any = undefined;
-    m = py_item(this.maps, mapname);
-    if (((!m.inside(x, y)) || (!py_item(py_item(TILES, m.tile(x, y)), 3)))) {
+  walkable(mapname: string, x: number, y: number, for_npc: boolean = false): boolean {
+    const m = this.maps[mapname];
+    if (!m || !m.inside(x, y)) return false;
+    const t = m.tile(x, y);
+    // In Winter, Mother's Hill Lake water near the island freezes into walkable ice!
+    if (mapname === 'mountain' && this.season === 3 && t === 'water' && x >= 11 && x <= 17 && y >= 4 && y <= 11) {
+      return true;
+    }
+    if (!TILES[t] || !TILES[t][3]) {
       return false;
     }
-    if ((py_in([x, y], py_dict_get(this.objs, mapname, {  })) || py_in([x, y], py_dict_get(this.forage, mapname, {  })))) {
+    const key = pkey(x, y);
+    if ((this.objs[mapname] && key in this.objs[mapname]) || (this.forage[mapname] && key in this.forage[mapname])) {
       return false;
     }
-    if ((for_npc && (py_in([x, y], m.warps) || (py_in([x, y], this.tilled) && py_eq(mapname, "farm"))))) {
+    if (for_npc && (key in m.warps || (this.tilled.has(key) && mapname === 'farm'))) {
       return false;
     }
     return true;
   }
 
-  is_out(n: any): any {
-    let a: any = undefined; let b: any = undefined; let d: any = undefined;
-    if ((!py_eq(((this as any).fest_is_out(n)), null))) {
+  is_out(n: string): boolean {
+    if (this.fest_is_out(n) !== null) {
       return true;
     }
-    d = py_item(NPCS, n);
-    if (((!py_item(d, "out")) || py_eq(n, this.married))) {
+    const d = NPCS[n];
+    if (!d || !d.out || n === this.married) {
       return false;
     }
-    if (((!py_eq(this.weather, "Sunny")) && (!py_item(d, "rain")))) {
+    // Kai is mainly around in Summer unless married or high hearts
+    if (n === 'Kai' && this.season !== 1 && (this.friend['Kai'] || 0) < 60) {
       return false;
     }
-    [a, b] = py_item(d, "out");
-    return (py_mult(a, 60) <= this.minutes) && (this.minutes < py_mult(b, 60));
+    if (this.weather !== 'Sunny' && !d.rain) {
+      return false;
+    }
+    const [a, b] = d.out;
+    return a * 60 <= this.minutes && this.minutes < b * 60;
   }
 
-  update_npcs(): any {
-    let ax: any = undefined; let ay: any = undefined; let d: any = undefined; let mp: any = undefined; let n: any = undefined; let spot: any = undefined;
-    ((this as any).fest_sync());
-    for (let [n, d] of py_iter(py_dict_items(NPCS))) {
-      if (((this as any).is_out(n))) {
-        if ((!py_in(n, this.npc_pos))) {
-          [mp, ax, ay] = py_item(d, "where");
-          spot = ((this as any).free_spot(mp, ax, ay));
+  update_npcs(): void {
+    this.fest_sync();
+    for (const [n, d] of Object.entries(NPCS)) {
+      if (this.is_out(n)) {
+        if (!(n in this.npc_pos) && d.where) {
+          const [mp, ax, ay] = d.where;
+          const spot = this.free_spot(mp, ax, ay);
           if (spot) {
             this.npc_pos[n] = spot;
           }
         }
       } else {
-        this.npc_pos.pop(n, null);
+        delete this.npc_pos[n];
       }
     }
-    ((this as any).update_indoor_npcs());
+    this.update_indoor_npcs();
   }
 
-  free_spot(mp: any, x: any, y: any): any {
-    let dx: any = undefined; let dy: any = undefined; let p: any = undefined; let r: any = undefined;
-    for (let r of py_iter(py_range(0, 7))) {
-      for (let dy of py_iter(py_range((-r), py_add(r, 1)))) {
-        for (let dx of py_iter(py_range((-r), py_add(r, 1)))) {
-          p = [py_add(x, dx), py_add(y, dy)];
-          if ((((this as any).walkable(mp, ...((py_iter(p) || []) as [any, any, any]))) && (!((this as any).npc_at(...((py_iter(p) || []) as [any, any, any])))) && (!(py_eq(mp, this.mapname) && py_eq(p, [this.px, this.py]))))) {
-            return p;
+  free_spot(mp: string, x: number, y: number): [number, number] | null {
+    for (let r = 0; r < 7; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const px = x + dx;
+          const py = y + dy;
+          if (
+            this.walkable(mp, px, py) &&
+            !this.npc_at(px, py, mp) &&
+            !(mp === this.mapname && px === this.px && py === this.py)
+          ) {
+            return [px, py];
           }
         }
       }
@@ -466,2556 +842,3795 @@ export class Game {
     return null;
   }
 
-  move_npcs(): any {
-    let ax: any = undefined; let ay: any = undefined; let dx: any = undefined; let dy: any = undefined; let mp: any = undefined; let n: any = undefined; let nx: any = undefined; let ny: any = undefined; let x: any = undefined; let y: any = undefined;
-    for (let [n, [x, y]] of py_iter(Array.from(py_iter(py_dict_items(this.npc_pos) || [])))) {
-      [mp, ax, ay] = py_item(py_item(NPCS, n), "where");
-      if (((!py_eq(mp, this.mapname)) || (py_rng().random() > 0.45))) {
-        continue;
-      }
-      [dx, dy] = py_rng().choice([[1, 0], [(-1), 0], [0, 1], [0, (-1)]]);
-      [nx, ny] = [py_add(x, dx), py_add(y, dy)];
-      if (((Math.abs((nx - ax)) > 4) || (Math.abs((ny - ay)) > 3))) {
-        continue;
-      }
-      if ((((this as any).walkable(mp, nx, ny, true)) && (!((this as any).npc_at(nx, ny))) && (!py_eq([nx, ny], [this.px, this.py])))) {
+  move_npcs(): void {
+    for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
+      const where = NPCS[n]?.where;
+      if (!where) continue;
+      const [mp, ax, ay] = where;
+      if (mp !== this.mapname || py_rng().random() > 0.45) continue;
+      const [dx, dy] = py_rng().choice([
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]);
+      const [nx, ny] = [x + dx, y + dy];
+      if (Math.abs(nx - ax) > 4 || Math.abs(ny - ay) > 3) continue;
+      if (this.walkable(mp, nx, ny, true) && !this.npc_at(nx, ny) && !(nx === this.px && ny === this.py)) {
         this.npc_pos[n] = [nx, ny];
       }
     }
-    ((this as any).move_indoor_npcs());
+    this.move_indoor_npcs();
   }
 
-  target(): any {
-    return [py_add(this.px, py_item(this.face, 0)), py_add(this.py, py_item(this.face, 1))];
+  target(): [number, number] {
+    return [this.px + this.face[0], this.py + this.face[1]];
   }
 
-  async move(dx: any, dy: any): Promise<any> {
-    let m: any = undefined; let mp: any = undefined; let nx: any = undefined; let ny: any = undefined; let wx: any = undefined; let wy: any = undefined;
+  async move(dx: number, dy: number): Promise<void> {
     this.face = [dx, dy];
-    [nx, ny] = [py_add(this.px, dx), py_add(this.py, dy)];
-    m = this.map;
-    if ((!m.inside(nx, ny))) {
+    const [nx, ny] = [this.px + dx, this.py + dy];
+    const m = this.map;
+    if (!m.inside(nx, ny)) return;
+    const key = pkey(nx, ny);
+    if (key in m.doors) {
+      await this.enter(m.doors[key]);
       return;
     }
-    if (py_in([nx, ny], m.doors)) {
-      (await (this as any).enter(py_item(m.doors, pkey(nx, ny))));
+    if (!this.walkable(this.mapname, nx, ny) || this.npc_at(nx, ny)) {
       return;
     }
-    if (((!((this as any).walkable(this.mapname, nx, ny))) || ((this as any).npc_at(nx, ny)))) {
-      return;
+    this.px = nx;
+    this.py = ny;
+    this.steps += 1;
+    if (this.steps === 1000 || this.steps === 10000) {
+      this.msg(`Pedometer milestone: ${this.steps} steps! The Harvest Goddess applauds your diligence!`, '0C');
     }
-    [this.px, this.py] = [nx, ny];
-    (await (this as any).fest_check());
-    if (py_in([nx, ny], m.warps)) {
-      [mp, wx, wy] = py_item(m.warps, pkey(nx, ny));
-      ((this as any).warp(mp, wx, wy));
-    } else {
-      if (py_eq(m.tile(nx, ny), "down")) {
-        ((this as any).enter_mine(py_add(this.mine_floor, 1)));
+    await this.fest_check();
+    if (key in m.warps) {
+      const [mp, wx, wy] = m.warps[key];
+      this.riding_horse = false;
+      this.warp(mp, wx, wy);
+    } else if (m.tile(nx, ny) === 'down') {
+      this.enter_mine(this.mine_floor + 1, this.mine_type);
+    } else if (m.tile(nx, ny) === 'up') {
+      if (this.mine_type === 'lake') {
+        this.warp('mountain', 14, 6, [0, 1]);
       } else {
-        if (py_eq(m.tile(nx, ny), "up")) {
-          ((this as any).warp("mountain", 52, 5, [0, 1]));
-          ((this as any).msg("You climb back out into the fresh air."));
+        this.warp('mountain', 52, 5, [0, 1]);
+      }
+      this.msg('You climb back out into the fresh air.');
+    }
+  }
+
+  warp(mp: string, x: number, y: number, face: [number, number] | null = null): void {
+    this.mapname = mp;
+    this.px = x;
+    this.py = y;
+    if (face) this.face = face;
+    this.update_npcs();
+    if (!this.map.indoor) {
+      this.msg(`~ ${this.map.title} ~`, '0C');
+    }
+  }
+
+  async enter(door: string): Promise<void> {
+    if (door === 'house_in') {
+      this.riding_horse = false;
+      this.warp('house', 7, 5, [0, -1]);
+    } else if (door === 'house_out') {
+      this.warp('farm', 8, 6, [0, 1]);
+    } else if (door === 'coop') {
+      await this.coop();
+    } else if (door === 'barn') {
+      await this.barn();
+    } else if (door === 'mine') {
+      await this.prompt_mine_entry('spring');
+    } else if (door === 'lakemine') {
+      await this.prompt_mine_entry('lake');
+    } else if (door === 'sprites') {
+      await this.sprite_hut_menu();
+    } else if (door === 'kai_shack') {
+      await this.kai_shack_menu();
+    } else {
+      await this.visit(door);
+    }
+  }
+
+  async prompt_mine_entry(mineType: 'spring' | 'lake'): Promise<void> {
+    const maxF = mineType === 'lake' ? this.max_lake_floor : this.max_spring_floor;
+    if (maxF >= 10 || this.goddess_gifts >= 30) {
+      const floors = [1, 10, 29, 50, 100, 200, 255].filter((f) => f === 1 || f <= maxF + 20 || this.goddess_gifts >= 30);
+      const sel = await this.menu(
+        `${mineType === 'lake' ? 'Lake Mine' : 'Spring Mine'} Elevator`,
+        floors.map((f) => `Floor B${f}F`)
+      );
+      if (sel !== null) {
+        this.enter_mine(floors[sel], mineType);
+      }
+    } else {
+      this.enter_mine(1, mineType);
+    }
+  }
+
+  enter_mine(floor: number, mineType: 'spring' | 'lake' = 'spring'): void {
+    this.mine_type = mineType;
+    this.mine_floor = Math.min(255, floor);
+    if (mineType === 'spring') {
+      this.max_spring_floor = Math.max(this.max_spring_floor, this.mine_floor);
+    } else {
+      this.max_lake_floor = Math.max(this.max_lake_floor, this.mine_floor);
+    }
+    const m = build_mine(this.mine_floor, this.objs, mineType);
+    this.maps['mine'] = m;
+    // Find hidden ladder coordinate
+    let ladderPos: [number, number] | null = null;
+    for (let y = 0; y < m.h; y++) {
+      for (let x = 0; x < m.w; x++) {
+        if (m.t[y][x] === 'down') {
+          ladderPos = [x, y];
+          break;
         }
+      }
+    }
+    this.ladder = ladderPos;
+    this.mapname = 'mine';
+    this.px = 3;
+    this.py = 3;
+    this.face = [1, 0];
+    this.msg(`${m.title}. Smash rocks with Hammer or dig soil with Hoe!`, '0C');
+  }
+
+  tool_list(): string[] {
+    const tools = TOOLS.filter((t) => !(this.upgrading && this.upgrading[0] === t));
+    const seeds = py_sorted(Object.keys(this.inv).filter((i) => i.endsWith(' Seeds')));
+    return [...tools, ...seeds];
+  }
+
+  cycle_tool(d: number): void {
+    if (this.levels[this.tool] === 5) {
+      this.msg(`Your ${this.tool} is CURSED and stuck to your hand! Visit Carter at the Church.`, '08');
+      return;
+    }
+    const tl = this.tool_list();
+    if (!tl.length) return;
+    const i = tl.includes(this.tool) ? tl.indexOf(this.tool) : 0;
+    const nextIdx = ((i + d) % tl.length + tl.length) % tl.length;
+    this.tool = tl[nextIdx];
+  }
+
+  area(): [number, number][] {
+    const lvl = this.levels[this.tool] ?? 0;
+    return getToolArea(this.tool, lvl, this.px, this.py, this.face);
+  }
+
+  record_tool_use(t: string): void {
+    if (!UPGRADABLE.includes(t)) return;
+    this.tool_exp[t] = Math.min(400, (this.tool_exp[t] || 0) + 5);
+    if (this.levels[t] === 5 && (t === 'Fishing Rod' || t === 'Axe')) {
+      this.cursed_uses[t] = (this.cursed_uses[t] || 0) + 1;
+      if (this.cursed_uses[t] >= 25) {
+        this.levels[t] = 6;
+        this.msg(`A divine light lifts the curse! Your Cursed ${t} is now a BLESSED ${t}!`, '0B');
       }
     }
   }
 
-  warp(mp: any, x: any, y: any, face: any = null): any {
-    [this.mapname, this.px, this.py] = [mp, x, y];
-    if (face) {
-      this.face = face;
-    }
-    ((this as any).update_npcs());
-    if ((!this.map.indoor)) {
-      ((this as any).msg(`~ ${this.map.title} ~`, "0C"));
+  async spend(n: number): Promise<void> {
+    const isCursed = this.levels[this.tool] === 5;
+    const res = calculateStaminaSpend(this.stamina, this.fatigue, n, {
+      weather: this.map.indoor ? 'Sunny' : this.weather,
+      minutes: this.minutes,
+      hasMysticBerry: this.has_mystic_berry,
+      isCursedTool: isCursed,
+    });
+    const prevStam = this.stamina;
+    const prevFat = this.fatigue;
+    this.stamina = res.stamina;
+    this.fatigue = res.fatigue;
+
+    if (res.fainted) {
+      await this.pass_out('Your Fatigue hit 100! You turn blue and collapse from exhaustion...');
+    } else if (res.warning === 'exhausted' && prevFat < 80 && this.fatigue >= 80) {
+      this.msg("You're turning blue with Fatigue! Eat, visit the Hot Spring, or sleep!", '08');
+    } else if (res.warning === 'tired' && prevStam > 30 && this.stamina <= 30) {
+      this.msg("You're getting tired. Eat something or soak in the Hot Spring.", '09');
     }
   }
 
-  async enter(door: any): Promise<any> {
-    if (py_eq(door, "house_in")) {
-      ((this as any).warp("house", 7, 5, [0, (-1)]));
-    } else {
-      if (py_eq(door, "house_out")) {
-        ((this as any).warp("farm", 8, 6, [0, 1]));
+  async use_tool(): Promise<void> {
+    const t = this.tool;
+    if (!this.tool_list().includes(t)) {
+      this.tool = 'Hoe';
+      return;
+    }
+    const [tx, ty] = this.target();
+    const pKey = pkey(tx, ty);
+    const m = this.map;
+    const objs = this.objs[this.mapname] || {};
+    const obj = objs[pKey];
+    const tile = m.tile(tx, ty);
+
+    if (t.endsWith(' Seeds')) {
+      await this.sow(t, [tx, ty]);
+      return;
+    }
+
+    this.record_tool_use(t);
+
+    if (t === 'Sickle') {
+      let cutCount = 0;
+      let fodderGained = 0;
+      for (const [qx, qy] of this.area()) {
+        const qk = pkey(qx, qy);
+        if (objs[qk] === 'weed') {
+          delete objs[qk];
+          cutCount += 1;
+        } else if (this.mapname === 'farm' && this.crops[qk] && this.crops[qk][0] === 'Grass') {
+          const [, age] = this.crops[qk];
+          if (age >= CROPS['Grass'][2]) {
+            this.crops[qk][1] = CROPS['Grass'][2] - CROPS['Grass'][3];
+            fodderGained += 1;
+          }
+        }
+      }
+      if (fodderGained > 0) {
+        this.give('Fodder', fodderGained);
+        this.msg(`Cut pasture grass! +${fodderGained} Fodder.`, '0B');
+      } else if (cutCount > 0) {
+        this.msg(`Swish! Cut ${cutCount} weed${cutCount > 1 ? 's' : ''}.`);
+      } else if (this.mapname === 'farm' && this.crops[pKey]) {
+        this.msg("Careful! That's a growing crop.");
+        return;
+      }
+      await this.spend(2);
+    } else if (t === 'Hoe') {
+      if (this.mapname === 'mine') {
+        await this.mine_dig(tx, ty);
+        await this.spend(2);
+        return;
+      }
+      if (this.mapname !== 'farm') {
+        this.msg('You can only till soil on your farm (or dig in the mines).');
+      } else if (this.season === 3) {
+        this.msg('The ground is frozen solid in Winter.');
       } else {
-        if (py_eq(door, "coop")) {
-          (await (this as any).coop());
+        let n = 0;
+        for (const [qx, qy] of this.area()) {
+          const qk = pkey(qx, qy);
+          if (this.maps['farm'].tile(qx, qy) === 'field' && !objs[qk] && !this.tilled.has(qk)) {
+            this.tilled.add(qk);
+            if (this.weather === 'Rain' || this.weather === 'Typhoon') {
+              this.wet.add(qk);
+            }
+            n += 1;
+            // 2% chance to unearth the Farm Field Power Berry!
+            if (!this.berry_sources.includes('farm_hoe') && py_rng().random() < 0.03) {
+              this.give_power_berry('farm_hoe');
+            }
+          }
+        }
+        if (!n && obj) {
+          this.msg(`There's a ${obj} in the way.`);
+        }
+      }
+      await this.spend(2);
+    } else if (t === 'Hammer') {
+      if (obj === 'stone') {
+        delete objs[pKey];
+        this.msg('Crack! The stone shatters.');
+      } else if (obj === 'boulder') {
+        if ((this.levels['Hammer'] || 0) < 1) {
+          this.msg('This boulder is too big. Upgrade your Hammer.');
         } else {
-          if (py_eq(door, "barn")) {
-            (await (this as any).barn());
+          this.hp[pKey] = (this.hp[pKey] ?? 6) - (1 + (this.levels['Hammer'] || 0));
+          if (this.hp[pKey] <= 0) {
+            delete objs[pKey];
+            delete this.hp[pKey];
+            this.give('Stone', 1);
+            this.msg('BOOM! The boulder breaks apart.');
           } else {
-            if (py_eq(door, "mine")) {
-              ((this as any).enter_mine(1));
-            } else {
-              (await (this as any).visit(door));
-            }
+            this.msg('Clang! The boulder cracks.');
           }
         }
-      }
-    }
-  }
-
-  enter_mine(floor: any): any {
-    let ladder: any = undefined; let m: any = undefined; let rocks: any = undefined;
-    this.mine_floor = floor;
-    [m, rocks, ladder] = build_mine(floor);
-    this.maps["mine"] = m;
-    this.objs["mine"] = rocks;
-    this.ladder = ladder;
-    [this.mapname, this.px, this.py, this.face] = ["mine", 2, 2, [1, 0]];
-    ((this as any).msg(`Mine - floor B${floor}F. Break rocks to find the ladder down.`, "0C"));
-  }
-
-  tool_list(): any {
-    let tools: any = undefined;
-    tools = py_iter(TOOLS).filter((t: any) => (!(this.upgrading && py_eq(py_item(this.upgrading, 0), t)))).map((t: any) => t);
-    return py_add(tools, py_sorted(py_iter(this.inv).filter((i: any) => i.endsWith(" Seeds")).map((i: any) => i)));
-  }
-
-  cycle_tool(d: any): any {
-    let i: any = undefined; let tl: any = undefined;
-    tl = ((this as any).tool_list());
-    i = (py_in(this.tool, tl) ? tl.indexOf(this.tool) : (-1));
-    this.tool = py_item(tl, (py_add(i, d) % py_len(tl)));
-  }
-
-  area(): any {
-    let depth: any = undefined; let fx: any = undefined; let fy: any = undefined; let half: any = undefined; let lx: any = undefined; let ly: any = undefined;
-    [depth, half] = py_item(AREA, py_dict_get(this.levels, this.tool, 0));
-    [fx, fy] = this.face;
-    [lx, ly] = [(-fy), fx];
-    return py_iter(py_range(1, py_add(depth, 1))).flatMap((k: any) => py_iter(py_range((-half), py_add(half, 1))).map((l: any) => [py_add(py_add(this.px, py_mult(fx, k)), py_mult(lx, l)), py_add(py_add(this.py, py_mult(fy, k)), py_mult(ly, l))]));
-  }
-
-  async spend(n: any): Promise<any> {
-    let before: any = undefined;
-    before = this.stamina;
-    this.stamina = Math.max(0, (this.stamina - n));
-    if ((this.stamina <= 0)) {
-      (await (this as any).pass_out("You push yourself too hard and collapse from exhaustion..."));
-    } else {
-      if ((before > 30) && (30 >= this.stamina)) {
-        ((this as any).msg("You're getting tired. Eat something or rest.", "09"));
-      } else {
-        if ((before > 10) && (10 >= this.stamina)) {
-          ((this as any).msg("You're exhausted! You can barely lift your tools.", "08"));
+      } else if (obj === 'rock') {
+        delete objs[pKey];
+        const drop = this.mine_drop();
+        if (drop) {
+          this.give(drop);
+          this.msg(`You found ${drop}!`, '0C');
         }
-      }
-    }
-  }
-
-  async use_tool(): Promise<any> {
-    let area: any = undefined; let cap: any = undefined; let drop: any = undefined; let m: any = undefined; let n: any = undefined; let obj: any = undefined; let objs: any = undefined; let p: any = undefined; let q: any = undefined; let t: any = undefined; let tile: any = undefined; let tx: any = undefined; let ty: any = undefined;
-    t = this.tool;
-    if ((!py_in(t, ((this as any).tool_list())))) {
-      this.tool = "Hoe";
-      return;
-    }
-    [tx, ty] = ((this as any).target());
-    p = [tx, ty];
-    m = this.map;
-    objs = py_dict_get(this.objs, this.mapname, {  });
-    obj = py_dict_get(objs, p);
-    tile = m.tile(tx, ty);
-    if (t.endsWith(" Seeds")) {
-      (await (this as any).sow(t, p));
-      return;
-    }
-    if (py_eq(t, "Sickle")) {
-      if (py_eq(obj, "weed")) {
-        py_del(objs, p);
-        ((this as any).msg("Swish! You cut the weeds."));
-      } else {
-        if ((py_in(p, this.crops) && py_eq(this.mapname, "farm"))) {
-          ((this as any).msg("Careful! That's a crop."));
-          return;
+        if (this.ladder && tx === this.ladder[0] && ty === this.ladder[1]) {
+          m.set(tx, ty, 'down');
+          this.msg("There's a ladder hidden under the rock!", '0A');
         }
+      } else if (this.mapname === 'farm' && this.tilled.has(pKey) && !this.crops[pKey]) {
+        this.tilled.delete(pKey);
+        this.wet.delete(pKey);
+        this.msg('You flattened the tilled soil.');
       }
-      (await (this as any).spend(2));
-    } else {
-      if (py_eq(t, "Hoe")) {
-        if ((!py_eq(this.mapname, "farm"))) {
-          ((this as any).msg("You can only till the soil on your farm."));
+      await this.spend(2);
+    } else if (t === 'Axe') {
+      if (obj === 'branch') {
+        delete objs[pKey];
+        this.give('Lumber');
+        this.msg('Chop! +1 Lumber.');
+      } else if (obj === 'stump') {
+        if ((this.levels['Axe'] || 0) < 1) {
+          this.msg('This stump is too tough. Upgrade your Axe to Copper+.');
         } else {
-          if (py_eq(this.season, 3)) {
-            ((this as any).msg("The ground is frozen solid."));
+          this.hp[pKey] = (this.hp[pKey] ?? 6) - (1 + (this.levels['Axe'] || 0));
+          if (this.hp[pKey] <= 0) {
+            delete objs[pKey];
+            delete this.hp[pKey];
+            this.give('Lumber', 6);
+            this.msg('The stump splits! +6 Lumber.', '09');
           } else {
-            n = 0;
-            for (let q of py_iter(((this as any).area()))) {
-              if ((py_eq(py_item(this.maps, "farm").tile(...((py_iter(q) || []) as [any, any, any])), "field") && (!py_in(q, objs)) && (!py_in(q, this.tilled)))) {
-                this.tilled.add(q);
-                if (py_eq(this.weather, "Rain")) {
-                  this.wet.add(q);
-                }
-                n += 1;
-              }
-            }
-            if (((!n) && obj)) {
-              ((this as any).msg(`There's a ${obj} in the way.`));
-            }
+            this.msg('Thunk!');
           }
         }
-        area = py_len(((this as any).area()));
-        (await (this as any).spend(py_add(2, Math.floor(area / 3))));
+      } else if (tile === 'tree') {
+        this.msg('This tree is too big to chop down.');
+      }
+      await this.spend(2);
+    } else if (t === 'Watering Can') {
+      const cap = CAN_CAP[this.levels['Watering Can'] || 0];
+      if (tile === 'water' || tile === 'fountain' || tile === 'pond') {
+        this.water = cap;
+        this.msg(`You fill the watering can. (${cap}/${cap})`, '0D');
+        return;
+      }
+      if (this.water <= 0) {
+        this.msg('The watering can is empty. Refill it at a pond or stream.', '08');
+        return;
+      }
+      this.water -= 1;
+      if (this.mapname === 'farm') {
+        for (const [qx, qy] of this.area()) {
+          const qk = pkey(qx, qy);
+          if (this.tilled.has(qk)) {
+            this.wet.add(qk);
+          }
+        }
+      }
+      await this.spend(2);
+    } else if (t === 'Fishing Rod') {
+      if (tile === 'water' || tile === 'pond') {
+        await this.fish();
       } else {
-        if (py_eq(t, "Hammer")) {
-          if (py_eq(obj, "stone")) {
-            py_del(objs, p);
-            ((this as any).msg("Crack! The stone shatters."));
-          } else {
-            if (py_eq(obj, "boulder")) {
-              if ((py_item(this.levels, "Hammer") < 1)) {
-                ((this as any).msg("This boulder is too big. Upgrade your Hammer."));
-              } else {
-                this.hp[p] = (py_dict_get(this.hp, p, 6) - py_add(1, py_item(this.levels, "Hammer")));
-                if ((py_item(this.hp, p) <= 0)) {
-                  py_del(objs, p);
-                  py_del(this.hp, p);
-                  ((this as any).msg("BOOM! The boulder breaks apart."));
-                } else {
-                  ((this as any).msg("Clang! The boulder cracks."));
-                }
-              }
-            } else {
-              if (py_eq(obj, "rock")) {
-                py_del(objs, p);
-                drop = ((this as any).mine_drop());
-                if (drop) {
-                  ((this as any).give(drop));
-                  ((this as any).msg(`You found ${drop}!`, "0C"));
-                }
-                if (py_eq(p, this.ladder)) {
-                  m.set(tx, ty, "down");
-                  ((this as any).msg("There's a ladder hidden under the rock!", "0A"));
-                }
-              } else {
-                if ((py_eq(this.mapname, "farm") && py_in(p, this.tilled) && (!py_in(p, this.crops)))) {
-                  this.tilled.delete(p);
-                  this.wet.delete(p);
-                } else {
-                  if ((py_eq(this.mapname, "farm") && py_in(p, this.crops))) {
-                    ((this as any).msg("Better not smash your crops."));
-                    return;
-                  }
-                }
-              }
-            }
-          }
-          (await (this as any).spend(2));
-        } else {
-          if (py_eq(t, "Axe")) {
-            if (py_eq(obj, "branch")) {
-              py_del(objs, p);
-              ((this as any).give("Lumber"));
-              ((this as any).msg("Chop! +1 Lumber."));
-            } else {
-              if (py_eq(obj, "stump")) {
-                if ((py_item(this.levels, "Axe") < 1)) {
-                  ((this as any).msg("This stump is too tough. Upgrade your Axe."));
-                } else {
-                  this.hp[p] = (py_dict_get(this.hp, p, 6) - py_add(1, py_item(this.levels, "Axe")));
-                  if ((py_item(this.hp, p) <= 0)) {
-                    py_del(objs, p);
-                    py_del(this.hp, p);
-                    ((this as any).give("Lumber", 6));
-                    ((this as any).msg("The stump splits! +6 Lumber."));
-                  } else {
-                    ((this as any).msg("Thunk!"));
-                  }
-                }
-              } else {
-                if (py_eq(tile, "tree")) {
-                  ((this as any).msg("This tree is too big to chop down."));
-                }
-              }
-            }
-            (await (this as any).spend(2));
-          } else {
-            if (py_eq(t, "Watering Can")) {
-              cap = py_item(CAN_CAP, py_item(this.levels, "Watering Can"));
-              if (py_in(tile, ["water", "fountain"])) {
-                this.water = cap;
-                ((this as any).msg(`You fill the watering can. (${cap}/${cap})`, "0D"));
-                return;
-              }
-              if ((this.water <= 0)) {
-                ((this as any).msg("The watering can is empty. Refill it at a pond.", "08"));
-                return;
-              }
-              this.water -= 1;
-              if (py_eq(this.mapname, "farm")) {
-                for (let q of py_iter(((this as any).area()))) {
-                  if (py_in(q, this.tilled)) {
-                    this.wet.add(q);
-                  }
-                }
-              }
-              (await (this as any).spend(py_add(2, Math.floor(py_len(((this as any).area())) / 3))));
-            } else {
-              if (py_eq(t, "Fishing Rod")) {
-                if (py_eq(tile, "water")) {
-                  (await (this as any).fish());
-                } else {
-                  ((this as any).msg("You need to face some water to fish."));
-                }
-              }
-            }
-          }
-        }
+        this.msg('You need to face water to cast your Fishing Rod.');
       }
     }
   }
 
-  mine_drop(): any {
-    let acc: any = undefined; let chance: any = undefined; let f: any = undefined; let minf: any = undefined; let name: any = undefined; let r: any = undefined; let table: any = undefined;
-    f = this.mine_floor;
-    table = [["Copper", 28, 1], ["Silver", 14, 3], ["Gold", 9, 5], ["Amethyst", 4, 6], ["Mystrile", 4, 8], ["Diamond", 2, 10]];
-    [r, acc] = [py_mult(py_rng().random(), 100), 0];
-    for (let [name, chance, minf] of py_iter(table)) {
-      if ((f >= minf)) {
-        acc += chance;
-        if ((r < acc)) {
-          return name;
-        }
+  async mine_dig(tx: number, ty: number): Promise<void> {
+    const m = this.map;
+    if (m.tile(tx, ty) !== 'mfloor') {
+      this.msg('Nothing to dig here.');
+      return;
+    }
+    const f = this.mine_floor;
+    // Check if Lake Mine floor has a Cursed Tool
+    if (this.mine_type === 'lake' && CURSED_TOOL_FLOORS[f]) {
+      const cTool = CURSED_TOOL_FLOORS[f];
+      if ((this.levels[cTool] || 0) === 4 && py_rng().random() < 0.35) {
+        this.levels[cTool] = 5;
+        this.msg(`Unearthed the CURSED ${cTool.toUpperCase()}! Bring it to Carter at the Church to bless!`, '0E');
+        return;
       }
     }
-    return null;
+    // Check Power Berries in mines
+    if (this.mine_type === 'spring' && f === 100 && !this.berry_sources.includes('spring_100')) {
+      this.give_power_berry('spring_100');
+      return;
+    }
+    if (this.mine_type === 'lake' && f === 19 && !this.berry_sources.includes('lake_19')) {
+      this.give_power_berry('lake_19');
+      return;
+    }
+    // Check Spring Mine Floor 255 Teleport Stone
+    if (this.mine_type === 'spring' && f === 255 && !this.inv['Teleport Stone']) {
+      this.give('Teleport Stone', 1);
+      this.msg('Unearthed the legendary TELEPORT STONE on Floor 255!', '0C');
+      return;
+    }
+    // Check Goddess / Kappa Jewels
+    if (this.mine_type === 'spring' && (GODDESS_JEWEL_FLOORS as readonly number[]).includes(f) && this.goddess_jewels < 9 && py_rng().random() < 0.4) {
+      this.goddess_jewels += 1;
+      if (this.goddess_jewels >= 9) {
+        this.give('Gem of the Goddess', 1);
+        this.msg('All 9 Goddess Jewels united into the GEM OF THE GODDESS!', '0C');
+      } else {
+        this.msg(`Found a Goddess Jewel! (${this.goddess_jewels}/9)`, '0C');
+      }
+      return;
+    }
+    if (this.mine_type === 'lake' && (KAPPA_JEWEL_FLOORS as readonly number[]).includes(f) && this.kappa_jewels < 9 && py_rng().random() < 0.4) {
+      this.kappa_jewels += 1;
+      if (this.kappa_jewels >= 9) {
+        this.give('Gem of the Kappa', 1);
+        this.msg('All 9 Kappa Jewels united into the GEM OF THE KAPPA!', '0B');
+      } else {
+        this.msg(`Found a Kappa Jewel! (${this.kappa_jewels}/9)`, '0B');
+      }
+      return;
+    }
+    const r = py_rng().random();
+    if (r < 0.22 && f < 255) {
+      m.set(tx, ty, 'down');
+      this.msg('Your Hoe uncovered a hidden staircase down (>)', '0A');
+    } else if (r < 0.48) {
+      this.give('Black Grass', 1);
+      this.msg('Dug up Black Grass! (+15 Stamina if eaten)', '0B');
+    } else if (r < 0.65) {
+      const coins = py_rng().randint(10, 50);
+      this.gold += coins;
+      this.msg(`Dug up ${coins}G in old coins!`, '09');
+    } else {
+      this.msg('You dig the mine soil, but find nothing.');
+    }
   }
 
-  async sow(bag: any, p: any): Promise<any> {
-    let crop: any = undefined; let dx: any = undefined; let dy: any = undefined; let n: any = undefined; let q: any = undefined;
-    crop = py_slice(bag, null, (-6));
-    if ((!py_eq(this.mapname, "farm"))) {
-      ((this as any).msg("You can only plant seeds on your farm."));
+  mine_drop(): string | null {
+    const allBlessed = UPGRADABLE.every((t) => (this.levels[t] || 0) >= 6);
+    const rngPct = py_rng().random() * 100;
+    if (this.mine_type === 'lake') {
+      return rollLakeMineDrop(this.mine_floor, rngPct);
+    }
+    return rollSpringMineDrop(this.mine_floor, allBlessed, rngPct);
+  }
+
+  async sow(bag: string, p: [number, number]): Promise<void> {
+    const crop = bag.slice(0, -6);
+    if (this.mapname !== 'farm') {
+      this.msg('You can only plant seeds on your farm.');
       return;
     }
-    if ((!py_eq(py_item(py_item(CROPS, crop), 0), this.season_name))) {
-      ((this as any).msg(`${crop} won't grow in ${this.season_name}.`, "08"));
+    const cropSeason = CROPS[crop][0];
+    if (crop !== 'Grass' && cropSeason !== this.season_name) {
+      this.msg(`${crop} won't grow in ${this.season_name}.`, '08');
       return;
     }
-    n = 0;
-    for (let dx of py_iter([(-1), 0, 1])) {
-      for (let dy of py_iter([(-1), 0, 1])) {
-        q = [py_add(py_item(p, 0), dx), py_add(py_item(p, 1), dy)];
-        if ((py_in(q, this.tilled) && (!py_in(q, this.crops)))) {
-          this.crops[q] = [crop, 0];
+    let n = 0;
+    for (const dx of [-1, 0, 1]) {
+      for (const dy of [-1, 0, 1]) {
+        const qk = pkey(p[0] + dx, p[1] + dy);
+        if (this.tilled.has(qk) && !this.crops[qk]) {
+          this.crops[qk] = [crop, 0];
           n += 1;
         }
       }
     }
-    if ((!n)) {
-      ((this as any).msg("Seeds need empty tilled soil. Use the Hoe first."));
+    if (!n) {
+      this.msg('Seeds need empty tilled soil. Use the Hoe first.');
       return;
     }
-    ((this as any).take(bag));
-    ((this as any).msg(`You sowed ${crop} seeds on ${n} tile${((n > 1) ? "s" : "")}.`, "0B"));
-    if ((!py_in(bag, this.inv))) {
-      this.tool = "Watering Can";
+    this.take(bag);
+    this.msg(`You sowed ${crop} seeds on ${n} tile${n > 1 ? 's' : ''}.`, '0B');
+    if (!this.inv[bag]) {
+      this.tool = 'Watering Can';
     }
-    (await (this as any).spend(1));
+    await this.spend(1);
   }
 
-  async fish(): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bite: any = undefined; let bx: any = undefined; let by: any = undefined; let dots: any = undefined; let fish: any = undefined; let k: any = undefined; let now: any = undefined; let r: any = undefined; let result: any = undefined; let start: any = undefined; let wait: any = undefined;
-    wait = py_rng().uniform(1.2, 4.0);
-    start = (Date.now() / 1000);
-    bite = null;
-    result = null;
-    while (py_eq(result, null)) {
-      now = (Date.now() / 1000);
-      if ((py_eq(bite, null) && ((now - start) >= wait))) {
+  async fish(): Promise<void> {
+    const wait = py_rng().uniform(1.0, 3.2);
+    const start = Date.now() / 1000;
+    let bite: number | null = null;
+    let result: string | null = null;
+    while (result === null) {
+      const now = Date.now() / 1000;
+      if (bite === null && now - start >= wait) {
         bite = now;
       }
-      if (((!py_eq(bite, null)) && ((now - bite) > 0.9))) {
-        result = "miss";
+      if (bite !== null && now - bite > 0.95) {
+        result = 'miss';
         break;
       }
-      [W, H] = [this.scr.w, this.scr.h];
+      const [W, H] = [this.scr.w, this.scr.h];
       const draw = () => {
-        [bx, by] = [Math.floor((W - 34) / 2), (Math.floor(H / 2) - 3)];
-        this.scr.box(bx, by, 34, 5, "0D", "00", "Fishing");
-        if (py_eq(bite, null)) {
-          dots = py_mult(".", py_add(1, (Math.floor(Number(py_mult((now - start), 2))) % 3)));
-          this.scr.put(py_add(bx, 3), py_add(by, 2), `~ ~ o ~ ~   waiting${dots}`, "0D");
+        const [bx, by] = [Math.floor((W - 34) / 2), Math.floor(H / 2) - 3];
+        this.scr.box(bx, by, 34, 5, '0D', '00', 'Fishing');
+        if (bite === null) {
+          const dots = '.'.repeat(1 + (Math.floor((now - start) * 2) % 3));
+          this.scr.put(bx + 3, by + 2, `~ ~ o ~ ~   waiting${dots}`, '0D');
         } else {
-          this.scr.put(py_add(bx, 3), py_add(by, 2), "~ ~ O ~ ~   !! BITE !! SPACE", "08", "00", true);
+          this.scr.put(bx + 3, by + 2, '~ ~ O ~ ~   !! BITE !! SPACE', '08', '00', true);
         }
       };
-      ((this as any).render());
+      this.render();
       draw();
       this.scr.flush();
-      k = (await this.scr.getKey(0.05));
+      const k = await this.scr.getKey(0.05);
       if (k) {
-        if (py_in(k, CANCEL_KEYS)) {
-          result = "quit";
+        if (CANCEL_KEYS.has(k)) {
+          result = 'quit';
+        } else if (bite === null) {
+          result = 'early';
         } else {
-          if (py_eq(bite, null)) {
-            result = "early";
-          } else {
-            result = "catch";
-          }
+          result = 'catch';
         }
       }
     }
-    this.last = (Date.now() / 1000);
-    if (py_eq(result, "catch")) {
-      r = py_rng().random();
-      fish = ((r < 0.12) ? "Large Fish" : ((r < 0.45) ? "Medium Fish" : "Small Fish"));
-      ((this as any).give(fish));
-      ((this as any).msg(`You caught a ${fish}!`, "0C"));
-    } else {
-      if (py_eq(result, "early")) {
-        ((this as any).msg("You reeled in too early."));
-      } else {
-        if (py_eq(result, "miss")) {
-          ((this as any).msg("It got away..."));
+    this.last = Date.now() / 1000;
+    if (result === 'catch') {
+      const rodLvl = this.levels['Fishing Rod'] || 0;
+      const r = py_rng().random();
+      let caught = 'Small Fish';
+      if (this.mapname === 'mine' && this.mine_type === 'lake' && this.mine_floor === 9) {
+        caught = 'Coelacanth';
+      } else if (this.mapname === 'beach' && rodLvl >= 4 && r < 0.12) {
+        caught = this.season === 1 ? 'Pirate Treasure' : this.season === 2 ? 'Fossil of Ancient Fish' : 'Squid';
+        if (this.season === 3 && !this.berry_sources.includes('ocean_fish')) {
+          this.give_power_berry('ocean_fish');
         }
+      } else if (rodLvl >= 3 && r < 0.08) {
+        caught = this.mapname === 'mountain' ? 'Carp' : 'Catfish';
+      } else if (r < 0.06) {
+        caught = py_rng().choice(['Boot', 'Empty Can']);
+      } else if (r < 0.25 + rodLvl * 0.08) {
+        caught = 'Large Fish';
+      } else if (r < 0.6) {
+        caught = 'Medium Fish';
       }
+      this.give(caught);
+      if (ITEMS[caught]?.[2] === 'fish') {
+        this.fish_caught[caught] = (this.fish_caught[caught] || 0) + 1;
+      }
+      this.msg(`You caught a ${caught}!`, '0C');
+    } else if (result === 'early') {
+      this.msg('You reeled in too early.');
+    } else if (result === 'miss') {
+      this.msg('It got away...');
     }
-    (await (this as any).spend(3));
+    await this.spend(3);
   }
 
-  async interact(): Promise<any> {
-    let age: any = undefined; let crop: any = undefined; let days: any = undefined; let fr: any = undefined; let item: any = undefined; let left: any = undefined; let m: any = undefined; let n: any = undefined; let nxt: any = undefined; let p: any = undefined; let regrow: any = undefined; let show: any = undefined; let text: any = undefined; let tile: any = undefined; let tx: any = undefined; let ty: any = undefined;
-    [tx, ty] = ((this as any).target());
-    p = [tx, ty];
-    m = this.map;
-    n = ((this as any).npc_at(tx, ty));
+  async interact(): Promise<void> {
+    const [tx, ty] = this.target();
+    const pKey = pkey(tx, ty);
+    const m = this.map;
+    const n = this.npc_at(tx, ty);
     if (n) {
-      (await (this as any).talk(n));
+      await this.talk(n);
       return;
     }
-    if (py_in(p, m.doors)) {
-      (await (this as any).enter(py_item(m.doors, p)));
+    if (pKey in m.doors) {
+      await this.enter(m.doors[pKey]);
       return;
     }
-    tile = m.tile(tx, ty);
-    if ((py_eq(this.mapname, "farm") && py_in(p, this.crops))) {
-      [crop, age] = py_item(this.crops, p);
-      [days, regrow] = [py_item(py_item(CROPS, crop), 2), py_item(py_item(CROPS, crop), 3)];
-      if ((age >= days)) {
-        ((this as any).give(crop));
-        if (regrow) {
-          py_item(this.crops, p)[1] = (days - regrow);
-        } else {
-          py_del(this.crops, p);
-        }
-        ((this as any).msg(`You harvested a ${crop}!`, "0B"));
-      } else {
-        ((this as any).msg(`${crop}: ${(days - age)} more day${(((days - age) > 1) ? "s" : "")} to go.${(py_in(p, this.wet) ? "" : " (needs water)")}`));
-      }
-      return;
-    }
-    fr = py_dict_get(this.forage, this.mapname, {  });
-    if (py_in(p, fr)) {
-      item = fr.pop(p);
-      ((this as any).give(item));
-      ((this as any).msg(`You picked up ${item}.`, "0B"));
-      return;
-    }
-    if (py_eq(tile, "bin")) {
-      (await (this as any).ship());
-    } else {
-      if (py_eq(tile, "bed")) {
-        if ((await (this as any).confirm("Go to bed? (Your game will be saved.)"))) {
-          (await (this as any).new_day("sleep"));
-        }
-      } else {
-        if (py_eq(tile, "tv")) {
-          show = py_rng().choice(["a cooking show", "the news", "a samurai drama", "a farming tips show"]);
-          (await (this as any).say(`Tomorrow's forecast: ${this.tomorrow}.${((this as any).fest_news())}  Afterwards, ${show} comes on.`, "TV"));
-        } else {
-          if (py_eq(tile, "cal")) {
-            left = (30 - this.day);
-            nxt = py_item(SEASONS, (py_add(this.season, 1) % 4));
-            (await (this as any).say(`Today is ${((this as any).date_str())}. ${left} day${((!py_eq(left, 1)) ? "s" : "")} until ${nxt}.`, "Calendar"));
-            (await (this as any).fest_calendar());
-          } else {
-            if (py_in(tile, ["counter", "bookcase"])) {
-              (await (this as any).interior_interact(tile, p));
-            } else {
-              if (py_in(tile, ["kitchen", "bath", "shelf"])) {
-                (await (this as any).use_furniture(tile));
-              } else {
-                if (py_eq(tile, "sign")) {
-                  text = py_dict_get(m.signs, p, "");
-                  if (py_eq(text, "farm")) {
-                    text = `${this.farm.toUpperCase()} FARM - Owner: ${this.name}`;
-                  }
-                  (await (this as any).say(text, "Sign"));
-                } else {
-                  if (this.held) {
-                    ((this as any).msg(`You're holding ${this.held}. Face someone and press X to give it.`));
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+    const tile = m.tile(tx, ty);
 
-  hearts(n: any): any {
-    let col: any = undefined; let h: any = undefined;
-    h = Math.floor(py_dict_get(this.friend, n, 0) / 10);
-    col = py_item(["03", "0E", "0D", "0B", "09", "08"], Math.min(5, Math.floor(h / 2)));
-    return [py_add(py_add(py_add("[", py_mult("#", h)), py_mult(".", (10 - h))), "]"), col];
-  }
-
-  async talk(n: any): Promise<any> {
-    let d: any = undefined; let f: any = undefined; let item: any = undefined; let line: any = undefined; let pts: any = undefined; let tier: any = undefined;
-    if ((await (this as any).fest_talk(n))) {
+    // Hot Spring on Mother's Hill (either standing in or facing 'spring')
+    if (tile === 'spring' || m.tile(this.px, this.py) === 'spring') {
+      if (this.held === 'Egg') {
+        this.take('Egg', 1);
+        this.give('Spa-Boiled Egg', 1);
+        this.msg('You tossed an Egg into the Hot Spring: Spa-Boiled Egg!', '09');
+        return;
+      }
+      this.stamina = Math.min(this.max_stamina, this.stamina + 80);
+      this.fatigue = Math.max(0, this.fatigue - 40);
+      await this.advance(60);
+      await this.say('Ahh... you soak in the Mother\'s Hill Hot Spring for an hour. (+80 Stamina, -40 Fatigue!)', 'Hot Spring');
       return;
     }
-    d = py_item(NPCS, n);
-    if (this.held) {
-      item = this.held;
-      if (py_eq(item, "Blue Feather")) {
-        (await (this as any).propose(n));
+
+    // Goddess Pond Offering
+    if (tile === 'pond') {
+      if (!this.held) {
+        await this.say('The Goddess Pond shimmers. Hold an item from your Rucksack (i) and press X to make an offering!', 'Goddess Pond');
         return;
       }
-      if (py_in(n, this.gifted)) {
-        (await (this as any).say("You already gave me something today. Thank you, though!", n));
+      const item = this.held;
+      if (item === 'Blue Feather') {
+        await this.propose('Harvest Goddess');
         return;
       }
-      ((this as any).take(item));
-      if (py_in(item, py_item(d, "loves"))) {
-        [pts, line] = [6, `Oh! ${item}! I love this! Thank you so much!`];
-      } else {
-        if (py_in(item, py_item(d, "likes"))) {
-          [pts, line] = [3, `A ${item}? Thank you, that's really nice.`];
-        } else {
-          if (py_in(item, py_item(d, "hates"))) {
-            [pts, line] = [(-4), `...A ${item}? I don't really like this.`];
-          } else {
-            [pts, line] = [1, `Oh, a ${item}? For me? Thanks.`];
-          }
-        }
+      this.take(item, 1);
+      this.goddess_gifts += 1;
+      this.friend['Harvest Goddess'] = clamp((this.friend['Harvest Goddess'] || 0) + 5, 0, 100);
+      await this.say(`Tadaaa! Thank you for the ${item}! (Total offerings: ${this.goddess_gifts})`, 'Harvest Goddess');
+      if (this.goddess_gifts === 10) {
+        this.give_power_berry('goddess_10');
+        await this.say('For 10 offerings, please accept this Power Berry!', 'Harvest Goddess');
+      } else if (this.goddess_gifts === 20) {
+        this.give('White Grass', 1);
+        await this.say('For 20 offerings, here is a sacred White Grass and the Mine Elevator blessing!', 'Harvest Goddess');
       }
-      [pts, line] = ((this as any).birthday_gift(n, pts, line));
-      this.friend[n] = clamp(py_add(py_item(this.friend, n), pts), 0, 100);
-      this.gifted.add(n);
-      (await (this as any).say(line, n));
       return;
     }
-    if ((py_eq(n, this.married) && py_eq(this.mapname, "house"))) {
-      line = py_rng().choice(SPOUSE_LINES);
-    } else {
-      f = py_item(this.friend, n);
-      tier = ((f < 30) ? 0 : ((f < 70) ? 1 : 2));
-      line = py_rng().choice(py_item(py_item(d, "lines"), tier));
-    }
-    if ((!py_in(n, this.talked))) {
-      this.talked.add(n);
-      this.friend[n] = clamp(py_add(py_item(this.friend, n), 1), 0, 100);
-    }
-    (await (this as any).say(line, n));
-  }
 
-  async propose(n: any): Promise<any> {
-    let d: any = undefined;
-    d = py_item(NPCS, n);
-    if ((!py_item(d, "bach"))) {
-      (await (this as any).say("What a beautiful blue feather! You should give it to someone special.", n));
-    } else {
-      if (this.married) {
-        (await (this as any).say("You're already married! Go home to your family.", n));
+    // Mother's Hill Lake Cucumber Offering to Kappa
+    if (this.mapname === 'mountain' && tile === 'water' && this.held === 'Cucumber') {
+      this.take('Cucumber', 1);
+      this.kappa_gifts += 1;
+      if (this.kappa_gifts >= 10 && !this.has_mystic_berry) {
+        this.has_mystic_berry = true;
+        await this.say('...You brought 10 Cucumbers. Eat this Mystic Blue Berry. Rain and snow will never tire you again.', 'Kappa');
+        this.msg("Obtained Kappa's Mystic Blue Berry! Zero fatigue from rain/snow!", '0C');
       } else {
-        if ((py_item(this.friend, n) < 100)) {
-          (await (this as any).say("A blue feather...? I'm sorry. I... I don't feel that way. Not yet, at least.", n));
-        } else {
-          ((this as any).take("Blue Feather"));
-          (await (this as any).say("A blue feather...! Is this... a proposal? YES! Of course, yes!", n));
-          (await (this as any).say("A week later, the whole town gathers at the church.", null));
-          (await (this as any).say(`Pastor Carter: Do you, ${this.name}, take ${n} to be your spouse?`, null));
-          (await (this as any).say(`You say 'I do.' The bells of Mineral Town ring out for ${this.name} and ${n}!`, null));
-          this.married = n;
-          this.npc_pos.pop(n, null);
-          (await (this as any).say(`${n} has moved into your farmhouse. Congratulations!`, null));
-        }
+        await this.say(`...Kappa emerges from the lake, munches your Cucumber, and vanishes. (${this.kappa_gifts}/10 for Mystic Berry)`, 'Kappa');
       }
+      return;
     }
-  }
 
-  async ship(): Promise<any> {
-    let item: any = undefined; let items: any = undefined; let opts: any = undefined; let pending: any = undefined; let q: any = undefined; let sel: any = undefined;
-    while (true) {
-      items = py_iter(py_sorted(this.inv)).filter((i: any) => (py_item(py_item(ITEMS, i), 0) > 0)).map((i: any) => i);
-      if ((!items)) {
-        (await (this as any).say("You have nothing to ship.", "Shipping Bin"));
-        return;
-      }
-      opts = py_add(py_iter(items).map((i: any) => `${i} x${py_item(this.inv, i)} ${py_item(py_item(ITEMS, i), 0)}G`), ["Done"]);
-      pending = py_sum(py_iter(py_dict_items(this.bin)).map(([i, q]: any) => py_mult(py_item(py_item(ITEMS, i), 0), q)));
-      sel = (await (this as any).menu(`Shipping Bin  (in bin: ${pending}G)`, opts));
-      if ((py_eq(sel, null) || py_eq(sel, py_len(items)))) {
-        return;
-      }
-      item = py_item(items, sel);
-      q = (await (this as any).ask_qty(`Ship how many ${item}?`, py_item(this.inv, item), py_item(py_item(ITEMS, item), 0), "Value"));
-      if (q) {
-        ((this as any).take(item, q));
-        this.bin[item] = py_add(py_dict_get(this.bin, item, 0), q);
-        ((this as any).msg(`Shipped ${q} ${item}. Zack will collect it tomorrow morning.`, "09"));
-      }
-    }
-  }
-
-  async rucksack(): Promise<any> {
-    let cat: any = undefined; let eat: any = undefined; let gain: any = undefined; let i: any = undefined; let item: any = undefined; let items: any = undefined; let opts: any = undefined; let parts: any = undefined; let s2: any = undefined; let sel: any = undefined; let sell: any = undefined; let sub: any = undefined;
-    while (true) {
-      items = py_sorted(this.inv);
-      if ((!items)) {
-        (await (this as any).say("Your rucksack is empty.", null));
-        return;
-      }
-      opts = py_iter(items).map((i: any) => `${(py_eq(i, this.held) ? ">" : " ")} ${i} x${py_item(this.inv, i)}`);
-      const info = (s: any) => {
-        i = py_item(items, s);
-        [sell, eat, cat] = py_item(ITEMS, i);
-        parts = [cat];
-        if (sell) {
-          parts.push(`sells ${sell}G`);
-        }
-        if (eat) {
-          parts.push(`+${eat} stamina`);
-        }
-        return [py_add("  ", py_iter(parts).join(", "))];
-      };
-      sel = (await (this as any).menu("Rucksack", opts));
-      if (py_eq(sel, null)) {
-        return;
-      }
-      item = py_item(items, sel);
-      sub = [(py_eq(this.held, item) ? "Put away" : "Hold (to gift)")];
-      if (py_item(py_item(ITEMS, item), 1)) {
-        sub.push("Eat");
-      }
-      sub.push("Cancel");
-      s2 = (await (this as any).menu(item, sub));
-      if ((py_eq(s2, null) || py_eq(py_item(sub, s2), "Cancel"))) {
-        continue;
-      }
-      if (py_eq(py_item(sub, s2), "Eat")) {
-        ((this as any).take(item));
-        gain = py_item(py_item(ITEMS, item), 1);
-        this.stamina = Math.min(this.max_stamina, py_add(this.stamina, gain));
-        ((this as any).msg(`You ate the ${item}. +${gain} stamina.`, "0B"));
-      } else {
-        if (py_eq(py_item(sub, s2), "Put away")) {
-          this.held = null;
-          ((this as any).msg(`You put away the ${item}.`));
-        } else {
-          this.held = item;
-          ((this as any).msg(`You hold the ${item} high. Face someone and press X to give it.`));
+    // Farm Crop Harvesting
+    if (this.mapname === 'farm' && pKey in this.crops) {
+      const [crop, age] = this.crops[pKey];
+      const [days, regrow] = [CROPS[crop][2], CROPS[crop][3]];
+      if (age >= days) {
+        if (crop === 'Grass') {
+          this.msg('Use your Sickle to cut ripe pasture Grass into Fodder.');
           return;
         }
+        this.give(crop);
+        if (regrow) {
+          this.crops[pKey][1] = days - regrow;
+        } else {
+          delete this.crops[pKey];
+        }
+        this.msg(`You harvested a ${crop}!`, '0B');
+      } else {
+        this.msg(`${crop}: ${days - age} more day${days - age > 1 ? 's' : ''} to go.${this.wet.has(pKey) ? '' : ' (needs water)'}`);
+      }
+      return;
+    }
+
+    // Forage Pickup
+    const fr = this.forage[this.mapname] || {};
+    if (pKey in fr) {
+      const item = py_pop(fr, pKey);
+      this.give(item);
+      this.msg(`You picked up ${item}.`, '0B');
+      return;
+    }
+
+    // Farm Honey/Apple Tree, Doghouse, Horse Stable, Mill, Trash Can, Inn Phone
+    const signId = m.signs[pKey];
+    if (signId === 'honey_tree' || (this.mapname === 'farm' && tile === 'tree' && tx === 7 && ty === 6)) {
+      if (this.honey_picked) {
+        await this.say('Bees buzz happily around the farm tree. Come back tomorrow for more Honey!', 'Farm Tree');
+      } else {
+        this.honey_picked = true;
+        this.give('Honey', 1);
+        let msgTxt = 'You gathered sweet Honey from the farm tree!';
+        if (this.season === 2) {
+          const appleType = py_rng().random() < 0.15 ? 'SUGDW Apple' : 'Apple';
+          this.give(appleType, 1);
+          msgTxt += ` An ${appleType} also dropped!`;
+        }
+        this.msg(msgTxt, '09');
+      }
+      return;
+    }
+    if (signId === 'doghouse' || tile === 'doghouse') {
+      await this.dog_menu();
+      return;
+    }
+    if (signId === 'stable' || tile === 'stable') {
+      await this.horse_menu();
+      return;
+    }
+    if (signId === 'mill' || tile === 'mill') {
+      await this.mill_menu();
+      return;
+    }
+    if (signId === 'trash' || tile === 'trash') {
+      await this.trash_can_menu();
+      return;
+    }
+    if (signId === 'inn_phone' || tile === 'phone') {
+      await this.inn_phone_menu();
+      return;
+    }
+
+    if (tile === 'bin') {
+      await this.ship();
+    } else if (tile === 'bed') {
+      if (await this.confirm('Go to sleep for the night? (Saves to Slot 1)')) {
+        await this.new_day('sleep');
+      }
+    } else if (tile === 'tv') {
+      await this.tv_menu();
+    } else if (tile === 'cal') {
+      const left = 30 - this.day;
+      const nxt = SEASONS[(this.season + 1) % 4];
+      await this.say(`Today is ${this.date_str()}. ${left} day${left !== 1 ? 's' : ''} until ${nxt}.`, 'Calendar');
+      await this.fest_calendar();
+    } else if (tile === 'counter' || tile === 'bookcase') {
+      await this.interior_interact(tile, [tx, ty]);
+    } else if (tile === 'kitchen' || tile === 'bath' || tile === 'shelf' || tile === 'vase' || tile === 'fireplace') {
+      await this.use_furniture(tile);
+    } else if (tile === 'sign') {
+      let text = m.signs[pKey] || '';
+      if (text === 'farm') {
+        text = `${this.farm.toUpperCase()} FARM — Owner: ${this.name}`;
+      }
+      await this.say(text, 'Sign');
+    } else if (this.held) {
+      this.msg(`You're holding ${this.held}. Face someone and press X to give it.`);
+    }
+  }
+
+  async dog_menu(): Promise<void> {
+    if (!this.berry_sources.includes('truth:doghouse')) {
+      this.give_truth_jewel('doghouse');
+    }
+    const h = Math.floor(this.dog_aff / 10);
+    const bar = `[${'#'.repeat(h)}${'.'.repeat(10 - h)}]`;
+    const opts = ['Pet & Hug Dog', 'Play Fetch with Dog Ball', 'Practice Beach Frisbee', 'Leave'];
+    const sel = await this.menu(`Doghouse — Dog ${bar} (Max Frisbee: ${this.dog_frisbee_dist}m)`, opts);
+    if (sel === 0) {
+      this.dog_aff = Math.min(100, this.dog_aff + 3);
+      this.msg('Woof! Your dog wags its tail happily! (+Affection)', '0B');
+    } else if (sel === 1) {
+      if (!this.inv['Dog Ball']) {
+        await this.say('Buy a Dog Ball from Won at Zack\'s Beach House to play fetch!', 'Doghouse');
+      } else {
+        this.dog_aff = Math.min(100, this.dog_aff + 5);
+        this.msg('Your dog chases the Dog Ball and brings it right back! Woof!', '0B');
+      }
+    } else if (sel === 2) {
+      if (!this.inv['Frisbee']) {
+        await this.say('Buy a Frisbee from Won at Zack\'s Beach House to train for Beach Day (Summer 1)!', 'Doghouse');
+      } else {
+        const gain = py_rng().randint(2, 6);
+        this.dog_frisbee_dist = Math.min(95, this.dog_frisbee_dist + gain);
+        this.dog_aff = Math.min(100, this.dog_aff + 4);
+        this.msg(`Great catch! Your dog's Frisbee record is now ${this.dog_frisbee_dist}m!`, '0C');
       }
     }
   }
 
-  async coop(): Promise<any> {
-    let info: any = undefined; let n: any = undefined; let sel: any = undefined;
+  async horse_menu(): Promise<void> {
+    if (!this.berry_sources.includes('truth:stable')) {
+      this.give_truth_jewel('stable');
+    }
+    const h = Math.floor(this.horse_aff / 10);
+    const bar = `[${'#'.repeat(h)}${'.'.repeat(10 - h)}]`;
+    const opts = [
+      'Talk & Pat Horse',
+      'Brush Horse',
+      this.riding_horse ? 'Dismount Horse' : 'Ride Horse (Fast Movement)',
+      'Ship Items via Saddlebags',
+      'Leave',
+    ];
+    const sel = await this.menu(`Horse Stable — Horse ${bar}`, opts);
+    if (sel === 0) {
+      this.horse_aff = Math.min(100, this.horse_aff + 3);
+      this.msg('Neigh! Your horse nuzzles your shoulder.', '0B');
+    } else if (sel === 1) {
+      if (!this.inv['Brush']) {
+        await this.say('Buy a Brush from Saibara or Barley to groom your horse.', 'Stable');
+      } else {
+        this.horse_aff = Math.min(100, this.horse_aff + 5);
+        this.msg("You brushed your horse's coat until it gleams!", '0B');
+      }
+    } else if (sel === 2) {
+      this.riding_horse = !this.riding_horse;
+      this.msg(this.riding_horse ? 'You mount your horse! Double speed on the farm!' : 'You dismount your horse.', '09');
+    } else if (sel === 3) {
+      await this.ship();
+    }
+  }
+
+  async mill_menu(): Promise<void> {
+    const cornCount = this.inv['Corn'] || 0;
+    if (cornCount <= 0) {
+      await this.say('Water Mill: Place 1 Corn here to grind it into 30 bags of Chicken Feed! (You have 0 Corn.)', 'Water Mill');
+      return;
+    }
+    if (await this.confirm(`Grind 1 Corn into 30 Chicken Feed? (You have ${cornCount} Corn)`)) {
+      this.take('Corn', 1);
+      this.give('Chicken Feed', 30);
+      this.msg('The millstone turns: 1 Corn ground into +30 Chicken Feed!', '09');
+    }
+  }
+
+  async trash_can_menu(): Promise<void> {
+    const trashItems = ['Boot', 'Empty Can', 'Fish Bones'].filter((i) => (this.inv[i] || 0) > 0);
+    if (!trashItems.length) {
+      await this.say('Rose Square Trash Can: Dispose of fished-up Boots and Empty Cans here so you never litter!', 'Trash Can');
+      return;
+    }
+    for (const item of trashItems) {
+      const q = this.inv[item];
+      this.take(item, q);
+    }
+    this.msg('You properly disposed of your fishing trash in the plaza bin!', '0B');
+  }
+
+  async tv_menu(): Promise<void> {
+    const is444 = Math.floor(this.minutes / 60) % 12 === 4 && this.minutes % 60 === 40;
+    if (is444) {
+      await this.say('4:44...4:44...4:44... The TV screen flickers with eerie static before returning to normal!', 'TV (4:44)');
+    }
+    const sel = await this.menu('Farmhouse Television — Choose Channel', [
+      'Ch 1 (Left): Weather Forecast',
+      'Ch 2 (Up): Mineral Town News & Calendar',
+      'Ch 3 (Right): Variety, Cooking Show (Tue) & TV Shopping (Sat)',
+      'Ch 4 (Down): Life on the Farm Guide',
+      'Turn Off',
+    ]);
+    if (sel === 0) {
+      await this.say(`Tomorrow's weather forecast for Mineral Town: ${this.tomorrow}! Plan your watering and animals accordingly.`, 'Weather Channel');
+    } else if (sel === 1) {
+      await this.say(`Mineral Town News:${this.fest_news() || ' All is peaceful in Mineral Town today.'}`, 'News Channel');
+    } else if (sel === 2) {
+      if (this.season === 0 && this.day <= 5) {
+        const win = py_rng().random() < 0.7;
+        if (win) {
+          this.give('Relaxation Tea Leaves', 1);
+          await this.say('Harvest Goddess New Year High-Low Gameshow! You guessed right and won Relaxation Tea Leaves!', 'TV Gameshow');
+        } else {
+          await this.say('Harvest Goddess New Year High-Low Gameshow! So close—try again tomorrow!', 'TV Gameshow');
+        }
+        return;
+      }
+      if (this.weekday === 1) {
+        // Tuesday: The Delicious Hour
+        const dish = py_rng().choice(Object.keys(RECIPES));
+        await this.say(`Welcome to THE DELICIOUS HOUR! Today's featured recipe: ${this.recipe_line(dish)}! Try cooking it in your Kitchen!`, 'Cooking Show');
+      } else if (this.weekday === 5) {
+        // Saturday: TV Shopping Network
+        const nextItem = TV_SHOPPING_ITEMS.find(([name]) => {
+          if (name === 'Power Berry') return !this.berry_sources.includes('tv_shopping');
+          return !this.inv[name] && !this.house_flags.includes(name);
+        });
+        if (!nextItem) {
+          await this.say('TV Shopping Network: You have bought every single item in our catalog! Thank you!', 'TV Shopping');
+        } else {
+          this.tv_watched_saturday = nextItem[0];
+          await this.say(
+            `Welcome to SATURDAY TV SHOPPING! Today's special is the ${nextItem[0]} for just ${nextItem[1]}G! (${nextItem[2]}) Use the Telephone at Doug's Inn to order!`,
+            'TV Shopping'
+          );
+        }
+      } else {
+        const show = py_rng().choice([
+          'Star Lillia: Space Princess',
+          'Mechabot Ultror',
+          'The Samurai Farmer Chronicles',
+          'Fairy & Me: Episode 14',
+        ]);
+        await this.say(`You watch an exciting episode of '${show}'.`, 'Variety Channel');
+      }
+    } else if (sel === 3) {
+      await this.say(py_rng().choice(BOOKS), 'Life on the Farm');
+    }
+  }
+
+  async inn_phone_menu(): Promise<void> {
+    if (this.tv_order) {
+      await this.say(`Zack is already delivering your ${this.tv_order[0]} soon!`, 'Inn Telephone');
+      return;
+    }
+    const nextItem = TV_SHOPPING_ITEMS.find(([name]) => {
+      if (name === 'Power Berry') return !this.berry_sources.includes('tv_shopping');
+      return !this.inv[name] && !this.house_flags.includes(name);
+    });
+    if (!nextItem) {
+      await this.say('TV Shopping: You already own everything we sell!', 'Inn Telephone');
+      return;
+    }
+    const [itemName, price, desc] = nextItem;
+    if (await this.confirm(`Order ${itemName} (${price}G + 10G call)? ${desc}`)) {
+      if (this.gold < price + 10) {
+        await this.say(`You need ${price + 10}G total to place this order.`, 'Inn Telephone');
+        return;
+      }
+      this.gold -= price + 10;
+      this.tv_order = [itemName, this.absday() + 2];
+      await this.say(`Thank you for ordering the ${itemName}! Zack will deliver it to your farmhouse in 2 days!`, 'TV Shopping');
+    }
+  }
+
+  hearts(n: string): [string, string] {
+    const info = getHeartInfo(this.friend[n] || 0);
+    return [`${info.bar} ${info.label}`, info.color];
+  }
+
+  async check_heart_and_rival_events(n: string): Promise<void> {
+    const aff = this.friend[n] || 0;
+    const events = HEART_EVENTS[n];
+    if (events) {
+      const thresholds: [number, number][] = [
+        [10, 0], // Black
+        [25, 1], // Purple
+        [45, 2], // Blue
+        [65, 3], // Yellow
+      ];
+      for (const [req, idx] of thresholds) {
+        const key = `${n}:${idx}`;
+        if (aff >= req && !this.heart_events_seen.includes(key)) {
+          this.heart_events_seen.push(key);
+          this.friend[n] = clamp(aff + 5, 0, 100);
+          await this.say(events[idx], `${n} — Heart Event`);
+          if (n === 'Karen' && idx === 0) {
+            this.give('Grass Seeds', 1);
+          }
+          break;
+        }
+      }
+    }
+
+    for (const [bride, rival, scene] of RIVAL_PAIRS) {
+      if ((n === bride || n === rival) && this.married !== bride && this.married !== rival) {
+        const rKey = `${bride}:${rival}`;
+        if (!this.rival_events_seen.includes(rKey) && (this.friend[rival] || 0) >= 15) {
+          this.rival_events_seen.push(rKey);
+          await this.say(`Rival Event (${bride} & ${rival}): ${scene}`, 'Rival Event');
+          break;
+        }
+      }
+    }
+  }
+
+  async talk(n: string): Promise<void> {
+    if (await this.fest_talk(n)) {
+      return;
+    }
+    const d = NPCS[n];
+    if (!d) return;
+    if (this.held) {
+      const item = this.held;
+      if (item === 'Blue Feather') {
+        await this.propose(n);
+        return;
+      }
+      if (this.gifted.has(n)) {
+        await this.say('You already gave me something today. Thank you, though!', n);
+        return;
+      }
+      this.take(item);
+      let pref: 'love' | 'like' | 'neutral' | 'hate' = 'neutral';
+      let line = `Oh, a ${item}? For me? Thanks.`;
+      if (d.loves.includes(item)) {
+        pref = 'love';
+        line = `Oh! ${item}! I love this! Thank you so much!`;
+      } else if (d.likes.includes(item)) {
+        pref = 'like';
+        line = `A ${item}? Thank you, that's really nice.`;
+      } else if (d.hates.includes(item)) {
+        pref = 'hate';
+        line = `...A ${item}? I don't really like this.`;
+      }
+      const isBday = this.birthdays().includes(n);
+      const pts = calculateGiftPoints(pref, isBday, false);
+      if (isBday) {
+        line += pts > 0 ? ' And on my birthday! You remembered! (5x Bonus!)' : ' ...On my birthday, too.';
+      }
+      this.friend[n] = clamp((this.friend[n] || 0) + pts, 0, 100);
+      this.gifted.add(n);
+      await this.say(line, n);
+      await this.check_heart_and_rival_events(n);
+      return;
+    }
+
+    let line = '';
+    if (n === this.married && this.mapname === 'house') {
+      line = py_rng().choice(SPOUSE_LINES);
+      if (this.child_name) {
+        line += ` Little ${this.child_name} is growing so fast!`;
+      }
+    } else {
+      const f = this.friend[n] || 0;
+      const tier = f < 30 ? 0 : f < 70 ? 1 : 2;
+      line = py_rng().choice(d.lines[tier]);
+    }
+    if (!this.talked.has(n)) {
+      this.talked.add(n);
+      this.friend[n] = clamp((this.friend[n] || 0) + 2, 0, 100);
+    }
+    await this.say(line, n);
+    await this.check_heart_and_rival_events(n);
+  }
+
+  async propose(n: string): Promise<void> {
+    const d = NPCS[n];
+    if (!d?.bach) {
+      await this.say('What a beautiful Blue Feather! You should give it to someone special.', n);
+    } else if (this.married) {
+      await this.say("You're already married! Go home to your family.", n);
+    } else if (!this.house_flags.includes('Big Bed')) {
+      await this.say('A Blue Feather...? I care for you too, but your house needs a Big Bed before we can wed!', n);
+    } else if ((this.friend[n] || 0) < 90) {
+      await this.say("A Blue Feather...? I'm sorry. My heart isn't at Red yet—let's grow closer first.", n);
+    } else {
+      this.take('Blue Feather');
+      await this.say('A Blue Feather...! Is this... a proposal? YES! Of course, yes!', n);
+      await this.say('A week later, the whole town gathers at the Church.', null);
+      await this.say(`Pastor Carter: Do you, ${this.name}, take ${n} to be your spouse?`, null);
+      await this.say(`You say 'I do.' The bells of Mineral Town ring out for ${this.name} and ${n}!`, null);
+      this.married = n;
+      this.marriage_day = this.absday();
+      delete this.npc_pos[n];
+      await this.say(`${n} has moved into your farmhouse. Congratulations!`, null);
+    }
+  }
+
+  async ship(): Promise<void> {
     while (true) {
-      info = [`  Chickens: ${this.chickens}/${((this as any).coop_cap())}   Fed today: ${this.fed}`, `  Eggs waiting: ${this.eggs}   Chicken Feed: ${py_dict_get(this.inv, "Chicken Feed", 0)}`];
-      sel = (await (this as any).menu("Chicken Coop", ["Fill feed boxes", "Collect eggs", "Leave"]));
-      if (py_eq(sel, 0)) {
-        if ((!this.chickens)) {
-          (await (this as any).say("The coop is empty. Lillia sells chickens at the Poultry Farm.", null));
+      const items = py_sorted(Object.keys(this.inv)).filter((i) => ITEMS[i] && ITEMS[i][0] > 0);
+      if (!items.length) {
+        await this.say('You have nothing shippable in your rucksack.', 'Shipping Bin');
+        return;
+      }
+      const opts = [
+        ...items.map((i) => `${i} x${this.inv[i]} (${ITEMS[i][0]}G each)`),
+        'Done',
+      ];
+      const pending = py_sum(
+        Object.entries(this.bin).map(([i, q]) => (ITEMS[i] ? ITEMS[i][0] : 0) * q)
+      );
+      const sel = await this.menu(`Shipping Bin  (in bin: ${pending}G — pickup at 5PM)`, opts);
+      if (sel === null || sel === items.length) {
+        return;
+      }
+      const item = items[sel];
+      const q = await this.ask_qty(`Ship how many ${item}?`, this.inv[item], ITEMS[item][0], 'Value');
+      if (q) {
+        this.take(item, q);
+        this.bin[item] = (this.bin[item] || 0) + q;
+        this.msg(`Shipped ${q} ${item}. Zack collects at 5:00 PM.`, '09');
+      }
+    }
+  }
+
+  async rucksack(): Promise<void> {
+    while (true) {
+      const items = py_sorted(Object.keys(this.inv));
+      if (!items.length) {
+        await this.say('Your rucksack is empty.', null);
+        return;
+      }
+      const opts = items.map((i) => `${i === this.held ? '>' : ' '} ${i} x${this.inv[i]}`);
+      const info = (s: number) => {
+        const i = items[s];
+        const [sell, eat, cat] = ITEMS[i] || [0, 0, 'item'];
+        const parts = [cat];
+        if (sell) parts.push(`ships ${sell}G`);
+        if (eat) parts.push(`${eat > 0 ? '+' : ''}${eat} stamina`);
+        return [`  ${parts.join(', ')}`];
+      };
+      const sel = await this.menu('Rucksack', opts, 0, info);
+      if (sel === null) return;
+      const item = items[sel];
+      const sub = [this.held === item ? 'Put away' : 'Hold (to gift / offer)'];
+      if (ITEMS[item] && ITEMS[item][1] !== 0) {
+        sub.push('Eat');
+      }
+      if (item === 'Teleport Stone') {
+        sub.push('Teleport');
+      }
+      sub.push('Cancel');
+      const s2 = await this.menu(item, sub);
+      if (s2 === null || sub[s2] === 'Cancel') continue;
+      if (sub[s2] === 'Eat') {
+        this.take(item);
+        const gain = ITEMS[item][1];
+        this.stamina = clamp(this.stamina + gain, 0, this.max_stamina);
+        if (item.includes('Turbojolt') || item === 'Elli Leaves' || item === 'Relaxation Tea' || item === 'White Grass') {
+          this.fatigue = Math.max(0, this.fatigue - 35);
+        }
+        this.msg(`You ate the ${item}. (${gain >= 0 ? '+' : ''}${gain} Stamina)`, '0B');
+      } else if (sub[s2] === 'Teleport') {
+        await this.use_teleport_stone();
+        return;
+      } else if (sub[s2] === 'Put away') {
+        this.held = null;
+        this.msg(`You put away the ${item}.`);
+      } else {
+        this.held = item;
+        this.msg(`You hold the ${item}. Face someone or a pond and press X.`);
+        return;
+      }
+    }
+  }
+
+  async coop(): Promise<void> {
+    while (true) {
+      const info = [
+        `  Chickens: ${this.chickens}/${this.coop_cap()}   Fed: ${this.fed}   Affection: ${this.chicken_aff}/100`,
+        `  Eggs waiting: ${this.eggs}   Incubator: ${this.incubator_days > 0 ? `${this.incubator_days}d left` : 'Empty'}   Feed: ${this.inv['Chicken Feed'] || 0}`,
+      ];
+      const opts = [
+        'Fill feed boxes',
+        'Collect eggs (Quality based on affection)',
+        'Place Egg in Incubator (3 days to hatch)',
+      ];
+      if (this.makers.includes('Mayonnaise Maker')) {
+        opts.push('Use Mayonnaise Maker (Egg -> Mayonnaise)');
+      }
+      opts.push('Grazing / Outdoor Bell (+Outdoor Hours)', 'Leave');
+      const sel = await this.menu('Chicken Coop', opts, 0, info);
+      if (sel === null || opts[sel] === 'Leave') return;
+      const act = opts[sel];
+      if (act === 'Fill feed boxes') {
+        if (!this.chickens) {
+          await this.say('The coop is empty. Lillia sells chickens at the Poultry Farm.', null);
           continue;
         }
-        n = Math.min((this.chickens - this.fed), py_dict_get(this.inv, "Chicken Feed", 0));
-        if ((this.fed >= this.chickens)) {
-          (await (this as any).say("Every feed box is already full.", null));
+        const n = Math.min(this.chickens - this.fed, this.inv['Chicken Feed'] || 0);
+        if (this.fed >= this.chickens) {
+          await this.say('Every feed box is already full.', null);
+        } else if (!n) {
+          await this.say("You're out of Chicken Feed. Buy it at the Poultry Farm or grind Corn in the Mill!", null);
         } else {
-          if ((!n)) {
-            (await (this as any).say("You're out of Chicken Feed. The Poultry Farm sells it.", null));
+          this.take('Chicken Feed', n);
+          this.fed += n;
+          this.chicken_aff = Math.min(100, this.chicken_aff + 2);
+          this.msg(`You filled ${n} feed box${n > 1 ? 'es' : ''}. Cluck cluck!`, '09');
+        }
+      } else if (act.startsWith('Collect eggs')) {
+        if (this.eggs > 0) {
+          const eggType = getEggQuality(this.chicken_aff, this.chicken_fest_won, this.outdoor_hours, py_rng().random());
+          this.give(eggType, this.eggs);
+          this.msg(`Collected ${this.eggs} x ${eggType}!`, '07');
+          this.eggs = 0;
+        } else {
+          await this.say('No eggs waiting right now.', null);
+        }
+      } else if (act.startsWith('Place Egg in Incubator')) {
+        if (this.incubator_days > 0) {
+          await this.say(`An egg is already incubating (${this.incubator_days} day(s) until it hatches!).`, null);
+        } else if (this.chickens >= this.coop_cap()) {
+          await this.say('Your coop is at full capacity!', null);
+        } else {
+          const eggItem = ['Egg', 'Good Egg', 'High Egg', 'Golden Egg', 'P Egg'].find((e) => (this.inv[e] || 0) > 0);
+          if (!eggItem) {
+            await this.say('You need an Egg in your rucksack to place on the Incubator.', null);
           } else {
-            ((this as any).take("Chicken Feed", n));
-            this.fed += n;
-            ((this as any).msg(`You filled ${n} feed box${((n > 1) ? "es" : "")}. Cluck cluck!`, "09"));
+            this.take(eggItem, 1);
+            this.incubator_days = 3;
+            this.msg(`Placed ${eggItem} in the Incubator! A chick will hatch in 3 days.`, '09');
           }
         }
-      } else {
-        if (py_eq(sel, 1)) {
-          if (this.eggs) {
-            ((this as any).give("Egg", this.eggs));
-            ((this as any).msg(`You collected ${this.eggs} egg${((this.eggs > 1) ? "s" : "")}!`, "07"));
-            this.eggs = 0;
-          } else {
-            (await (this as any).say("No eggs today.", null));
-          }
+      } else if (act.startsWith('Use Mayonnaise Maker')) {
+        const eggItem = ['X Egg', 'P Egg', 'Golden Egg', 'High Egg', 'Good Egg', 'Egg'].find((e) => (this.inv[e] || 0) > 0);
+        if (!eggItem) {
+          await this.say('You have no Eggs in your rucksack to put into the Mayonnaise Maker.', null);
         } else {
-          return;
+          const res = convertWithMaker(eggItem);
+          if (res) {
+            const q = this.inv[eggItem];
+            this.take(eggItem, q);
+            this.give(res.output, q);
+            this.msg(`Mayonnaise Maker produced ${q} x ${res.output}!`, '0A');
+          }
+        }
+      } else if (act.startsWith('Grazing')) {
+        if (this.weather !== 'Sunny') {
+          await this.say('Only let chickens outside on Sunny days! Rain makes them unhappy.', null);
+        } else {
+          this.outdoor_hours += 10;
+          this.chicken_aff = Math.min(100, this.chicken_aff + 3);
+          this.fed = this.chickens;
+          this.msg(`Your chickens grazed happily outside! (Outdoor hours: ${this.outdoor_hours}h, all fed!)`, '0B');
         }
       }
     }
   }
 
-  animal_line(a: any): any {
-    let h: any = undefined; let kind: any = undefined; let status: any = undefined;
-    h = Math.floor(py_item(a, "aff") / 10);
-    status = [];
-    if ((!py_item(a, "fed"))) {
-      status.push("hungry");
-    }
-    if ((py_eq(py_item(a, "kind"), "cow") && py_item(a, "ready"))) {
-      status.push("milk ready");
-    }
-    if ((py_eq(py_item(a, "kind"), "sheep") && (py_item(a, "wool") >= WOOL_DAYS))) {
-      status.push("wool ready");
-    }
-    kind = py_item(py_item(ANIMALS, py_item(a, "kind")), 0);
-    return `${py_item(a, "name")} ${kind} [${py_mult("#", h)}${py_mult(".", (10 - h))}] ${py_iter(status).join(", ")}`;
+  barn_cap(): number {
+    return this.house_flags.includes('Barn Expansion') ? 16 : BARN_CAP;
   }
 
-  async barn(): Promise<any> {
-    let info: any = undefined; let opts: any = undefined; let sel: any = undefined; let tools: any = undefined; let unfed: any = undefined;
-    sel = 0;
+  animal_line(a: any): string {
+    const h = Math.floor(a.aff / 10);
+    const status: string[] = [];
+    if (!a.fed) status.push('hungry');
+    if (a.kind === 'cow' && a.ready) status.push('milk ready');
+    if (a.kind === 'sheep' && a.wool >= WOOL_DAYS) status.push('wool ready');
+    if (a.pregnantDays > 0) status.push(`pregnant (${a.pregnantDays}d)`);
+    const kind = ANIMALS[a.kind][0];
+    return `${a.name} ${kind} [${'#'.repeat(h)}${'.'.repeat(10 - h)}] ${status.join(', ')}`;
+  }
+
+  async barn(): Promise<void> {
     while (true) {
-      unfed = py_sum(py_iter(this.animals).filter((a: any) => (!py_item(a, "fed"))).map((a: any) => 1));
-      tools = py_iter(py_iter(["Milker", "Clippers", "Brush"]).filter((t: any) => py_dict_get(this.inv, t)).map((t: any) => t)).join(", ");
-      info = [`  Animals: ${py_len(this.animals)}/${BARN_CAP}   Hungry: ${unfed}   Fodder: ${py_dict_get(this.inv, "Fodder", 0)}`, `  Tools: ${(tools || "none (sold at Yodel Ranch)")}`];
-      opts = py_add(py_add(["Fill fodder boxes"], py_iter(this.animals).map((a: any) => ((this as any).animal_line(a)))), ["Leave"]);
-      sel = (await (this as any).menu("Barn", opts));
-      if ((py_eq(sel, null) || py_eq(sel, (py_len(opts) - 1)))) {
-        return;
+      const unfed = this.animals.filter((a) => !a.fed).length;
+      const tools = ['Milker', 'Clippers', 'Brush', 'Bell', 'Miracle Potion']
+        .filter((t) => this.inv[t])
+        .join(', ');
+      const info = [
+        `  Animals: ${this.animals.length}/${this.barn_cap()}   Hungry: ${unfed}   Fodder: ${this.inv['Fodder'] || 0}`,
+        `  Tools: ${tools || 'none'}   Makers: ${this.makers.filter((m) => m !== 'Mayonnaise Maker').join(', ') || 'none'}`,
+      ];
+      const opts = [
+        'Fill fodder boxes',
+        'Ring Grazing Bell (Graze Outside in Sun)',
+        ...this.animals.map((a) => this.animal_line(a)),
+      ];
+      if (this.makers.includes('Cheese Maker')) {
+        opts.push('Use Cheese Maker (Milk -> Cheese)');
       }
-      if (py_eq(sel, 0)) {
-        (await (this as any).barn_feed());
+      if (this.makers.includes('Yarn Maker')) {
+        opts.push('Use Yarn Maker (Wool -> Yarn)');
+      }
+      opts.push('Leave');
+      const sel = await this.menu('Livestock Barn', opts, 0, info);
+      if (sel === null || opts[sel] === 'Leave') return;
+      const choice = opts[sel];
+      if (choice === 'Fill fodder boxes') {
+        await this.barn_feed();
+      } else if (choice.startsWith('Ring Grazing Bell')) {
+        if (this.weather !== 'Sunny') {
+          await this.say('Keep cows and sheep inside during bad weather!', null);
+        } else {
+          this.outdoor_hours += 10;
+          for (const a of this.animals) {
+            a.fed = true;
+            a.aff = Math.min(100, a.aff + 2);
+          }
+          this.msg(`Your livestock grazed in the pasture! (Outdoor hours: ${this.outdoor_hours}h)`, '0B');
+        }
+      } else if (choice.startsWith('Use Cheese Maker')) {
+        const mItem = ['X Milk', 'P Milk', 'Golden Milk', 'Large Milk', 'Medium Milk', 'Small Milk', 'Milk'].find(
+          (i) => (this.inv[i] || 0) > 0
+        );
+        if (!mItem) {
+          await this.say('You have no Milk in your rucksack.', null);
+        } else {
+          const res = convertWithMaker(mItem);
+          if (res) {
+            const q = this.inv[mItem];
+            this.take(mItem, q);
+            this.give(res.output, q);
+            this.msg(`Cheese Maker produced ${q} x ${res.output}!`, '09');
+          }
+        }
+      } else if (choice.startsWith('Use Yarn Maker')) {
+        const wItem = ['X Wool', 'P Wool', 'Golden Wool', 'Large Wool', 'Good Wool', 'Wool'].find(
+          (i) => (this.inv[i] || 0) > 0
+        );
+        if (!wItem) {
+          await this.say('You have no Wool in your rucksack.', null);
+        } else {
+          const res = convertWithMaker(wItem);
+          if (res) {
+            const q = this.inv[wItem];
+            this.take(wItem, q);
+            this.give(res.output, q);
+            this.msg(`Yarn Maker spun ${q} x ${res.output}!`, '0E');
+          }
+        }
       } else {
-        (await (this as any).animal_care(py_item(this.animals, (sel - 1))));
-        if (py_eq(this.mapname, "house")) {
-          return;
+        const animalIdx = sel - 2;
+        if (this.animals[animalIdx]) {
+          await this.animal_care(this.animals[animalIdx]);
         }
       }
     }
   }
 
-  async barn_feed(): Promise<any> {
-    let a: any = undefined; let hungry: any = undefined; let n: any = undefined;
-    if ((!this.animals)) {
-      (await (this as any).say("The barn is empty. Barley sells cows and sheep at Yodel Ranch.", null));
+  async barn_feed(): Promise<void> {
+    if (!this.animals.length) {
+      await this.say('The barn is empty. Barley sells cows and sheep at Yodel Ranch.', null);
       return;
     }
-    hungry = py_iter(this.animals).filter((a: any) => (!py_item(a, "fed"))).map((a: any) => a);
-    if ((!hungry)) {
-      (await (this as any).say("Every fodder box is already full.", null));
+    const hungry = this.animals.filter((a) => !a.fed);
+    if (!hungry.length) {
+      await this.say('Every fodder box is already full.', null);
       return;
     }
-    n = Math.min(py_len(hungry), py_dict_get(this.inv, "Fodder", 0));
-    if ((!n)) {
-      (await (this as any).say("You're out of Fodder. Yodel Ranch sells it.", null));
+    const n = Math.min(hungry.length, this.inv['Fodder'] || 0);
+    if (!n) {
+      await this.say("You're out of Fodder. Buy it at Yodel Ranch or cut pasture Grass with your Sickle!", null);
       return;
     }
-    ((this as any).take("Fodder", n));
-    for (let a of py_iter(py_slice(hungry, null, n))) {
-      a["fed"] = true;
+    this.take('Fodder', n);
+    for (const a of hungry.slice(0, n)) {
+      a.fed = true;
     }
-    ((this as any).msg(`You filled ${n} fodder box${((n > 1) ? "es" : "")}. Moo!`, "09"));
+    this.msg(`You filled ${n} fodder box${n > 1 ? 'es' : ''}. Moo!`, '09');
   }
 
-  async animal_care(a: any): Promise<any> {
-    let act: any = undefined; let item: any = undefined; let left: any = undefined; let name: any = undefined; let opts: any = undefined; let sel: any = undefined; let sound: any = undefined;
+  async animal_care(a: any): Promise<void> {
     while (true) {
-      name = py_item(a, "name");
-      opts = ["Talk"];
-      if (py_dict_get(this.inv, "Brush")) {
-        opts.push("Brush");
-      }
-      if ((py_eq(py_item(a, "kind"), "cow") && py_dict_get(this.inv, "Milker"))) {
-        opts.push("Milk");
-      }
-      if ((py_eq(py_item(a, "kind"), "sheep") && py_dict_get(this.inv, "Clippers"))) {
-        opts.push("Shear");
-      }
-      opts.push("Back");
-      sel = (await (this as any).menu(((this as any).animal_line(a)), opts));
-      if ((py_eq(sel, null) || py_eq(py_item(opts, sel), "Back"))) {
-        return;
-      }
-      act = py_item(opts, sel);
-      if (py_eq(act, "Talk")) {
-        if (py_item(a, "talked")) {
-          (await (this as any).say(`${name} looks at you contentedly.`, name));
+      const name = a.name;
+      const opts = ['Talk'];
+      if (this.inv['Brush']) opts.push('Brush');
+      if (a.kind === 'cow' && this.inv['Milker']) opts.push('Milk');
+      if (a.kind === 'sheep' && this.inv['Clippers']) opts.push('Shear');
+      if (this.inv['Miracle Potion'] && !a.pregnantDays) opts.push('Use Miracle Potion (Breed)');
+      opts.push('Back');
+      const sel = await this.menu(this.animal_line(a), opts);
+      if (sel === null || opts[sel] === 'Back') return;
+      const act = opts[sel];
+      if (act === 'Talk') {
+        if (a.talked) {
+          await this.say(`${name} looks at you contentedly.`, name);
         } else {
-          a["talked"] = true;
-          a["aff"] = Math.min(100, py_add(py_item(a, "aff"), 1));
-          sound = (py_eq(py_item(a, "kind"), "cow") ? "Moooo!" : "Baaaa!");
-          (await (this as any).say(`${sound} ${name} seems happy to see you.`, name));
+          a.talked = true;
+          a.aff = Math.min(100, a.aff + 2);
+          const sound = a.kind === 'cow' ? 'Moooo!' : 'Baaaa!';
+          await this.say(`${sound} ${name} seems happy to see you.`, name);
         }
-      } else {
-        if (py_eq(act, "Brush")) {
-          if (py_item(a, "brushed")) {
-            (await (this as any).say(`${name}'s coat is already shiny.`, name));
-          } else {
-            a["brushed"] = true;
-            a["aff"] = Math.min(100, py_add(py_item(a, "aff"), 2));
-            ((this as any).msg(`You brushed ${name}. ${name} looks pleased!`, "0B"));
-            (await (this as any).spend(1));
-          }
+      } else if (act === 'Brush') {
+        if (a.brushed) {
+          await this.say(`${name}'s coat is already shiny.`, name);
         } else {
-          if (py_eq(act, "Milk")) {
-            if ((!py_item(a, "ready"))) {
-              (await (this as any).say(`${name} has no milk right now. Feed ${name} today and try tomorrow.`, null));
-            } else {
-              a["ready"] = false;
-              a["aff"] = Math.min(100, py_add(py_item(a, "aff"), 1));
-              item = ((py_item(a, "aff") >= 80) ? "Large Milk" : ((py_item(a, "aff") >= 40) ? "Medium Milk" : "Small Milk"));
-              ((this as any).give(item));
-              ((this as any).msg(`You milked ${name}: ${item}!`, "07"));
-              (await (this as any).spend(2));
-            }
-          } else {
-            if (py_eq(act, "Shear")) {
-              if ((py_item(a, "wool") < WOOL_DAYS)) {
-                left = (WOOL_DAYS - py_item(a, "wool"));
-                (await (this as any).say(`${name}'s wool needs ${left} more well-fed day${((left > 1) ? "s" : "")} to grow back.`, null));
-              } else {
-                a["wool"] = 0;
-                a["aff"] = Math.min(100, py_add(py_item(a, "aff"), 1));
-                item = ((py_item(a, "aff") >= 70) ? "Large Wool" : "Wool");
-                ((this as any).give(item));
-                ((this as any).msg(`You sheared ${name}: ${item}!`, "07"));
-                (await (this as any).spend(2));
-              }
-            }
-          }
+          a.brushed = true;
+          a.aff = Math.min(100, a.aff + 3);
+          this.msg(`You brushed ${name}. ${name} looks pleased!`, '0B');
+          await this.spend(1);
+        }
+      } else if (act === 'Milk') {
+        if (!a.ready) {
+          await this.say(`${name} has no milk right now. Feed ${name} today and try tomorrow.`, null);
+        } else {
+          a.ready = false;
+          a.aff = Math.min(100, a.aff + 2);
+          const item = getMilkQuality(a.aff, Boolean(a.wonFestival), this.outdoor_hours, py_rng().random());
+          this.give(item);
+          this.msg(`You milked ${name}: ${item}!`, '07');
+          await this.spend(2);
+        }
+      } else if (act === 'Shear') {
+        if (a.wool < WOOL_DAYS) {
+          const left = WOOL_DAYS - a.wool;
+          await this.say(`${name}'s wool needs ${left} more well-fed day${left > 1 ? 's' : ''} to grow back.`, null);
+        } else {
+          a.wool = 0;
+          a.aff = Math.min(100, a.aff + 2);
+          const item = getWoolQuality(a.aff, Boolean(a.wonFestival), this.outdoor_hours, py_rng().random());
+          this.give(item);
+          this.msg(`You sheared ${name}: ${item}!`, '07');
+          await this.spend(2);
+        }
+      } else if (act.startsWith('Use Miracle Potion')) {
+        if (this.animals.length >= this.barn_cap()) {
+          await this.say('Your barn is full!', null);
+        } else {
+          this.take('Miracle Potion', 1);
+          a.pregnantDays = 7;
+          this.msg(`${name} is now expecting! A newborn will arrive in 7 days!`, '0A');
         }
       }
-      if (py_eq(this.mapname, "house")) {
-        return;
-      }
+      if (this.mapname === 'house') return;
     }
   }
 
-  async buy_animal(kind: any): Promise<any> {
-    let label: any = undefined; let name: any = undefined; let names: any = undefined; let price: any = undefined; let py_default: any = undefined; let taken: any = undefined;
-    [label, price] = py_item(ANIMALS, kind);
-    if ((py_len(this.animals) >= BARN_CAP)) {
-      (await (this as any).say("Your barn is full!", "Barley"));
+  async buy_animal(kind: string): Promise<void> {
+    const [label, price] = ANIMALS[kind];
+    if (this.animals.length >= this.barn_cap()) {
+      await this.say('Your barn is full!', 'Barley');
       return;
     }
-    if ((this.gold < price)) {
-      (await (this as any).say(`A ${label.toLowerCase()} is ${price}G. Come back when you've saved up.`, "Barley"));
+    if (this.gold < price) {
+      await this.say(`A ${label.toLowerCase()} is ${price}G. Come back when you've saved up.`, 'Barley');
       return;
     }
-    if ((!(await (this as any).confirm(`Buy a ${label.toLowerCase()} for ${price}G?`)))) {
-      return;
-    }
-    names = (py_eq(kind, "cow") ? COW_NAMES : SHEEP_NAMES);
-    taken = new Set(py_iter(this.animals).map((a: any) => py_item(a, "name")));
-    py_default = py_next(py_iter(names).filter((n: any) => (!py_in(n, taken))).map((n: any) => n), `${label}${py_add(py_len(this.animals), 1)}`);
-    name = py_slice((await (this as any).text_input(`Name your ${label.toLowerCase()}:`, py_default)), null, 10);
+    if (!(await this.confirm(`Buy a ${label.toLowerCase()} for ${price}G?`))) return;
+    const names = kind === 'cow' ? COW_NAMES : SHEEP_NAMES;
+    const taken = new Set(this.animals.map((a) => a.name));
+    const defName = names.find((n) => !taken.has(n)) || `${label}${this.animals.length + 1}`;
+    const name = (await this.text_input(`Name your ${label.toLowerCase()}:`, defName)).slice(0, 10);
     this.gold -= price;
-    this.animals.push({ ["name"]: name, ["kind"]: kind, ["aff"]: 10, ["fed"]: false, ["ready"]: false, ["wool"]: 0, ["talked"]: false, ["brushed"]: false });
-    (await (this as any).say(`${name} will be waiting in your barn. Fill the fodder box every day!`, "Barley"));
+    this.animals.push({
+      name,
+      kind,
+      aff: 15,
+      fed: false,
+      ready: false,
+      wool: 0,
+      talked: false,
+      brushed: false,
+      wonFestival: false,
+      pregnantDays: 0,
+    });
+    await this.say(`${name} will be waiting in your barn. Fill the fodder box every day!`, 'Barley');
   }
 
-  async buy_barn_tool(item: any, price: any): Promise<any> {
-    if (py_dict_get(this.inv, item)) {
-      (await (this as any).say(`You already have a ${item}.`, "Barley"));
-    } else {
-      if ((this.gold < price)) {
-        (await (this as any).say(`The ${item} is ${price}G.`, "Barley"));
-      } else {
-        if ((await (this as any).confirm(`Buy a ${item} for ${price}G?`))) {
-          this.gold -= price;
-          ((this as any).give(item));
-          ((this as any).msg(`Bought a ${item}.`, "09"));
-        }
-      }
+  async buy_barn_tool(item: string, price: number): Promise<void> {
+    if (this.inv[item]) {
+      await this.say(`You already have a ${item}.`, 'Barley');
+    } else if (this.gold < price) {
+      await this.say(`The ${item} is ${price}G.`, 'Barley');
+    } else if (await this.confirm(`Buy a ${item} for ${price}G?`)) {
+      this.gold -= price;
+      this.give(item);
+      this.msg(`Bought a ${item}.`, '09');
     }
   }
 
-  barn_new_day(report: any): any {
-    let a: any = undefined; let hungry: any = undefined; let ready: any = undefined;
-    hungry = 0;
-    for (let a of py_iter(this.animals)) {
-      if (py_item(a, "fed")) {
-        if (py_eq(py_item(a, "kind"), "cow")) {
-          a["ready"] = true;
+  barn_new_day(report: string[]): void {
+    let hungry = 0;
+    const newBabies: any[] = [];
+    for (const a of this.animals) {
+      if (a.pregnantDays > 0) {
+        a.pregnantDays -= 1;
+        if (a.pregnantDays === 0 && this.animals.length + newBabies.length < this.barn_cap()) {
+          const babyName = `${a.name}Jr`.slice(0, 10);
+          newBabies.push({
+            name: babyName,
+            kind: a.kind,
+            aff: 30,
+            fed: true,
+            ready: false,
+            wool: 0,
+            talked: false,
+            brushed: false,
+            wonFestival: false,
+            pregnantDays: 0,
+          });
+          report.push(`${a.name} gave birth to ${babyName} in the barn!`);
+        }
+      }
+      if (a.fed) {
+        if (a.kind === 'cow') {
+          a.ready = true;
         } else {
-          a["wool"] = Math.min(WOOL_DAYS, py_add(py_item(a, "wool"), 1));
+          a.wool = Math.min(WOOL_DAYS, a.wool + 1);
         }
       } else {
         hungry += 1;
-        a["aff"] = Math.max(0, (py_item(a, "aff") - 5));
+        a.aff = Math.max(0, a.aff - 5);
       }
-      a["fed"] = false;
-      a["talked"] = false;
-      a["brushed"] = false;
+      a.fed = false;
+      a.talked = false;
+      a.brushed = false;
     }
+    this.animals.push(...newBabies);
     if (hungry) {
-      report.push(`${hungry} barn animal${((hungry > 1) ? "s" : "")} went hungry yesterday.`);
-    }
-    ready = py_iter(this.animals).filter((a: any) => ((py_eq(py_item(a, "kind"), "cow") && py_item(a, "ready")) || (py_eq(py_item(a, "kind"), "sheep") && (py_item(a, "wool") >= WOOL_DAYS)))).map((a: any) => py_item(a, "name"));
-    if (ready) {
-      report.push(`Ready in the barn: ${py_iter(ready).join(", ")}.`);
+      report.push(`${hungry} barn animal${hungry > 1 ? 's' : ''} went hungry yesterday.`);
     }
   }
 
-  async visit(bid: any): Promise<any> {
-    if ((!(await (this as any).building_open(bid)))) {
-      return;
+  async sprite_hut_menu(): Promise<void> {
+    while (true) {
+      const opts = [
+        ...SPRITES.map((s) => {
+          const aff = this.sprite_aff[s.name] || 0;
+          const hearts = Math.floor(aff / 10);
+          const job = this.sprite_jobs[s.name] || { task: 'none', days: 0, skill: 10 };
+          const jobTxt = job.days > 0 ? `${job.task} (${job.days}d)` : 'idle';
+          return `${s.name} (${s.colorName}) [${'#'.repeat(hearts)}${'.'.repeat(10 - hearts)}] — ${jobTxt}`;
+        }),
+        'Leave Sprite Hut',
+      ];
+      const sel = await this.menu('Harvest Sprite Hut (Behind the Church)', opts);
+      if (sel === null || sel === SPRITES.length) return;
+      const sp = SPRITES[sel];
+      await this.sprite_interact(sp);
     }
-    if (py_in(bid, this.interiors)) {
-      ((this as any).enter_interior(bid));
-      return;
-    }
-    (await (this as any).shop_menu(bid));
   }
 
-  async building_open(bid: any): Promise<any> {
-    let c: any = undefined; let closed: any = undefined; let days: any = undefined; let name: any = undefined; let o: any = undefined;
-    if ((await (this as any).fest_closed(bid))) {
-      return false;
+  async sprite_interact(sp: (typeof SPRITES)[number]): Promise<void> {
+    const sName = sp.name;
+    while (true) {
+      const aff = this.sprite_aff[sName] || 0;
+      const job = this.sprite_jobs[sName] || { task: 'none', days: 0, skill: 10 };
+      const opts = [
+        'Talk',
+        `Give Held Item (${this.held || 'none'})`,
+        'Give Flour from Rucksack (+8 Affection)',
+        'Hire for Farm Work (Requires 3+ Hearts)',
+        'Play Sprite Mini-Game (+Skill & Affection)',
+        'Back',
+      ];
+      const sel = await this.menu(`${sName} (${sp.colorName} Sprite) — Skill: ${job.skill}%`, opts);
+      if (sel === null || opts[sel] === 'Back') return;
+      if (sel === 0) {
+        this.sprite_aff[sName] = Math.min(100, aff + 2);
+        await this.say(
+          `Budum! I'm ${sName}! I love Flour, Honey, Bread, and ${sp.grass}! At 3 hearts I can help on your farm!`,
+          sName
+        );
+      } else if (sel === 1) {
+        if (!this.held) {
+          await this.say('Hold an item in your Rucksack first, or choose Give Flour!', sName);
+        } else {
+          const item = this.held;
+          this.take(item, 1);
+          const bonus = item === sp.grass || item === 'Flour' || item === 'Honey' ? 10 : 4;
+          this.sprite_aff[sName] = Math.min(100, aff + bonus);
+          await this.say(`Yay! Thank you for the ${item}! (+${bonus} Friendship!)`, sName);
+        }
+      } else if (sel === 2) {
+        if (!this.inv['Flour']) {
+          await this.say('Buy Flour at Jeff\'s Supermarket (50G) to gift the Harvest Sprites!', sName);
+        } else {
+          this.take('Flour', 1);
+          this.sprite_aff[sName] = Math.min(100, aff + 10);
+          this.msg(`${sName} loves the Flour! (+10 Friendship)`, '0B');
+        }
+      } else if (sel === 3) {
+        if ((this.sprite_aff[sName] || 0) < 30) {
+          await this.say(`You need at least 3 Hearts (30 Friendship) before ${sName} will work on your farm!`, sName);
+          continue;
+        }
+        const taskSel = await this.menu(`Hire ${sName} for which task?`, [
+          'Water Crops (1, 3, or 7 days)',
+          'Harvest Crops to Bin (1, 3, or 7 days)',
+          'Care for Animals (1, 3, or 7 days)',
+          'Cancel',
+        ]);
+        if (taskSel === null || taskSel === 3) continue;
+        const durSel = await this.menu('Hire for how many days?', ['1 Day', '3 Days', '7 Days']);
+        if (durSel === null) continue;
+        const days = [1, 3, 7][durSel];
+        const task = ['Watering', 'Harvesting', 'Animals'][taskSel];
+        this.sprite_jobs[sName] = { task, days, skill: job.skill };
+        await this.say(`Leave the ${task.toLowerCase()} to me for the next ${days} day(s), boss! Budum!`, sName);
+      } else if (sel === 4) {
+        const score = await this.fest_mash(3.5, 14, `${sName}'s Farm Training Game`);
+        job.skill = Math.min(100, job.skill + (score >= 14 ? 8 : 3));
+        this.sprite_aff[sName] = Math.min(100, (this.sprite_aff[sName] || 0) + 4);
+        await this.say(
+          `That was fun! My work skill is now ${job.skill}%! (${score} pts)`,
+          sName
+        );
+      }
     }
-    name = py_item(BUILDINGS, bid);
-    [o, c, closed] = py_item(HOURS, bid);
-    if ((py_in(this.weekday, closed) || (!(py_mult(o, 60) <= this.minutes) && (this.minutes < py_mult(c, 60))))) {
-      days = py_iter(py_iter(py_sorted(closed)).map((d: any) => py_item(WEEKDAYS, d))).join(", ");
-      (await (this as any).say(`The ${name} is closed. Open ${fmt_hour(o)} - ${fmt_hour(c)}${(days ? py_add(", closed ", days) : "")}.`, null));
+  }
+
+  async kai_shack_menu(): Promise<void> {
+    if (this.season !== 1) {
+      await this.say("Kai's Seaside Lodge is closed until Summer.", null);
+      return;
+    }
+    const sel = await this.menu(`Kai's Seaside Lodge   ${this.gold}G`, [
+      'Eat Roasted Corn (150G, +35 Stamina)',
+      'Eat Kai\'s Baked Pineapple (300G, +70 Stamina)',
+      'Talk to Kai',
+      'Leave',
+    ]);
+    if (sel === 0 && this.gold >= 150) {
+      this.gold -= 150;
+      this.stamina = Math.min(this.max_stamina, this.stamina + 35);
+      await this.say('Hot off the grill! (+35 Stamina)', 'Kai');
+    } else if (sel === 1 && this.gold >= 300) {
+      this.gold -= 300;
+      this.stamina = Math.min(this.max_stamina, this.stamina + 70);
+      await this.say('Sweet tropical pineapple! (+70 Stamina)', 'Kai');
+    } else if (sel === 2) {
+      await this.talk('Kai');
+    }
+  }
+
+  async visit(bid: string): Promise<void> {
+    if (!(await this.building_open(bid))) return;
+    if (bid in this.interiors) {
+      this.enter_interior(bid);
+      return;
+    }
+    await this.shop_menu(bid);
+  }
+
+  async building_open(bid: string): Promise<boolean> {
+    if (await this.fest_closed(bid)) return false;
+    const name = BUILDINGS[bid];
+    const [o, c, closed] = HOURS[bid];
+    if (closed.includes(this.weekday) || !(o * 60 <= this.minutes && this.minutes < c * 60)) {
+      const days = py_sorted(closed)
+        .map((d: number) => WEEKDAYS[d])
+        .join(', ');
+      await this.say(
+        `The ${name} is closed. Open ${fmt_hour(o)} - ${fmt_hour(c)}${days ? `, closed ${days}` : ''}.`,
+        null
+      );
       return false;
     }
     return true;
   }
 
-  async shop_menu(bid: any, people_fn: any = null): Promise<any> {
-    let name: any = undefined; let opts: any = undefined; let people: any = undefined; let sel: any = undefined; let shop: any = undefined;
-    name = py_item(BUILDINGS, bid);
+  async shop_menu(bid: string, people_fn: (() => string[]) | null = null): Promise<void> {
+    const name = BUILDINGS[bid];
     while (true) {
-      if (people_fn) {
-        people = people_fn();
+      const people = people_fn
+        ? people_fn()
+        : Object.entries(NPCS)
+            .filter(([n, d]) => d.home === bid && !this.is_out(n) && n !== this.married)
+            .map(([n]) => n);
+      const shop = await this.shop_options(bid);
+      const opts = [...shop.map((s: any) => s[0]), ...people.map((p) => `Talk to ${p}`), 'Leave'];
+      const sel = await this.menu(`${name}   ${this.gold}G`, opts);
+      if (sel === null || sel === opts.length - 1) return;
+      if (sel < shop.length) {
+        await shop[sel][1]();
       } else {
-        people = py_iter(py_dict_items(NPCS)).filter(([n, d]: any) => (py_eq(py_item(d, "home"), bid) && (!((this as any).is_out(n))) && (!py_eq(n, this.married)))).map(([n, d]: any) => n);
-      }
-      shop = (await (this as any).shop_options(bid));
-      opts = py_add(py_add(py_iter(shop).map((s: any) => py_item(s, 0)), py_iter(people).map((p: any) => `Talk to ${p}`)), ["Leave"]);
-      sel = (await (this as any).menu(`${name}   ${this.gold}G`, opts));
-      if ((py_eq(sel, null) || py_eq(sel, (py_len(opts) - 1)))) {
-        return;
-      }
-      if ((sel < py_len(shop))) {
-        (py_item(py_item(shop, sel), 1))();
-      } else {
-        (await (this as any).talk(py_item(people, (sel - py_len(shop)))));
+        await this.talk(people[sel - shop.length]);
       }
     }
   }
 
-  build_interiors(): any {
-    let bid: any = undefined; let dx: any = undefined; let dy: any = undefined; let entry: any = undefined; let front: any = undefined; let im: any = undefined; let m: any = undefined; let mname: any = undefined; let spots: any = undefined;
-    "Create an interior for every building door that has a layout.";
-    this.interiors = {  };
-    this.interior_bid = {  };
-    this.indoor_npcs = {  };
-    for (let [mname, m] of py_iter(Array.from(py_iter(py_dict_items(this.maps) || [])))) {
-      for (let [[dx, dy], bid] of py_iter(py_dict_items(m.doors))) {
-        if (((!py_in(bid, INTERIOR_LAYOUTS)) || py_in(bid, this.interiors))) {
-          continue;
-        }
-        front = py_next(py_iter([[0, 1], [0, (-1)], [1, 0], [(-1), 0]]).filter(([ox, oy]: any) => py_item(py_item(TILES, m.tile(py_add(dx, ox), py_add(dy, oy))), 3)).map(([ox, oy]: any) => [py_add(dx, ox), py_add(dy, oy)]), [dx, py_add(dy, 1)]);
-        [im, entry, spots] = build_interior(bid, [mname, ...((py_iter(front) || []) as [any, any, any])]);
+  build_interiors(): void {
+    this.interiors = {};
+    this.interior_bid = {};
+    this.indoor_npcs = {};
+    for (const [mname, m] of Object.entries(this.maps)) {
+      for (const [coordKey, bid] of Object.entries(m.doors)) {
+        if (!(bid in INTERIOR_LAYOUTS) || bid in this.interiors) continue;
+        const [dx, dy] = parseCoordKey(coordKey);
+        const front =
+          ([
+            [0, 1],
+            [0, -1],
+            [1, 0],
+            [-1, 0],
+          ] as [number, number][])
+            .map(([ox, oy]): [number, number] => [dx + ox, dy + oy])
+            .find(([fx, fy]) => TILES[m.tile(fx, fy)]?.[3]) || [dx, dy + 1];
+        const [im, entry, spots] = build_interior(bid, [mname, front[0], front[1]]);
         this.maps[im.name] = im;
-        this.interiors[bid] = { ["map"]: im.name, ["entry"]: entry, ["spots"]: spots };
+        this.interiors[bid] = { map: im.name, entry, spots };
         this.interior_bid[im.name] = bid;
       }
     }
   }
 
-  enter_interior(bid: any): any {
-    let info: any = undefined;
-    info = py_item(this.interiors, bid);
-    ((this as any).warp(py_item(info, "map"), ...((py_iter(py_item(info, "entry")) || []) as [any, any, any]), [0, (-1)]));
-    ((this as any).msg(`You step into the ${py_item(BUILDINGS, bid)}.`, "0C"));
+  enter_interior(bid: string): void {
+    const info = this.interiors[bid];
+    this.riding_horse = false;
+    this.warp(info.map, info.entry[0], info.entry[1], [0, -1]);
+    this.msg(`You step into the ${BUILDINGS[bid]}.`, '0C');
   }
 
-  keeper_of(bid: any): any {
-    return py_next(py_iter(py_dict_items(NPCS)).filter(([n, d]: any) => (py_eq(py_item(d, "home"), bid) && (!py_item(d, "out")))).map(([n, d]: any) => n), null);
+  keeper_of(bid: string): string | null {
+    return (
+      Object.entries(NPCS)
+        .filter(([, d]) => d.home === bid && !d.out)
+        .map(([n]) => n)[0] || null
+    );
   }
 
-  update_indoor_npcs(): any {
-    let anchor: any = undefined; let bid: any = undefined; let d: any = undefined; let fixed: any = undefined; let i: any = undefined; let info: any = undefined; let keeper: any = undefined; let n: any = undefined; let pos: any = undefined; let residents: any = undefined; let spots: any = undefined;
-    for (let [n, d] of py_iter(py_dict_items(NPCS))) {
-      info = py_dict_get(this.interiors, py_item(d, "home"));
-      if (((!info) || ((this as any).is_out(n)) || py_eq(n, this.married))) {
-        this.indoor_npcs.pop(n, null);
+  update_indoor_npcs(): void {
+    for (const [n, d] of Object.entries(NPCS)) {
+      const info = this.interiors[d.home];
+      if (!info || this.is_out(n) || n === this.married) {
+        delete this.indoor_npcs[n];
         continue;
       }
-      if (py_in(n, this.indoor_npcs)) {
-        continue;
-      }
-      bid = py_item(d, "home");
-      keeper = ((this as any).keeper_of(bid));
-      residents = py_iter(py_dict_items(NPCS)).filter(([r, rd]: any) => (py_eq(py_item(rd, "home"), bid) && (!py_eq(r, keeper)))).map(([r, rd]: any) => r);
-      spots = py_item(info, "spots");
-      if ((py_eq(n, keeper) && py_in("k", spots))) {
-        [pos, fixed] = [py_item(spots, "k"), true];
+      if (n in this.indoor_npcs) continue;
+      const bid = d.home;
+      const keeper = this.keeper_of(bid);
+      const residents = Object.entries(NPCS)
+        .filter(([r, rd]) => rd.home === bid && r !== keeper)
+        .map(([r]) => r);
+      const spots = info.spots;
+      let pos: [number, number] | null = null;
+      let fixed = false;
+      if (n === keeper && 'k' in spots) {
+        pos = spots['k'];
+        fixed = true;
       } else {
-        i = residents.indexOf(n);
-        pos = py_dict_get(spots, String(py_add(i, 1)));
-        if ((py_eq(pos, null) || ((this as any).npc_at(...((py_iter(pos) || []) as [any, any, any]))))) {
-          anchor = py_dict_get(spots, "1", py_item(info, "entry"));
-          pos = ((this as any).free_spot(py_item(info, "map"), ...((py_iter(anchor) || []) as [any, any, any])));
+        const i = residents.indexOf(n);
+        pos = spots[String(i + 1)] || null;
+        if (!pos || this.npc_at(pos[0], pos[1], info.map)) {
+          const anchor = spots['1'] || info.entry;
+          pos = this.free_spot(info.map, anchor[0], anchor[1]);
         }
         fixed = false;
       }
       if (pos) {
-        this.indoor_npcs[n] = { ["map"]: py_item(info, "map"), ["pos"]: pos, ["home"]: pos, ["fixed"]: fixed };
+        this.indoor_npcs[n] = { map: info.map, pos, home: pos, fixed };
       }
     }
   }
 
-  indoor_npc_at(x: any, y: any, mapname: any): any {
-    let d: any = undefined; let n: any = undefined;
-    for (let [n, d] of py_iter(py_dict_items(this.indoor_npcs))) {
-      if ((py_eq(py_item(d, "map"), mapname) && py_eq(py_item(d, "pos"), [x, y]) && (!py_eq(n, this.married)))) {
+  indoor_npc_at(x: number, y: number, mapname: string): string | null {
+    for (const [n, d] of Object.entries(this.indoor_npcs)) {
+      if (d.map === mapname && d.pos[0] === x && d.pos[1] === y && n !== this.married) {
         return n;
       }
     }
     return null;
   }
 
-  move_indoor_npcs(): any {
-    let d: any = undefined; let dx: any = undefined; let dy: any = undefined; let hx: any = undefined; let hy: any = undefined; let n: any = undefined; let nx: any = undefined; let ny: any = undefined; let x: any = undefined; let y: any = undefined;
-    for (let [n, d] of py_iter(py_dict_items(this.indoor_npcs))) {
-      if (((!py_eq(py_item(d, "map"), this.mapname)) || py_item(d, "fixed") || (py_rng().random() > 0.35))) {
-        continue;
-      }
-      [[x, y], [hx, hy]] = [py_item(d, "pos"), py_item(d, "home")];
-      [dx, dy] = py_rng().choice([[1, 0], [(-1), 0], [0, 1], [0, (-1)]]);
-      [nx, ny] = [py_add(x, dx), py_add(y, dy)];
-      if (((Math.abs((nx - hx)) > 2) || (Math.abs((ny - hy)) > 2))) {
-        continue;
-      }
-      if (py_eq([nx, ny], py_item(py_item(this.interiors, py_item(this.interior_bid, py_item(d, "map"))), "entry"))) {
-        continue;
-      }
-      if ((((this as any).walkable(py_item(d, "map"), nx, ny, true)) && (!((this as any).npc_at(nx, ny))) && (!py_eq([nx, ny], [this.px, this.py])))) {
-        d["pos"] = [nx, ny];
+  move_indoor_npcs(): void {
+    for (const [, d] of Object.entries(this.indoor_npcs)) {
+      if (d.map !== this.mapname || d.fixed || py_rng().random() > 0.35) continue;
+      const [[x, y], [hx, hy]] = [d.pos, d.home];
+      const [dx, dy] = py_rng().choice([
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]);
+      const [nx, ny] = [x + dx, y + dy];
+      if (Math.abs(nx - hx) > 2 || Math.abs(ny - hy) > 2) continue;
+      const entry = this.interiors[this.interior_bid[d.map]]?.entry;
+      if (entry && nx === entry[0] && ny === entry[1]) continue;
+      if (this.walkable(d.map, nx, ny, true) && !this.npc_at(nx, ny) && !(nx === this.px && ny === this.py)) {
+        d.pos = [nx, ny];
       }
     }
   }
 
-  async interior_interact(tile: any, p: any): Promise<any> {
-    let behind: any = undefined; let bid: any = undefined;
-    bid = py_dict_get(this.interior_bid, this.mapname);
-    if (py_eq(tile, "bookcase")) {
-      (await (this as any).say(py_rng().choice(BOOKS), "Book"));
+  async interior_interact(tile: string, p: [number, number]): Promise<void> {
+    const bid = this.interior_bid[this.mapname];
+    if (tile === 'bookcase') {
+      if (bid === 'library' && !this.berry_sources.includes('truth:library')) {
+        this.give_truth_jewel('library');
+      }
+      await this.say(py_rng().choice(BOOKS), 'Book');
       return;
     }
-    if ((!bid)) {
-      return;
-    }
-    behind = ((this as any).npc_at(py_add(py_item(p, 0), py_item(this.face, 0)), py_add(py_item(p, 1), py_item(this.face, 1))));
-    (await (this as any).shop_menu(bid, (() => (behind ? [behind] : []))));
+    if (!bid) return;
+    const behind = this.npc_at(p[0] + this.face[0], p[1] + this.face[1]);
+    await this.shop_menu(bid, () => (behind ? [behind] : []));
   }
 
-  async shop_options(bid: any): Promise<any> {
-    if (py_eq(bid, "supermarket")) {
-      return [["Buy seeds", this.buy_seeds], ["Buy Bread (100G)", (async () => (await (this as any).buy("Bread", 100)))], ["Buy Blue Feather (1000G)", (async () => (await (this as any).buy("Blue Feather", 1000, 1)))], ["Buy kitchen goods", this.buy_kitchen_goods]];
+  async shop_options(bid: string): Promise<[string, () => Promise<void>][]> {
+    if (bid === 'supermarket') {
+      return [
+        ['Buy seasonal seeds', () => this.buy_seeds()],
+        ['Buy Flour (50G)', () => this.buy('Flour', 50)],
+        ['Buy Oil (50G)', () => this.buy('Oil', 50)],
+        ['Buy Curry Powder (50G)', () => this.buy('Curry Powder', 50)],
+        ['Buy Rice (100G)', () => this.buy('Rice', 100)],
+        ['Buy Bread (100G)', () => this.buy('Bread', 100)],
+        ['Buy Chocolate (100G)', () => this.buy('Chocolate', 100)],
+        ['Buy Basket (5000G)', () => this.buy('Basket', 5000, 1)],
+        ['Buy Blue Feather (1000G)', () => this.buy('Blue Feather', 1000, 1)],
+        ['Buy Kitchen Utensils', () => this.buy_kitchen_goods()],
+      ];
     }
-    if (py_eq(bid, "carpenter")) {
-      return [["Buy Lumber (50G)", (async () => (await (this as any).buy("Lumber", 50)))], ["Order a house expansion", this.order_expansion]];
+    if (bid === 'zack') {
+      return [
+        ["Won's Rare Seeds & Exotic Goods", () => this.won_shop()],
+      ];
     }
-    if (py_eq(bid, "poultry")) {
-      return [["Buy a chicken (1500G)", this.buy_chicken], ["Buy Chicken Feed (10G)", (async () => (await (this as any).buy("Chicken Feed", 10)))]];
+    if (bid === 'winery') {
+      return [
+        ['Buy Wine (300G)', () => this.buy('Wine', 300)],
+        ['Buy Grape Juice (200G)', () => this.buy('Grape Juice', 200)],
+      ];
     }
-    if (py_eq(bid, "blacksmith")) {
-      return [["Upgrade a tool", this.upgrade_tool]];
+    if (bid === 'carpenter') {
+      return [
+        ['Buy Lumber (50G)', () => this.buy('Lumber', 50)],
+        ['Buy Golden Lumber (100,000G)', () => this.buy('Golden Lumber', 100000)],
+        ['Order a House / Farm Expansion', () => this.order_expansion()],
+      ];
     }
-    if (py_eq(bid, "inn")) {
-      return [["Eat lunch (300G, +50 stamina)", this.inn_lunch]];
+    if (bid === 'poultry') {
+      return [
+        ['Buy a Chicken (1500G)', () => this.buy_chicken()],
+        ['Buy Chicken Feed (10G)', () => this.buy('Chicken Feed', 10)],
+        ['Buy Animal Medicine (1000G)', () => this.buy('Animal Medicine', 1000)],
+      ];
     }
-    if (py_eq(bid, "clinic")) {
-      return [["Buy Bodigizer (500G)", (async () => (await (this as any).buy("Bodigizer", 500)))], ["Get a checkup", this.checkup]];
+    if (bid === 'blacksmith') {
+      return [
+        ['Upgrade a Tool (Copper -> Mythic)', () => this.upgrade_tool()],
+        ['Order Maker Machine (20,000G + Adamantite)', () => this.order_maker()],
+        ['Forge Orichalc Jewelry (1000G + Orichalc)', () => this.forge_jewelry()],
+      ];
     }
-    if (py_eq(bid, "library")) {
-      return [["Read a book", (async () => (await (this as any).say(py_rng().choice(BOOKS), "Book")))]];
+    if (bid === 'inn') {
+      return [
+        ['Eat Doug\'s Lunch (300G, +50 Stamina)', () => this.inn_lunch()],
+        ['Use Inn Telephone (Order Saturday TV Shopping)', () => this.inn_phone_menu()],
+      ];
     }
-    if (py_eq(bid, "church")) {
-      return [["Pray", this.pray]];
+    if (bid === 'clinic') {
+      return [
+        ['Get a Medical Checkup (10G)', () => this.checkup()],
+        ['Buy Bodigizer (500G, +100 Stamina)', () => this.buy('Bodigizer', 500)],
+        ['Buy Bodigizer XL (1000G, +150 Stamina)', () => this.buy('Bodigizer XL', 1000)],
+        ['Buy Turbojolt (1000G, -50 Fatigue)', () => this.buy('Turbojolt', 1000)],
+        ['Buy Turbojolt XL (2000G, -100 Fatigue)', () => this.buy('Turbojolt XL', 2000)],
+      ];
     }
-    if (py_eq(bid, "mayor")) {
-      return [["Ask about your farm", this.farm_report]];
+    if (bid === 'library') {
+      return [['Read a Farming Book', () => this.say(py_rng().choice(BOOKS), 'Book')]];
     }
-    if (py_eq(bid, "yodel")) {
-      return [["Buy Milk (150G)", (async () => (await (this as any).buy("Milk", 150)))], ["Buy a cow (5000G)", (async () => (await (this as any).buy_animal("cow")))], ["Buy a sheep (4000G)", (async () => (await (this as any).buy_animal("sheep")))], ["Buy Fodder (20G)", (async () => (await (this as any).buy("Fodder", 20)))], ["Buy Milker (2000G)", (async () => (await (this as any).buy_barn_tool("Milker", 2000)))], ["Buy Clippers (1800G)", (async () => (await (this as any).buy_barn_tool("Clippers", 1800)))], ["Buy Brush (800G)", (async () => (await (this as any).buy_barn_tool("Brush", 800)))]];
+    if (bid === 'church') {
+      return [
+        ['Pray at the Altar', () => this.pray()],
+        ['Enter Confession Booth (Bless Cursed Tools / Confess)', () => this.confession_booth()],
+      ];
+    }
+    if (bid === 'mayor') {
+      return [
+        ['Ask about your Farm & Exchange Medals', () => this.farm_report()],
+      ];
+    }
+    if (bid === 'yodel') {
+      return [
+        ['Buy a Cow (5000G)', () => this.buy_animal('cow')],
+        ['Buy a Sheep (4000G)', () => this.buy_animal('sheep')],
+        ['Buy Fodder (20G)', () => this.buy('Fodder', 20)],
+        ['Buy Milk (150G)', () => this.buy('Milk', 150)],
+        ['Buy Milker (2000G)', () => this.buy_barn_tool('Milker', 2000)],
+        ['Buy Clippers (1800G)', () => this.buy_barn_tool('Clippers', 1800)],
+        ['Buy Brush (800G)', () => this.buy_barn_tool('Brush', 800)],
+        ['Buy Bell (500G)', () => this.buy_barn_tool('Bell', 500)],
+        ['Buy Miracle Potion (3000G)', () => this.buy('Miracle Potion', 3000)],
+      ];
     }
     return [];
   }
 
-  async buy(item: any, price: any, limit: any = 99): Promise<any> {
-    let maxq: any = undefined; let q: any = undefined;
-    maxq = Math.min(limit, Math.floor(this.gold / price));
-    if ((maxq <= 0)) {
-      (await (this as any).say("You can't afford that.", null));
-      return;
-    }
-    q = (await (this as any).ask_qty(`Buy how many ${item}?`, maxq, price, "Cost"));
-    if (q) {
-      this.gold -= py_mult(q, price);
-      ((this as any).give(item, q));
-      ((this as any).msg(`Bought ${q} ${item} for ${py_mult(q, price)}G.`, "09"));
-    }
-  }
-
-  async buy_seeds(): Promise<any> {
-    let crops: any = undefined; let d: any = undefined; let opts: any = undefined; let regrow: any = undefined; let sel: any = undefined;
-    crops = py_iter(py_dict_items(CROPS)).filter(([c, d]: any) => py_eq(py_item(d, 0), this.season_name)).map(([c, d]: any) => c);
-    if ((!crops)) {
-      (await (this as any).say("Nothing grows in winter, dear. Come back in Spring!", "Jeff"));
-      return;
-    }
-    opts = py_iter(crops).map((c: any) => `${py_add(c, " Seeds")} ${py_item(py_item(CROPS, c), 1)}G`);
-    const info = (s: any) => {
-      d = py_item(CROPS, py_item(crops, s));
-      regrow = (py_item(d, 3) ? `, regrows every ${py_item(d, 3)}d` : "");
-      return [`  ${py_item(d, 2)} days to grow${regrow}`, `  sells for ${py_item(d, 4)}G each, sows 3x3`];
-    };
-    sel = (await (this as any).menu(`Seeds   ${this.gold}G`, opts));
-    if ((!py_eq(sel, null))) {
-      (await (this as any).buy(py_add(py_item(crops, sel), " Seeds"), py_item(py_item(CROPS, py_item(crops, sel)), 1)));
-    }
-  }
-
-  async buy_chicken(): Promise<any> {
-    if ((this.chickens >= ((this as any).coop_cap()))) {
-      (await (this as any).say("Your coop is full!", "Lillia"));
-    } else {
-      if ((this.gold < 1500)) {
-        (await (this as any).say("A chicken is 1500G. Come back when you've saved up.", "Lillia"));
+  async won_shop(): Promise<void> {
+    const items: [string, number, number][] = [
+      ['Cabbage Seeds', 500, 99],
+      ['Pineapple Seeds', 1000, 99],
+      ['Green Pepper Seeds', 150, 99],
+      ['Moondrop Flower Seeds', 300, 99],
+      ['Toy Flower Seeds', 400, 99],
+      ['Pink Cat Flower Seeds', 300, 99],
+      ['Magic Red Flower Seeds', 600, 99],
+      ['Dog Ball', 100, 1],
+      ['Frisbee', 5000, 1],
+      ['Record Player', 2000, 1],
+      ['SUGDW Apple', 500, 10],
+      ['Jewel of Truth (50,000G)', 50000, 1],
+    ];
+    const sel = await this.menu(
+      `Won's Exotic Shop   ${this.gold}G`,
+      items.map(([name, p]) => `${name} (${p}G)`)
+    );
+    if (sel === null) return;
+    const [name, price, lim] = items[sel];
+    if (name.startsWith('Jewel of Truth')) {
+      if (this.gold < price) {
+        await this.say('Hehehe! Come back when you have 50,000G!', 'Won');
       } else {
-        if ((await (this as any).confirm("Buy a chicken for 1500G?"))) {
-          this.gold -= 1500;
-          this.chickens += 1;
-          (await (this as any).say("Rick will bring it to your coop. Remember to fill its feed box!", "Lillia"));
+        this.gold -= price;
+        this.give_truth_jewel('won_shop');
+      }
+      return;
+    }
+    await this.buy(name, price, lim);
+  }
+
+  async order_maker(): Promise<void> {
+    const makers = [
+      ['Mayonnaise Maker', 'Coop Expansion', 'Converts Eggs into Mayonnaise in the Coop.'],
+      ['Cheese Maker', 'Barn Expansion', 'Converts Milk into Cheese in the Barn.'],
+      ['Yarn Maker', 'Barn Expansion', 'Converts Wool into Yarn in the Barn.'],
+    ];
+    const sel = await this.menu(
+      'Saibara — Order Maker (20,000G + 1 Adamantite)',
+      makers.map(([m]) => `${m} ${this.makers.includes(m) ? '(Built)' : ''}`)
+    );
+    if (sel === null) return;
+    const [mName, req, desc] = makers[sel];
+    if (this.makers.includes(mName)) {
+      await this.say(`You already have a ${mName}.`, 'Saibara');
+    } else if (!this.house_flags.includes(req)) {
+      await this.say(`Have Gotz build the ${req} first so there's room for the ${mName}!`, 'Saibara');
+    } else if (this.gold < 20000 || (this.inv['Adamantite'] || 0) < 1) {
+      await this.say('I need 20,000G and 1 Adamantite from the Spring Mine (Floor 10+).', 'Saibara');
+    } else {
+      this.gold -= 20000;
+      this.take('Adamantite', 1);
+      this.makers.push(mName);
+      await this.say(`Done! I installed the ${mName} for you. (${desc})`, 'Saibara');
+    }
+  }
+
+  async forge_jewelry(): Promise<void> {
+    const pieces = ['Necklace', 'Earrings', 'Bracelet', 'Brooch'];
+    const sel = await this.menu(
+      'Saibara — Forge Orichalc Jewelry (1000G + 1 Orichalc)',
+      pieces.map((p) => `${p} (1000G + 1 Orichalc)`)
+    );
+    if (sel === null) return;
+    const piece = pieces[sel];
+    if (this.gold < 1000 || (this.inv['Orichalc'] || 0) < 1) {
+      await this.say('Bring me 1000G and 1 Orichalc from the Spring Mine (Floor 10+).', 'Saibara');
+    } else {
+      this.gold -= 1000;
+      this.take('Orichalc', 1);
+      this.give(piece, 1);
+      this.msg(`Saibara forged a ${piece}! Bachelorettes love jewelry!`, '0A');
+    }
+  }
+
+  async confession_booth(): Promise<void> {
+    const opts = [
+      'Remove Equipped Cursed Tool (1000G)',
+      'Bless Cursed Hoe or Watering Can (1000G)',
+      'Confess: Forgive me for littering / neglecting animals',
+      'Confess: I want to marry the Harvest Goddess',
+      'Leave Booth',
+    ];
+    const sel = await this.menu('Church Confession Booth', opts);
+    if (sel === null || sel === 4) return;
+    if (sel === 0) {
+      if (this.levels[this.tool] !== 5) {
+        await this.say('You do not currently have a Cursed Tool stuck to your hand.', 'Carter');
+      } else if (this.gold < 1000) {
+        await this.say('A 1000G donation is required to lift the binding curse.', 'Carter');
+      } else {
+        this.gold -= 1000;
+        this.tool = 'Hoe';
+        await this.say('May the Goddess cleanse this curse! You can freely switch tools again.', 'Carter');
+      }
+    } else if (sel === 1) {
+      const cursedTarget = ['Hoe', 'Watering Can'].find((t) => this.levels[t] === 5);
+      if (!cursedTarget) {
+        await this.say('You have no Cursed Hoe or Cursed Watering Can needing blessing. (Sickle/Hammer bless after 10 days; Rod/Axe after 25 uses!)', 'Carter');
+      } else if (this.gold < 1000) {
+        await this.say('Blessing requires a 1000G offering.', 'Carter');
+      } else {
+        this.gold -= 1000;
+        this.cursed_blesses[cursedTarget] = (this.cursed_blesses[cursedTarget] || 0) + 5;
+        if (this.cursed_blesses[cursedTarget] >= 10) {
+          this.levels[cursedTarget] = 6;
+          await this.say(`The curse is gone forever! Your ${cursedTarget} is now a BLESSED ${cursedTarget}!`, 'Carter');
+        } else {
+          await this.say(`I have prayed over your ${cursedTarget} (${this.cursed_blesses[cursedTarget]}/10 blessings). Bless it once more to complete the ritual!`, 'Carter');
         }
       }
+    } else if (sel === 2) {
+      for (const n of Object.keys(this.friend)) {
+        this.friend[n] = clamp(this.friend[n] + 2, 0, 100);
+      }
+      await this.say('The Harvest Goddess forgives you. (+2 Villager Friendship!)', 'Carter');
+    } else if (sel === 3) {
+      this.friend['Harvest Goddess'] = clamp((this.friend['Harvest Goddess'] || 0) + 10, 0, 100);
+      await this.say('You have my blessing! Present the Blue Feather at the Goddess Pond when her heart is Red!', 'Carter');
     }
   }
 
-  async upgrade_tool(): Promise<any> {
-    let cost: any = undefined; let lvl: any = undefined; let opts: any = undefined; let ore: any = undefined; let sel: any = undefined; let t: any = undefined;
-    if (this.upgrading) {
-      (await (this as any).say(`I'm still working on your ${py_item(this.upgrading, 0)}. Hmph. Patience.`, "Saibara"));
+  async buy(item: string, price: number, limit: number = 99): Promise<void> {
+    const maxq = Math.min(limit, Math.floor(this.gold / price));
+    if (maxq <= 0) {
+      await this.say("You can't afford that.", null);
       return;
     }
-    opts = [];
-    for (let t of py_iter(UPGRADABLE)) {
-      lvl = py_item(this.levels, t);
-      if ((lvl >= 4)) {
-        opts.push(`${t} (Mystrile - maxed)`);
+    const q = await this.ask_qty(`Buy how many ${item}?`, maxq, price, 'Cost');
+    if (q) {
+      this.gold -= q * price;
+      this.give(item, q);
+      this.msg(`Bought ${q} ${item} for ${q * price}G.`, '09');
+    }
+  }
+
+  async buy_seeds(): Promise<void> {
+    const crops = Object.entries(CROPS)
+      .filter(([, d]) => d[0] === this.season_name || d[0] === 'All')
+      .map(([c]) => c);
+    if (!crops.length) {
+      await this.say('Nothing grows outdoors in Winter, dear. Come back in Spring!', 'Jeff');
+      return;
+    }
+    const opts = crops.map((c) => `${c} Seeds (${CROPS[c][1]}G)`);
+    const info = (s: number) => {
+      const c = crops[s];
+      const d = CROPS[c];
+      const regrow = d[3] ? `, regrows every ${d[3]}d` : '';
+      return [`  ${d[2]} days to grow${regrow}`, `  ships for ${d[4]}G each, sows 3x3`];
+    };
+    const sel = await this.menu(`Seeds   ${this.gold}G`, opts, 0, info);
+    if (sel !== null) {
+      const c = crops[sel];
+      await this.buy(`${c} Seeds`, CROPS[c][1]);
+    }
+  }
+
+  async buy_chicken(): Promise<void> {
+    if (this.chickens >= this.coop_cap()) {
+      await this.say('Your coop is full!', 'Lillia');
+    } else if (this.gold < 1500) {
+      await this.say("A chicken is 1500G. Come back when you've saved up.", 'Lillia');
+    } else if (await this.confirm('Buy a chicken for 1500G?')) {
+      this.gold -= 1500;
+      this.chickens += 1;
+      await this.say('Rick will bring it to your coop. Remember to fill its feed box!', 'Lillia');
+    }
+  }
+
+  async upgrade_tool(): Promise<void> {
+    if (this.upgrading) {
+      await this.say(`I'm still working on your ${this.upgrading[0]}. Hmph. Patience.`, 'Saibara');
+      return;
+    }
+    const opts: string[] = [];
+    for (const t of UPGRADABLE) {
+      const lvl = this.levels[t] || 0;
+      const exp = this.tool_exp[t] || 0;
+      if (lvl >= 7) {
+        opts.push(`${t} (Mythic — MAXED)`);
+      } else if (lvl === 6) {
+        opts.push(`${t} (Blessed) -> Mythic (50,000G + 1 Mythic Stone)`);
+      } else if (lvl === 5) {
+        opts.push(`${t} (Cursed — Bless at Church first)`);
+      } else if (lvl === 4) {
+        opts.push(`${t} (Mystrile — Find Cursed in Lake Mine)`);
       } else {
-        [cost, ore] = py_item(UPGRADE, py_add(lvl, 1));
-        opts.push(`${t} -> ${py_item(LEVELS, py_add(lvl, 1))} ${cost}G + 3 ${ore}`);
+        const [cost, ore] = UPGRADE[lvl + 1];
+        opts.push(`${t} -> ${LEVELS[lvl + 1]} (${cost}G + 1 ${ore}, Exp: ${exp}%)`);
       }
     }
-    sel = (await (this as any).menu("Upgrade which tool?", opts));
-    if (py_eq(sel, null)) {
+    const sel = await this.menu('Saibara — Upgrade Which Tool?', opts);
+    if (sel === null) return;
+    const t = UPGRADABLE[sel];
+    const lvl = this.levels[t] || 0;
+    if (lvl === 6) {
+      if (this.gold < 50000 || (this.inv['Mythic Stone'] || 0) < 1) {
+        await this.say('To forge a Mythic tool I need 50,000G and 1 Mythic Stone from the Spring Mine!', 'Saibara');
+        return;
+      }
+      this.gold -= 50000;
+      this.take('Mythic Stone', 1);
+      this.levels[t] = 7;
+      await this.say(`Behold my masterwork! Your ${t} is now a MYTHIC ${t}!`, 'Saibara');
       return;
     }
-    t = py_item(UPGRADABLE, sel);
-    lvl = py_item(this.levels, t);
-    if ((lvl >= 4)) {
-      (await (this as any).say("That tool is already the finest it can be.", "Saibara"));
+    if (lvl >= 4) {
+      await this.say('To go beyond Mystrile, unearth the Cursed Tools in the Winter Lake Mine and have Carter bless them!', 'Saibara');
       return;
     }
-    [cost, ore] = py_item(UPGRADE, py_add(lvl, 1));
-    if (((this.gold < cost) || (py_dict_get(this.inv, ore, 0) < 3))) {
-      (await (this as any).say(`I need ${cost}G and 3 ${ore} ore. Find ore in the mine on Mother's Hill.`, "Saibara"));
+    const [cost, ore] = UPGRADE[lvl + 1];
+    if (this.gold < cost || (this.inv[ore] || 0) < 1) {
+      await this.say(`I need ${cost}G and ${ore} ore from the Spring Mine on Mother's Hill.`, 'Saibara');
       return;
     }
     this.gold -= cost;
-    ((this as any).take(ore, 3));
-    this.upgrading = [t, py_add(((this as any).absday()), 2)];
-    if (py_eq(this.tool, t)) {
-      this.tool = "Sickle";
+    this.take(ore, 1);
+    this.upgrading = [t, this.absday() + 1];
+    if (this.tool === t) {
+      this.tool = TOOLS.find((other) => other !== t) || 'Sickle';
     }
-    (await (this as any).say(`Leave your ${t} with me. Come back in two days. Hmph.`, "Saibara"));
+    await this.say(`Leave your ${t} with me. It'll be ready tomorrow morning. Hmph.`, 'Saibara');
   }
 
-  async inn_lunch(): Promise<any> {
-    if ((this.gold < 300)) {
-      (await (this as any).say("Lunch is 300G, friend.", "Doug"));
+  async inn_lunch(): Promise<void> {
+    if (this.gold < 300) {
+      await this.say('Lunch is 300G, friend.', 'Doug');
       return;
     }
     this.gold -= 300;
-    this.stamina = Math.min(this.max_stamina, py_add(this.stamina, 50));
-    (await (this as any).say("Here you go - Doug's special! You feel refreshed. (+50 stamina)", "Doug"));
+    this.stamina = Math.min(this.max_stamina, this.stamina + 50);
+    this.fatigue = Math.max(0, this.fatigue - 15);
+    await this.say("Here you go — Doug's special! (+50 Stamina, -15 Fatigue)", 'Doug');
   }
 
-  async checkup(): Promise<any> {
-    let s: any = undefined; let verdict: any = undefined;
-    s = this.stamina;
-    verdict = ((s > 70) ? "You're in excellent shape." : ((s > 30) ? "You're a little tired." : "You're exhausted! Rest, and eat something."));
-    (await (this as any).say(`Stamina ${s}/${this.max_stamina}. ${verdict}`, "Doctor"));
+  async checkup(): Promise<void> {
+    if (this.gold >= 10) this.gold -= 10;
+    const s = this.stamina;
+    const f = this.fatigue;
+    const verdict =
+      s > 90 && f < 25
+        ? "You're in peak physical condition!"
+        : f < 60
+          ? "You're a bit fatigued. Don't overwork in the rain."
+          : "You're dangerously exhausted! Take a Turbojolt or soak in the Hot Spring!";
+    await this.say(`Strength: ${s}/${this.max_stamina} | Fatigue: ${f}/100. ${verdict}`, 'Doctor');
   }
 
-  async pray(): Promise<any> {
+  async pray(): Promise<void> {
     if (this.prayed) {
-      (await (this as any).say("You sit quietly for a while. Your mind is at peace.", null));
+      await this.say('You sit quietly in the pews. Your mind is at peace.', null);
       return;
     }
     this.prayed = true;
-    this.stamina = Math.min(this.max_stamina, py_add(this.stamina, 10));
-    (await (this as any).say("You pray to the Harvest Goddess. You feel a gentle warmth. (+10 stamina)", null));
+    this.stamina = Math.min(this.max_stamina, this.stamina + 15);
+    this.fatigue = Math.max(0, this.fatigue - 10);
+    await this.say('You pray at the altar. You feel a gentle warmth. (+15 Stamina, -10 Fatigue)', null);
   }
 
-  async farm_report(): Promise<any> {
-    let best: any = undefined; let lines: any = undefined; let n: any = undefined; let v: any = undefined;
-    best = py_slice(py_sorted(py_iter(py_dict_items(this.friend)).map(([n, v]: any) => [v, n])), null, 6);
-    lines = [`  Gold: ${this.gold}G     Total shipped: ${this.shipped_total}G`, `  Tilled: ${py_len(this.tilled)}  Crops growing: ${py_len(this.crops)}  Chickens: ${this.chickens}`, `  Spouse: ${(this.married || "-")}`, "", "  Friends:"];
-    for (let [v, n] of py_iter(best)) {
-      lines.push(`   ${n} ${py_item(((this as any).hearts(n)), 0)}`);
-    }
-    (await (this as any).show_lines("Mayor Thomas: Your Farm", lines));
-  }
-
-  fest_date(offset: any = 0): any {
-    let n: any = undefined;
-    n = py_add((this.day - 1), offset);
-    return [(py_add(this.season, Math.floor(n / 30)) % 4), py_add((n % 30), 1)];
-  }
-
-  fest_on(offset: any = 0): any {
-    return py_dict_get(FESTIVALS, ((this as any).fest_date(offset)));
-  }
-
-  fest_active(): any {
-    let f: any = undefined;
-    f = ((this as any).fest_on());
-    return ((f && (py_mult(py_item(f, 1), 60) <= this.minutes) && (this.minutes < py_mult(py_item(f, 2), 60))) ? f : null);
-  }
-
-  birthdays(offset: any = 0): any {
-    let when: any = undefined;
-    when = ((this as any).fest_date(offset));
-    return py_iter(py_dict_items(BIRTHDAYS)).filter(([n, d]: any) => py_eq(d, when)).map(([n, d]: any) => n);
-  }
-
-  fest_sync(): any {
-    let NPCS: any = undefined; let f: any = undefined; let i: any = undefined; let n: any = undefined; let saved: any = undefined; let w: any = undefined; let x: any = undefined; let y: any = undefined;
-    "Gather everyone around the fountain while a festival is on.";
-    f = ((this as any).fest_active());
-    saved = ((this as any)["_fest_saved"]);
-    if ((f && py_eq(saved, null))) {
-      this._fest_saved = Object.fromEntries(py_iter(py_dict_items(NPCS)).map(([n, d]: any) => [n, py_item(d, "where")]));
-      for (let [i, n] of py_iter(enumerate(NPCS))) {
-        [x, y] = py_item(FEST_SPOTS, (i % py_len(FEST_SPOTS)));
-        py_item(NPCS, n)["where"] = ["town", x, y];
+  async farm_report(): Promise<void> {
+    const sel = await this.menu(`Mayor Thomas   (Your Medals: ${this.medals})`, [
+      'View Farm & Villager Report',
+      'Exchange 900 Medals for Power Berry',
+      'Exchange 1000 Medals for Jewel of Truth',
+      'Back',
+    ]);
+    if (sel === 0) {
+      await this.ranch_summary();
+    } else if (sel === 1) {
+      if (this.medals < 900) {
+        await this.say(`You have ${this.medals} medals. Win more at the Spring & Fall Horse Races!`, 'Thomas');
+      } else if (this.give_power_berry('medals_900')) {
+        this.medals -= 900;
+      } else {
+        await this.say('You already claimed the Medal Power Berry!', 'Thomas');
       }
-      this.npc_pos = {  };
-      if ((!this.fest_attended)) {
-        ((this as any).msg(`The ${py_item(f, 0)} has begun in Rose Square!`, "0A"));
-      }
-    } else {
-      if (((!f) && (!py_eq(saved, null)))) {
-        for (let [n, w] of py_iter(py_dict_items(saved))) {
-          py_item(NPCS, n)["where"] = w;
-        }
-        this._fest_saved = null;
-        this.npc_pos = {  };
+    } else if (sel === 2) {
+      if (this.medals < 1000) {
+        await this.say(`You need 1000 medals (you have ${this.medals}).`, 'Thomas');
+      } else if (this.give_truth_jewel('medals_1000')) {
+        this.medals -= 1000;
+      } else {
+        await this.say('You already claimed this Jewel of Truth!', 'Thomas');
       }
     }
   }
 
-  fest_is_out(n: any): any {
-    if ((py_eq(n, this.married) || (!((this as any).fest_active())))) {
+  async ranch_summary(): Promise<void> {
+    const degPts =
+      this.shipped_total / 100 +
+      this.power_berries * 100 +
+      Object.values(this.friend).reduce((a, b) => a + b, 0) +
+      this.fest_wins.length * 150 +
+      this.steps / 10;
+    const rankTitle =
+      degPts >= 5000
+        ? 'Supreme Farm King'
+        : degPts >= 2000
+          ? 'Veteran Ranch Master'
+          : degPts >= 800
+            ? 'Skilled Mineral Farmer'
+            : 'Apprentice Farmer';
+
+    const toolLines = UPGRADABLE.map(
+      (t) => `  ${t.padEnd(13)}: ${LEVELS[this.levels[t] || 0].padEnd(9)} (Exp: ${this.tool_exp[t] || 0}%)`
+    );
+    const spriteLines = SPRITES.map((s) => {
+      const j = this.sprite_jobs[s.name] || { task: 'none', days: 0, skill: 10 };
+      return `  ${s.name.padEnd(7)} (${s.colorName.padEnd(6)}): ${this.sprite_aff[s.name] || 0}/100 Aff | Skill ${j.skill}% | ${j.days ? `${j.task} (${j.days}d)` : 'Idle'}`;
+    });
+    const bestFriends = py_sorted(
+      Object.entries(this.friend).map(([n, v]): [number, string] => [-v, n])
+    )
+      .slice(0, 6)
+      .map(([, n]) => `  ${n.padEnd(16)} ${this.hearts(n)[0]}`);
+
+    const lines = [
+      `  Rank: ${rankTitle} (${Math.floor(degPts)} pts)   Steps: ${this.steps}`,
+      `  Strength: ${this.stamina}/${this.max_stamina}   Fatigue: ${this.fatigue}/100   Power Berries: ${this.power_berries}/10 ${this.has_mystic_berry ? '+ Mystic Berry' : ''}`,
+      `  Gold: ${this.gold}G   Total Shipped: ${this.shipped_total}G   Medals: ${this.medals}`,
+      `  Jewels — Goddess: ${this.goddess_jewels}/9 | Kappa: ${this.kappa_jewels}/9 | Truth: ${this.truth_jewels}/9`,
+      `  Mines — Spring B${this.max_spring_floor}F | Lake B${this.max_lake_floor}F | Fish Caught: ${Object.keys(this.fish_caught).length} types`,
+      `  Spouse: ${this.married || 'Unmarried'}   Child: ${this.child_name || '-'}   Heart Events: ${this.heart_events_seen.length}`,
+      '  --- Tools ---',
+      ...toolLines,
+      '  --- Harvest Sprites ---',
+      ...spriteLines,
+      '  --- Top Relationships ---',
+      ...bestFriends,
+    ];
+    await this.show_lines('Ranch Summary & Completion Memo', lines);
+  }
+
+  fest_date(offset: number = 0): [number, number] {
+    const n = this.day - 1 + offset;
+    return [(this.season + Math.floor(n / 30)) % 4, (n % 30) + 1];
+  }
+
+  fest_on(offset: number = 0): [string, number, number, string] | null {
+    const [s, d] = this.fest_date(offset);
+    return FESTIVALS[`${s},${d}`] || null;
+  }
+
+  fest_active(): [string, number, number, string] | null {
+    const f = this.fest_on();
+    return f && f[1] * 60 <= this.minutes && this.minutes < f[2] * 60 ? f : null;
+  }
+
+  birthdays(offset: number = 0): string[] {
+    const when = this.fest_date(offset);
+    return Object.entries(BIRTHDAYS)
+      .filter(([, d]) => d[0] === when[0] && d[1] === when[1])
+      .map(([n]) => n);
+  }
+
+  fest_sync(): void {
+    const f = this.fest_active();
+    const saved = this._fest_saved;
+    if (f && saved === null) {
+      this._fest_saved = Object.fromEntries(Object.entries(NPCS).map(([n, d]) => [n, d.where]));
+      const names = Object.keys(NPCS);
+      for (let i = 0; i < names.length; i++) {
+        const n = names[i];
+        const [x, y] = FEST_SPOTS[i % FEST_SPOTS.length];
+        NPCS[n].where = ['town', x, y];
+      }
+      this.npc_pos = {};
+      if (!this.fest_attended) {
+        this.msg(`The ${f[0]} has begun in Rose Square!`, '0A');
+      }
+    } else if (!f && saved !== null) {
+      for (const [n, w] of Object.entries(saved)) {
+        if (NPCS[n]) NPCS[n].where = w;
+      }
+      this._fest_saved = null;
+      this.npc_pos = {};
+    }
+  }
+
+  fest_is_out(n: string): boolean | null {
+    if (n === this.married || !this.fest_active()) {
       return null;
     }
     return true;
   }
 
-  async fest_check(): Promise<any> {
-    let f: any = undefined;
-    f = ((this as any).fest_active());
-    if (((!f) || (!py_eq(this.mapname, "town")) || this.fest_attended || this.fest_declined)) {
+  async fest_check(): Promise<void> {
+    const f = this.fest_active();
+    if (!f || this.mapname !== 'town' || this.fest_attended || this.fest_declined) {
       return;
     }
-    if ((!((29 <= this.px) && (this.px <= 43) && (8 <= this.py) && (this.py <= 19)))) {
+    if (!(29 <= this.px && this.px <= 43 && 8 <= this.py && this.py <= 19)) {
       return;
     }
-    if ((await (this as any).confirm(`The ${py_item(f, 0)} is underway! Join in?`))) {
-      (await (this as any).fest_run(f));
+    if (await this.confirm(`The ${f[0]} is underway! Join in?`)) {
+      await this.fest_run(f);
     } else {
       this.fest_declined = true;
-      ((this as any).msg("Talk to Mayor Thomas when you're ready to join in."));
+      this.msg("Talk to Mayor Thomas when you're ready to join in.");
     }
   }
 
-  async fest_talk(n: any): Promise<any> {
-    let f: any = undefined;
-    f = ((this as any).fest_active());
-    if (((!py_eq(n, "Thomas")) || (!f) || this.held || this.fest_attended)) {
+  async fest_talk(n: string): Promise<boolean> {
+    const f = this.fest_active();
+    if (n !== 'Thomas' || !f || this.held || this.fest_attended) {
       return false;
     }
-    if ((await (this as any).confirm(`Join the ${py_item(f, 0)}?`))) {
-      (await (this as any).fest_run(f));
+    if (await this.confirm(`Join the ${f[0]}?`)) {
+      await this.fest_run(f);
       return true;
     }
     return false;
   }
 
-  async fest_run(f: any): Promise<any> {
-    let _: any = undefined; let end: any = undefined; let kind: any = undefined; let name: any = undefined;
-    [name, _, end, kind] = f;
+  async fest_run(f: [string, number, number, string]): Promise<void> {
+    const [name, , end, kind] = f;
     this.fest_attended = true;
-    (await (this as any).say(`Welcome, everyone, to the ${name}! Ho ho!`, "Thomas"));
-    (((this as any)[py_add("fest_ev_", kind)]))();
-    this.minutes = Math.max(this.minutes, py_mult(end, 60));
-    (await (this as any).say(`The ${name} draws to a close, and everyone heads home.`, null));
-    ((this as any).update_npcs());
-    this.last = (Date.now() / 1000);
+    await this.say(`Welcome, everyone, to the ${name}! Ho ho!`, 'Thomas');
+    const fn = (this as any)[`fest_ev_${kind}`];
+    if (typeof fn === 'function') {
+      await fn.call(this);
+    }
+    this.minutes = Math.max(this.minutes, end * 60);
+    await this.say(`The ${name} draws to a close, and everyone heads home.`, null);
+    this.update_npcs();
+    this.last = Date.now() / 1000;
   }
 
-  fest_new_day(report: any): any {
-    let f: any = undefined; let n: any = undefined; let t: any = undefined;
+  fest_new_day(report: string[]): void {
     this.fest_attended = false;
     this.fest_declined = false;
-    f = ((this as any).fest_on());
+    const f = this.fest_on();
     if (f) {
-      report.push(`Today is the ${py_item(f, 0)}! Head to Rose Square between ${fmt_hour(py_item(f, 1))} and ${fmt_hour(py_item(f, 2))}. Shops are closed.`);
+      report.push(`Today is the ${f[0]}! Head to Rose Square between ${fmt_hour(f[1])} and ${fmt_hour(f[2])}.`);
     }
-    t = ((this as any).fest_on(1));
+    const t = this.fest_on(1);
     if (t) {
-      report.push(`Tomorrow is the ${py_item(t, 0)}.`);
+      report.push(`Tomorrow is the ${t[0]}.`);
     }
-    for (let n of py_iter(((this as any).birthdays()))) {
-      report.push(`It's ${n}'s birthday today! A gift would mean a lot.`);
+    for (const n of this.birthdays()) {
+      report.push(`It's ${n}'s birthday today! A gift gives 5x Friendship!`);
     }
   }
 
-  async fest_closed(bid: any): Promise<any> {
-    let f: any = undefined;
-    f = ((this as any).fest_on());
-    if (((!f) || py_eq(bid, "church"))) {
+  async fest_closed(bid: string): Promise<boolean> {
+    const f = this.fest_on();
+    if (!f || bid === 'church' || bid === 'sprites') {
       return false;
     }
-    (await (this as any).say(`A sign on the door: 'Closed today for the ${py_item(f, 0)}. See you in Rose Square!'`, null));
+    await this.say(`A sign on the door: 'Closed today for the ${f[0]}. See you in Rose Square!'`, null);
     return true;
   }
 
-  birthday_gift(n: any, pts: any, line: any): any {
-    if ((!py_in(n, ((this as any).birthdays())))) {
-      return [pts, line];
-    }
-    if ((pts > 0)) {
-      return [py_add(py_mult(pts, 2), 2), py_add(line, " And on my birthday! You remembered!")];
-    }
-    return [pts, py_add(line, " ...On my birthday, too.")];
-  }
-
-  fest_news(): any {
-    let f: any = undefined; let n: any = undefined; let parts: any = undefined; let t: any = undefined;
-    parts = [];
-    f = ((this as any).fest_on());
+  fest_news(): string {
+    const parts: string[] = [];
+    const f = this.fest_on();
     if (f) {
-      parts.push(`Today: the ${py_item(f, 0)} in Rose Square, ${fmt_hour(py_item(f, 1))}-${fmt_hour(py_item(f, 2))}.`);
+      parts.push(`Today: ${f[0]} in Rose Square, ${fmt_hour(f[1])}-${fmt_hour(f[2])}.`);
     }
-    t = ((this as any).fest_on(1));
+    const t = this.fest_on(1);
     if (t) {
-      parts.push(`Tomorrow: the ${py_item(t, 0)}.`);
+      parts.push(`Tomorrow: ${t[0]}.`);
     }
-    for (let n of py_iter(((this as any).birthdays()))) {
+    for (const n of this.birthdays()) {
       parts.push(`Happy birthday to ${n}!`);
     }
-    for (let n of py_iter(((this as any).birthdays(1)))) {
+    for (const n of this.birthdays(1)) {
       parts.push(`Tomorrow is ${n}'s birthday.`);
     }
-    return (parts ? py_add("  ", py_iter(parts).join(" ")) : "");
+    return parts.length ? '  ' + parts.join(' ') : '';
   }
 
-  async fest_calendar(): Promise<any> {
-    let d: any = undefined; let f: any = undefined; let lines: any = undefined; let n: any = undefined; let off: any = undefined; let s: any = undefined; let when: any = undefined;
-    lines = [];
-    for (let off of py_iter(py_range(0, 31))) {
-      [s, d] = ((this as any).fest_date(off));
-      when = `${(py_eq(off, 0) ? "today" : (py_eq(off, 1) ? "tomorrow" : `in ${off} days`))}`;
-      f = py_dict_get(FESTIVALS, [s, d]);
+  async fest_calendar(): Promise<void> {
+    const lines: string[] = [];
+    for (let off = 0; off < 31; off++) {
+      const [s, d] = this.fest_date(off);
+      const when = off === 0 ? 'today' : off === 1 ? 'tomorrow' : `in ${off}d`;
+      const f = FESTIVALS[`${s},${d}`];
       if (f) {
-        lines.push(` ${py_item(SEASONS, s)} ${d}  ${when}  ${py_item(f, 0)}`);
+        lines.push(` ${SEASONS[s]} ${d}  ${when}  ${f[0]}`);
       }
-      for (let n of py_iter(((this as any).birthdays(off)))) {
-        lines.push(` ${py_item(SEASONS, s)} ${d}  ${when}  ${n}'s birthday`);
+      for (const n of this.birthdays(off)) {
+        lines.push(` ${SEASONS[s]} ${d}  ${when}  ${n}'s birthday`);
       }
     }
-    (await (this as any).show_lines("Upcoming events", py_slice((lines || [" Nothing planned."]), null, 12)));
+    await this.show_lines('Upcoming Events & Birthdays', lines.slice(0, 14));
   }
 
-  fest_bachs(): any {
-    return py_iter(py_dict_items(NPCS)).filter(([n, d]: any) => py_item(d, "bach")).map(([n, d]: any) => n);
+  fest_bachs(): string[] {
+    return Object.entries(NPCS)
+      .filter(([, d]) => d.bach)
+      .map(([n]) => n);
   }
 
-  fest_bond(n: any, pts: any): any {
-    this.friend[n] = clamp(py_add(py_item(this.friend, n), pts), 0, 100);
+  fest_bond(n: string, pts: number): void {
+    this.friend[n] = clamp((this.friend[n] || 0) + pts, 0, 100);
   }
 
-  async fest_pick(title: any, names: any): Promise<any> {
-    let opts: any = undefined; let sel: any = undefined;
-    opts = py_add(py_iter(names).map((n: any) => `${n} ${py_item(((this as any).hearts(n)), 0)}`), ["No one"]);
-    sel = (await (this as any).menu(title, opts));
-    return (((!py_eq(sel, null)) && (sel < py_len(names))) ? py_item(names, sel) : null);
+  async fest_pick(title: string, names: string[]): Promise<string | null> {
+    const opts = [...names.map((n) => `${n} ${this.hearts(n)[0]}`), 'No one'];
+    const sel = await this.menu(title, opts);
+    return sel !== null && sel < names.length ? names[sel] : null;
   }
 
-  fest_win(name: any): any {
-    if ((!py_in(name, this.fest_wins))) {
+  fest_win(name: string): void {
+    if (!this.fest_wins.includes(name)) {
       this.fest_wins.push(name);
     }
   }
 
-  async fest_ev_newyear(): Promise<any> {
-    let n: any = undefined;
-    (await (this as any).say("Let's welcome the new year together! Doug made rice cakes for everyone!", "Thomas"));
+  async fest_ev_newyear(): Promise<void> {
+    await this.say("Let's welcome the new year together! Doug made rice cakes (mochi) for everyone!", 'Thomas');
     this.stamina = this.max_stamina;
-    for (let n of py_iter(NPCS)) {
-      ((this as any).fest_bond(n, 2));
+    this.fatigue = 0;
+    this.give('Rice', 3);
+    for (const n of Object.keys(NPCS)) {
+      this.fest_bond(n, 3);
     }
-    (await (this as any).say("You share rice cakes and good wishes with the whole town. (Stamina restored, everyone likes you a little more.)", null));
+    await this.say('You share rice cakes and good wishes with the whole town. (+3 Rice, Stamina restored!)', null);
   }
 
-  async fest_ev_goddess(): Promise<any> {
-    let n: any = undefined;
-    (await (this as any).say("Every spring the young women of town dance to thank the Harvest Goddess.", "Thomas"));
-    (await (this as any).say("Mary, Karen, Popuri, Elli and Ann step into the square in flowing white dresses.", null));
-    n = (await (this as any).fest_pick("Who do you cheer for?", ((this as any).fest_bachs())));
+  async fest_ev_goddess(): Promise<void> {
+    await this.say('Every spring the young women of town dance to thank the Harvest Goddess.', 'Thomas');
+    const n = await this.fest_pick('Who do you dance with / cheer for?', this.fest_bachs());
     if (n) {
-      ((this as any).fest_bond(n, 5));
-      (await (this as any).say(`You cheer for ${n}. She catches your eye mid-dance and smiles.`, null));
+      this.fest_bond(n, 8);
+      await this.say(`You share the Spring Goddess Dance with ${n}!`, null);
     }
-    ((this as any).give("Strawberry Seeds"));
-    (await (this as any).say("A warm breeze carries the Goddess's blessing. You receive a bag of Strawberry Seeds.", null));
+    this.give('Strawberry Seeds');
+    await this.say("A warm breeze carries the Goddess's blessing. You receive Strawberry Seeds!", null);
   }
 
-  async fest_ev_dance(): Promise<any> {
-    let n: any = undefined;
-    (await (this as any).say("The square is covered in flowers. Now, everyone, find a partner and dance!", "Thomas"));
-    n = (await (this as any).fest_pick("Ask someone to dance", ((this as any).fest_bachs())));
-    if ((!n)) {
-      (await (this as any).say("You watch the dancers from the edge of the square.", null));
-    } else {
-      if (((py_item(this.friend, n) >= 20) || py_eq(n, this.married))) {
-        ((this as any).fest_bond(n, 8));
-        (await (this as any).say("I'd love to! ...You're not a bad dancer, you know.", n));
+  async fest_ev_spring_thanks(): Promise<void> {
+    await this.say('Spring Thanksgiving! Give homemade Cookies or Chocolate to someone special!', 'Thomas');
+    const n = await this.fest_pick('Give a Thanksgiving treat to...', this.fest_bachs());
+    if (n) {
+      this.fest_bond(n, 10);
+      await this.say(`Thank you so much! These are delicious! (+10 Friendship with ${n})`, n);
+    }
+  }
+
+  async fest_ev_horserace(): Promise<void> {
+    await this.say('Welcome to the Mineral Town Horse Races! Bet on horses for Medals or race your own steed!', 'Thomas');
+    const sel = await this.menu('Horse Race Options', [
+      'Race Your Own Horse (Win a Power Berry + 200 Medals!)',
+      'Bet 100G on Favorite (Win 150 Medals)',
+      'Bet 500G on Longshot (Win 600 Medals)',
+    ]);
+    if (sel === 0) {
+      const rival = py_rng().randint(14, 24);
+      const score = await this.fest_mash(4.5, rival, 'Mineral Town Derby');
+      if (score >= rival) {
+        this.medals += 200;
+        this.fest_win('Horse Race');
+        this.give_power_berry('horse_race');
+        await this.say(`Your horse thunders across the finish line in 1st place! (+200 Medals & Power Berry!)`, 'Thomas');
       } else {
-        ((this as any).fest_bond(n, 1));
-        (await (this as any).say("Oh! Um... maybe next year? I don't know you that well yet.", n));
+        this.medals += 30;
+        await this.say(`A close race! You take 2nd place and earn 30 Medals. (${score} vs ${rival})`, 'Thomas');
       }
+    } else if (sel === 1 && this.gold >= 100) {
+      this.gold -= 100;
+      this.medals += 150;
+      await this.say('Your horse won! You collect +150 Medals!', 'Thomas');
+    } else if (sel === 2 && this.gold >= 500) {
+      this.gold -= 500;
+      this.medals += 600;
+      await this.say('What an upset! The longshot wins! You collect +600 Medals!', 'Thomas');
     }
   }
 
-  async fest_mash(duration: any, rival: any, title: any): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bar: any = undefined; let bx: any = undefined; let by: any = undefined; let el: any = undefined; let k: any = undefined; let last: any = undefined; let n: any = undefined; let side: any = undefined; let start: any = undefined; let them: any = undefined; let you: any = undefined;
-    "Alternate left/right as fast as possible. Returns presses counted.";
-    [start, n, last] = [(Date.now() / 1000), 0, null];
-    [W, H] = [this.scr.w, this.scr.h];
+  async fest_ev_cooking(): Promise<void> {
+    await this.say('Welcome to the Cooking Festival! The renowned Gourmet will judge your finest dish!', 'Thomas');
+    const dishes = Object.keys(this.inv).filter((i) => ITEMS[i]?.[2] === 'dish' && i !== 'Failed Dish');
+    if (!dishes.length) {
+      await this.say('You have no cooked dishes in your rucksack to enter. Next year, cook something in your Kitchen!', 'Gourmet');
+      return;
+    }
+    const sel = await this.menu('Enter which dish for the Gourmet?', dishes);
+    if (sel === null) return;
+    const dish = dishes[sel];
+    this.take(dish, 1);
+    const staminaVal = ITEMS[dish][1] || 20;
+    if (staminaVal >= 30 || py_rng().random() < 0.7) {
+      this.fest_win('Cooking Festival');
+      this.gold += 1000;
+      for (const n of Object.keys(NPCS)) this.fest_bond(n, 5);
+      await this.say(`Gourmet: 'MAGNIFICENT! The aroma of ${this.name}'s ${dish} is divine! First prize!' (+1000G)`, 'Gourmet');
+    } else {
+      await this.say(`Gourmet: 'Hmm, a decent ${dish}, though Ann's entry edges it out today!'`, 'Gourmet');
+    }
+  }
+
+  async fest_ev_beach(): Promise<void> {
+    await this.say('Beach Day & the Dog Frisbee Contest! Let us see how far your dog can catch the Frisbee!', 'Thomas');
+    if (!this.inv['Frisbee']) {
+      await this.say('You need a Frisbee (sold by Won at Zack\'s Beach House) to compete!', 'Thomas');
+      return;
+    }
+    const throwDist = this.dog_frisbee_dist + py_rng().randint(10, 35);
+    if (throwDist >= 45) {
+      this.fest_win('Beach Frisbee');
+      this.give_power_berry('beach_frisbee');
+      await this.say(`Incredible! Your dog leaps and catches the Frisbee at ${throwDist}m! First Prize: Power Berry!`, 'Thomas');
+    } else {
+      this.dog_frisbee_dist += 10;
+      await this.say(`Your dog catches it at ${throwDist}m! Practice at your Doghouse to beat the 45m record!`, 'Thomas');
+    }
+  }
+
+  async fest_ev_cowfest(): Promise<void> {
+    await this.say('The Cow Festival! Barley and I will judge the healthiest, happiest cow in Mineral Town!', 'Thomas');
+    const cows = this.animals.filter((a) => a.kind === 'cow');
+    if (!cows.length) {
+      await this.say('You have no cows to enter this year.', null);
+      return;
+    }
+    const bestCow = cows.reduce((a, b) => (a.aff >= b.aff ? a : b));
+    if (bestCow.aff >= 70 || py_rng().random() < 0.6) {
+      bestCow.wonFestival = true;
+      bestCow.aff = 100;
+      this.fest_win('Cow Festival');
+      await this.say(`First Prize goes to ${bestCow.name}! ${bestCow.name} will now produce GOLDEN MILK (and P/X Milk with outdoor grazing)!`, 'Thomas');
+    } else {
+      bestCow.aff = Math.min(100, bestCow.aff + 15);
+      await this.say(`${bestCow.name} takes 2nd place! Brush and talk to her daily to win next year!`, 'Barley');
+    }
+  }
+
+  async fest_ev_sheepfest(): Promise<void> {
+    await this.say('The Sheep Festival! Let us judge the fluffiest wool in Mineral Town!', 'Thomas');
+    const sheep = this.animals.filter((a) => a.kind === 'sheep');
+    if (!sheep.length) {
+      await this.say('You have no sheep to enter this year.', null);
+      return;
+    }
+    const bestSheep = sheep.reduce((a, b) => (a.aff >= b.aff ? a : b));
+    if (bestSheep.aff >= 70 || py_rng().random() < 0.6) {
+      bestSheep.wonFestival = true;
+      bestSheep.aff = 100;
+      this.fest_win('Sheep Festival');
+      await this.say(`First Prize goes to ${bestSheep.name}! ${bestSheep.name} will now produce GOLDEN WOOL (and P/X Wool with grazing)!`, 'Thomas');
+    } else {
+      bestSheep.aff = Math.min(100, bestSheep.aff + 15);
+      await this.say(`${bestSheep.name} takes runner-up honors!`, 'Barley');
+    }
+  }
+
+  async fest_ev_music(): Promise<void> {
+    await this.say('Everyone gathers at the Church for the Autumn Music Festival!', 'Carter');
+    const n = await this.fest_pick('Perform alongside...', this.fest_bachs());
+    if (n) {
+      this.fest_bond(n, 8);
+      await this.say(`The ocarina, organ, and flute fill the sanctuary with gentle harmony alongside ${n}.`, null);
+    }
+  }
+
+  async fest_ev_pumpkin(): Promise<void> {
+    await this.say('Happy Pumpkin Festival! May and Stu knock on your door hoping for sweet treats!', 'May');
+    if (this.inv['Chocolate'] || this.inv['Cake'] || this.inv['Cookies']) {
+      this.fest_bond('May', 8);
+      this.fest_bond('Popuri', 5);
+      await this.say('Yay! Thank you for the sweets!', 'May');
+    } else {
+      this.give('Chocolate', 2);
+      await this.say('Chef the Harvest Sprite shares Chocolate with you and the kids!', null);
+    }
+  }
+
+  async fest_ev_winter_req(): Promise<void> {
+    await this.say("Ho ho! It's my annual Winter Request! Can you share a gift from your rucksack?", 'Thomas');
+    const items = Object.keys(this.inv);
+    if (items.length > 0) {
+      this.give('Golden Lumber', 1);
+      this.gold += 500;
+      await this.say('Splendid! As promised, here is a piece of GOLDEN LUMBER and 500G! Ho ho!', 'Thomas');
+    } else {
+      await this.say('Ah, your rucksack is empty! Next year, keep a crop or forage item handy!', 'Thomas');
+    }
+  }
+
+  async fest_ev_stocking(): Promise<void> {
+    await this.say('On Starry Night Eve, Mayor Thomas sneaks down the chimney while you sleep...', null);
+    const gift = py_rng().choice(['Diamond', 'Pink Diamond', 'Alexandrite', 'Mythic Stone']);
+    this.give(gift, 1);
+    await this.say(`You check your Stocking on Winter 25 morning and find a ${gift}!`, null);
+  }
+
+  async fest_mash(duration: number, rival: number, title: string): Promise<number> {
+    const start = Date.now() / 1000;
+    let n = 0;
+    let last: string | null = null;
+    const [W, H] = [this.scr.w, this.scr.h];
     while (true) {
-      el = ((Date.now() / 1000) - start);
-      if ((el >= duration)) {
-        break;
-      }
+      const el = Date.now() / 1000 - start;
+      if (el >= duration) break;
       const draw = () => {
-        [bx, by] = [Math.floor((W - 50) / 2), (Math.floor(H / 2) - 4)];
-        this.scr.box(bx, by, 50, 7, "0D", "00", title);
-        bar = 32;
-        you = Math.min(bar, Math.floor(py_mult(n, bar) / Math.max(1, py_add(rival, 8))));
-        them = Math.min(bar, Math.floor(py_mult(Math.floor(Number((py_mult(rival, el) / duration))), bar) / Math.max(1, py_add(rival, 8))));
-        this.scr.put(py_add(bx, 2), py_add(by, 2), py_add(py_add(py_add("You   [", py_mult("#", you)), py_mult(".", (bar - you))), "]"), "0B");
-        this.scr.put(py_add(bx, 2), py_add(by, 3), py_add(py_add(py_add("Rival [", py_mult("#", them)), py_mult(".", (bar - them))), "]"), "08");
-        this.scr.put(py_add(bx, 2), py_add(by, 5), `LEFT / RIGHT alternately!   ${(duration - el)}s`, "07", "00", true);
+        const [bx, by] = [Math.floor((W - 50) / 2), Math.floor(H / 2) - 4];
+        this.scr.box(bx, by, 50, 7, '0D', '00', title);
+        const bar = 32;
+        const you = Math.min(bar, Math.floor((n * bar) / Math.max(1, rival + 8)));
+        const them = Math.min(bar, Math.floor((Math.floor((rival * el) / duration) * bar) / Math.max(1, rival + 8)));
+        this.scr.put(bx + 2, by + 2, `You   [${'#'.repeat(you)}${'.'.repeat(bar - you)}]`, '0B');
+        this.scr.put(bx + 2, by + 3, `Rival [${'#'.repeat(them)}${'.'.repeat(bar - them)}]`, '08');
+        this.scr.put(bx + 2, by + 5, `LEFT / RIGHT or SPACE!   ${(duration - el).toFixed(1)}s`, '07', '00', true);
       };
-      ((this as any).render());
+      this.render();
       draw();
       this.scr.flush();
-      k = (await this.scr.getKey(0.03));
-      if (py_in(k, ["left", "a", "h", "right", "d", "l"])) {
-        side = (py_in(k, ["left", "a", "h"]) ? "L" : "R");
-        if ((!py_eq(side, last))) {
+      const k = await this.scr.getKey(0.03);
+      if (k && ['left', 'a', 'h', 'right', 'd', 'l', 'space', 'x'].includes(k)) {
+        const side = ['left', 'a', 'h'].includes(k) ? 'L' : k === 'space' || k === 'x' ? (last === 'L' ? 'R' : 'L') : 'R';
+        if (side !== last) {
           n += 1;
           last = side;
         }
       }
     }
-    this.last = (Date.now() / 1000);
+    this.last = Date.now() / 1000;
     return n;
   }
 
-  async fest_ev_sumo(): Promise<any> {
-    let rival: any = undefined; let score: any = undefined;
-    (await (this as any).say("Chicken Sumo! Each farmer's hen tries to push the other out of the ring!", "Thomas"));
-    if ((!this.chickens)) {
-      (await (this as any).say("You don't have a chicken to enter, so you watch Rick's hen win again.", null));
+  async fest_ev_sumo(): Promise<void> {
+    await this.say("Chicken Sumo! Each farmer's hen tries to push the other out of the ring!", 'Thomas');
+    if (!this.chickens) {
+      await this.say("You don't have a chicken to enter, so you watch Rick's hen win again.", null);
       return;
     }
-    rival = py_rng().randint(16, 32);
-    (await (this as any).say("Cheer your hen on by alternating LEFT and RIGHT as fast as you can. 5 seconds!", "Rick"));
-    score = (await (this as any).fest_mash(5.0, rival, "Chicken Sumo"));
-    if ((score >= rival)) {
+    const rival = py_rng().randint(14, 24);
+    await this.say('Cheer your hen on by pressing LEFT/RIGHT or SPACE rapidly!', 'Rick');
+    const score = await this.fest_mash(4.5, rival, 'Chicken Sumo');
+    if (score >= rival) {
       this.gold += 500;
-      ((this as any).give("Chicken Feed", 10));
-      ((this as any).fest_win("Chicken Sumo"));
-      ((this as any).fest_bond("Rick", 3));
-      (await (this as any).say(`Your hen shoves Rick's hen clean out of the ring! You win 500G and 10 Chicken Feed. (${score} vs ${rival})`, "Thomas"));
+      this.chicken_fest_won = true;
+      this.chicken_aff = 100;
+      this.give('Chicken Feed', 10);
+      this.fest_win('Chicken Sumo');
+      this.fest_bond('Rick', 4);
+      await this.say(
+        `Your hen shoves Rick's hen clean out of the ring! Your hens now lay GOLDEN EGGS! (+500G)`,
+        'Thomas'
+      );
     } else {
-      ((this as any).fest_bond("Rick", 1));
-      (await (this as any).say(`Rick's hen holds the ring. Better luck next year! (${score} vs ${rival})`, "Rick"));
+      this.fest_bond('Rick', 1);
+      await this.say(`Rick's hen holds the ring. Better luck next year! (${score} vs ${rival})`, 'Rick');
     }
   }
 
-  async fest_ev_egghunt(): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bx: any = undefined; let by: any = undefined; let cur: any = undefined; let cx: any = undefined; let cy: any = undefined; let dx: any = undefined; let dy: any = undefined; let eggs: any = undefined; let fg: any = undefined; let found: any = undefined; let i: any = undefined; let k: any = undefined; let opened: any = undefined; let tries: any = undefined; let txt: any = undefined;
-    (await (this as any).say("Eggs are hidden in nine flower bushes around the square. You get three peeks. Find two or more to win!", "Thomas"));
-    eggs = new Set(py_rng().sample(py_range(9), 3));
-    [opened, cur, tries, found] = [new Set(), 4, 3, 0];
-    [W, H] = [this.scr.w, this.scr.h];
-    while ((tries > 0)) {
+  async fest_ev_egghunt(): Promise<void> {
+    await this.say('Eggs are hidden in nine flower bushes around the square. You get three peeks. Find two or more to win!', 'Thomas');
+    const eggs = new Set(py_rng().sample(py_range(9), 3));
+    const opened = new Set<number>();
+    let cur = 4;
+    let tries = 3;
+    let found = 0;
+    const [W, H] = [this.scr.w, this.scr.h];
+    while (tries > 0) {
       const draw = () => {
-        [bx, by] = [Math.floor((W - 36) / 2), (Math.floor(H / 2) - 6)];
-        this.scr.box(bx, by, 36, 11, "0D", "00", `Egg Hunt  peeks left: ${tries}`);
-        for (let i of py_iter(py_range(9))) {
-          [cx, cy] = [py_add(py_add(bx, 5), py_mult((i % 3), 10)), py_add(py_add(by, 2), py_mult(Math.floor(i / 3), 2))];
-          if (py_in(i, opened)) {
-            [txt, fg] = (py_in(i, eggs) ? ["( o )", "07"] : ["(   )", "02"]);
-          } else {
-            [txt, fg] = ["(***)", "0B"];
-          }
-          this.scr.put(cx, cy, txt, fg, (py_eq(i, cur) ? "01" : "00"), py_eq(i, cur));
+        const [bx, by] = [Math.floor((W - 36) / 2), Math.floor(H / 2) - 6];
+        this.scr.box(bx, by, 36, 11, '0D', '00', `Egg Hunt  peeks left: ${tries}`);
+        for (let i = 0; i < 9; i++) {
+          const [cx, cy] = [bx + 5 + (i % 3) * 10, by + 2 + Math.floor(i / 3) * 2];
+          const [txt, fg] = opened.has(i) ? (eggs.has(i) ? ['( o )', '07'] : ['(   )', '02']) : ['(***)', '0B'];
+          this.scr.put(cx, cy, txt, fg, i === cur ? '01' : '00', i === cur);
         }
-        this.scr.put(py_add(bx, 3), py_add(by, 9), "arrows move, X to search", "02");
+        this.scr.put(bx + 3, by + 9, 'arrows move, X to search', '02');
       };
-      k = (await (this as any).modal(draw));
-      if (py_in(k, DIRS)) {
-        [dx, dy] = py_item(DIRS, k);
-        cur = py_add(clamp(py_add((cur % 3), dx), 0, 2), py_mult(3, clamp(py_add(Math.floor(cur / 3), dy), 0, 2)));
-      } else {
-        if ((py_in(k, OK_KEYS) && (!py_in(cur, opened)))) {
-          opened.add(cur);
-          tries -= 1;
-          if (py_in(cur, eggs)) {
-            found += 1;
-            ((this as any).msg("You found an egg!", "07"));
-          }
-        } else {
-          if (py_in(k, CANCEL_KEYS)) {
-            break;
-          }
+      const k = await this.modal(draw);
+      if (k in DIRS) {
+        const [dx, dy] = DIRS[k];
+        cur = clamp((cur % 3) + dx, 0, 2) + 3 * clamp(Math.floor(cur / 3) + dy, 0, 2);
+      } else if (OK_KEYS.has(k) && !opened.has(cur)) {
+        opened.add(cur);
+        tries -= 1;
+        if (eggs.has(cur)) {
+          found += 1;
+          this.msg('You found an egg!', '07');
         }
+      } else if (CANCEL_KEYS.has(k)) {
+        break;
       }
     }
-    if (found) {
-      ((this as any).give("Egg", found));
-    }
-    if ((found >= 2)) {
+    if (found) this.give('Egg', found);
+    if (found >= 2) {
       this.gold += 300;
-      ((this as any).fest_win("Egg Hunt"));
-      (await (this as any).say(`You found ${found} eggs! First prize: 300G - and you keep the eggs!`, "Thomas"));
+      this.fest_win('Egg Hunt');
+      await this.say(`You found ${found} eggs! First prize: 300G — and you keep the eggs!`, 'Thomas');
     } else {
-      ((this as any).fest_bond("May", 2));
-      (await (this as any).say(`You found ${found} egg${((!py_eq(found, 1)) ? "s" : "")}. May found the most and wins this year. She's thrilled!`, "Thomas"));
+      this.fest_bond('May', 2);
+      await this.say(`You found ${found} egg${found !== 1 ? 's' : ''}. May found the most and wins this year!`, 'Thomas');
     }
   }
 
-  async fest_ev_crops(): Promise<any> {
-    let best: any = undefined; let crop: any = undefined; let crops: any = undefined; let mine: any = undefined; let rivals: any = undefined; let sel: any = undefined;
-    (await (this as any).say("Farmers, bring out your finest crop! The judges will choose the best.", "Thomas"));
-    crops = py_iter(py_sorted(this.inv)).filter((i: any) => py_eq(py_item(py_item(ITEMS, i), 2), "crop")).map((i: any) => i);
-    if ((!crops)) {
-      (await (this as any).say("You have no crops to enter. You admire everyone else's vegetables.", null));
-      return;
-    }
-    sel = (await (this as any).menu("Enter which crop?", py_iter(crops).map((c: any) => `${c} (worth ${py_item(py_item(ITEMS, c), 0)}G)`)));
-    if (py_eq(sel, null)) {
-      (await (this as any).say("You decide to just watch the judging.", null));
-      return;
-    }
-    crop = py_item(crops, sel);
-    mine = py_mult(py_item(py_item(ITEMS, crop), 0), py_rng().uniform(0.9, 1.5));
-    rivals = Object.fromEntries(py_iter(["Rick", "Basil", "Barley"]).map((n: any) => [n, py_rng().uniform(40, 240)]));
-    best = Math.max(...(py_iter(rivals).map(Number) as [number, ...number[]]));
-    if ((mine > py_item(rivals, best))) {
-      this.gold += 1000;
-      ((this as any).fest_win("Crop Festival"));
-      (await (this as any).say(`First prize goes to ${this.name}'s magnificent ${crop}! (+1000G)`, "Thomas"));
-    } else {
-      this.gold += 100;
-      (await (this as any).say(`${best}'s entry takes first prize. Your ${crop} earns an honorable mention. (+100G)`, "Thomas"));
-    }
-  }
-
-  async fest_companion(ask: any, scene: any, line: any): Promise<any> {
-    let n: any = undefined; let names: any = undefined;
-    names = py_iter(((this as any).fest_bachs())).filter((n: any) => (!py_eq(n, this.married))).map((n: any) => n);
+  async fest_companion(ask: string, scene: string, line: string): Promise<void> {
+    const names = this.fest_bachs().filter((n) => n !== this.married);
     if (this.married) {
-      names.insert(0, this.married);
+      names.unshift(this.married);
     }
-    n = (await (this as any).fest_pick(ask, names));
-    if ((!n)) {
-      (await (this as any).say(scene, null));
+    const n = await this.fest_pick(ask, names);
+    if (!n) {
+      await this.say(scene, null);
+    } else if ((this.friend[n] || 0) >= 10 || n === this.married) {
+      this.fest_bond(n, 8);
+      await this.say(`${scene} ${n} stays by your side the whole time.`, null);
+      await this.say(line, n);
     } else {
-      if (((py_item(this.friend, n) >= 10) || py_eq(n, this.married))) {
-        ((this as any).fest_bond(n, 6));
-        (await (this as any).say(`${scene} ${n} stays by your side the whole time.`, null));
-        (await (this as any).say(line, n));
-      } else {
-        ((this as any).fest_bond(n, 1));
-        (await (this as any).say("Sorry, I promised to spend tonight with my family.", n));
-        (await (this as any).say(scene, null));
-      }
+      this.fest_bond(n, 1);
+      await this.say('Sorry, I promised to spend tonight with my family.', n);
+      await this.say(scene, null);
     }
   }
 
-  async fest_ev_fireworks(): Promise<any> {
-    (await (this as any).fest_companion("Watch the fireworks with...", "BOOM! Fireworks bloom over the river in red, blue and pink.", "Wow... they're beautiful. I'm glad I'm watching them with you."));
+  async fest_ev_fireworks(): Promise<void> {
+    await this.fest_companion(
+      'Watch the fireworks with...',
+      'BOOM! Fireworks bloom over Mineral Beach in red, blue and pink.',
+      "Wow... they're beautiful. I'm glad I'm watching them with you."
+    );
   }
 
-  async fest_ev_moon(): Promise<any> {
-    (await (this as any).fest_companion("View the moon with...", "The full moon rises over Mother's Hill, round and bright.", "The moon is so pretty tonight. ...So is the company."));
+  async fest_ev_moon(): Promise<void> {
+    await this.fest_companion(
+      'View the full moon on Mother\'s Hill with...',
+      "The full autumn moon rises over Mother's Hill, round and bright.",
+      'The moon is so pretty tonight. ...So is the company.'
+    );
   }
 
-  async fest_ev_harvest(): Promise<any> {
-    let item: any = undefined; let items: any = undefined; let n: any = undefined; let pts: any = undefined; let sel: any = undefined;
-    (await (this as any).say("Everyone adds an ingredient to the giant pot! Then we all share the stew!", "Thomas"));
-    items = py_iter(py_sorted(this.inv)).filter((i: any) => py_in(py_item(py_item(ITEMS, i), 2), ["crop", "forage", "fish", "animal"])).map((i: any) => i);
-    sel = (items ? (await (this as any).menu("Add what to the pot?", py_add(items, ["Nothing"]))) : null);
-    if ((py_eq(sel, null) || (sel >= py_len(items)))) {
-      (await (this as any).say("Everyone else's ingredients make a fine stew anyway.", null));
+  async fest_ev_harvest(): Promise<void> {
+    await this.say('Everyone adds an ingredient to the giant pot! Then we all share the Harvest Stew!', 'Thomas');
+    const items = py_sorted(Object.keys(this.inv)).filter((i) =>
+      ['crop', 'forage', 'fish', 'animal', 'dish'].includes(ITEMS[i]?.[2])
+    );
+    const sel = items.length ? await this.menu('Add what to the pot?', [...items, 'Nothing']) : null;
+    if (sel === null || sel >= items.length) {
+      await this.say("Everyone else's ingredients make a fine stew anyway.", null);
     } else {
-      item = py_item(items, sel);
-      ((this as any).take(item));
-      pts = ((py_item(py_item(ITEMS, item), 0) >= 100) ? 3 : 2);
-      for (let n of py_iter(NPCS)) {
-        ((this as any).fest_bond(n, pts));
+      const item = items[sel];
+      this.take(item);
+      const pts = (ITEMS[item]?.[0] || 0) >= 100 ? 4 : 2;
+      for (const n of Object.keys(NPCS)) {
+        this.fest_bond(n, pts);
       }
-      (await (this as any).say(`Your ${item} makes the stew delicious! Everyone thanks you.`, null));
+      await this.say(`Your ${item} makes the stew delicious! Everyone in town thanks you.`, null);
     }
     this.stamina = this.max_stamina;
-    (await (this as any).say("You eat until you're full. (Stamina restored)", null));
+    this.fatigue = 0;
+    await this.say("You eat until you're full. (Stamina & Fatigue restored)", null);
   }
 
-  async fest_ev_thanks(): Promise<any> {
-    let cakes: any = undefined; let n: any = undefined;
-    (await (this as any).say("Thanksgiving! It's a day to give thanks to the people you care about.", "Thomas"));
-    cakes = py_iter(((this as any).fest_bachs())).filter((n: any) => ((py_item(this.friend, n) >= 40) || py_eq(n, this.married))).map((n: any) => n);
-    for (let n of py_iter(cakes)) {
-      ((this as any).give("Cake"));
-      (await (this as any).say("Happy Thanksgiving! I baked this for you. ...Don't make a big deal of it!", n));
+  async fest_ev_thanks(): Promise<void> {
+    await this.say("Winter Thanksgiving! People who care about you bring homemade treats!", 'Thomas');
+    const givers = this.fest_bachs().filter((n) => (this.friend[n] || 0) >= 25 || n === this.married);
+    for (const n of givers) {
+      const treat = (this.friend[n] || 0) >= 50 ? 'Chocolate Cake' : 'Chocolate';
+      this.give(treat);
+      await this.say(`Happy Thanksgiving! I brought you ${treat}!`, n);
     }
-    if ((!cakes)) {
-      (await (this as any).say("No one gave you a cake this year... Maybe next year.", null));
-    }
-  }
-
-  async fest_ev_starry(): Promise<any> {
-    let best: any = undefined; let n: any = undefined;
-    n = this.married;
-    if ((!n)) {
-      best = Math.max(...(py_iter(((this as any).fest_bachs())).map(Number) as [number, ...number[]]));
-      n = ((py_item(this.friend, best) >= 30) ? best : null);
-    }
-    if (n) {
-      ((this as any).fest_bond(n, 10));
-      (await (this as any).say(`Snow falls softly. ${n} finds you by the fountain and takes your hand.`, null));
-      (await (this as any).say("They say a wish made on Starry Night always comes true. I already know what I'll wish for.", n));
-    } else {
-      ((this as any).fest_bond("Thomas", 3));
-      (await (this as any).say("You spend Starry Night with Mayor Thomas, eating his famous pot roast. Ho ho!", null));
+    if (!givers.length) {
+      await this.say('No one brought you a cake this year... Befriend the villagers for next year!', null);
     }
   }
 
-  async fest_ev_nye(): Promise<any> {
-    let n: any = undefined;
-    (await (this as any).say(`Another year in Mineral Town comes to an end! Thank you all, and thank you, ${this.name}!`, "Thomas"));
+  async fest_ev_starry(): Promise<void> {
+    await this.fest_companion(
+      'Spend Starry Night dinner with...',
+      'Snow falls softly outside as candles glow around the dinner table.',
+      "They say a wish made on Starry Night always comes true. I already know what I'll wish for."
+    );
+  }
+
+  async fest_ev_nye(): Promise<void> {
+    await this.say(`Another year in Mineral Town comes to an end! Let's eat buckwheat noodles, ${this.name}!`, 'Thomas');
     this.stamina = this.max_stamina;
-    for (let n of py_iter(NPCS)) {
-      ((this as any).fest_bond(n, 1));
+    this.fatigue = 0;
+    this.give('Flour', 5);
+    for (const n of Object.keys(NPCS)) {
+      this.fest_bond(n, 2);
     }
-    (await (this as any).show_lines(`Year ${this.year} in review`, [`  Gold: ${this.gold}G`, `  Total shipped: ${this.shipped_total}G`, `  Chickens: ${this.chickens}`, `  Spouse: ${(this.married || "-")}`, `  Festival prizes: ${(py_iter(this.fest_wins).join(", ") || "none yet")}`]));
+    await this.show_lines(`Year ${this.year} in Review`, [
+      `  Gold: ${this.gold}G`,
+      `  Total shipped: ${this.shipped_total}G`,
+      `  Power Berries: ${this.power_berries}/10`,
+      `  Chickens: ${this.chickens}   Barn Animals: ${this.animals.length}`,
+      `  Spouse: ${this.married || '-'}   Child: ${this.child_name || '-'}`,
+      `  Festival prizes: ${this.fest_wins.join(', ') || 'none yet'}`,
+    ]);
   }
 
-  async pass_out(text: any): Promise<any> {
-    if (this.passing_out) {
-      return;
-    }
+  async pass_out(text: string): Promise<void> {
+    if (this.passing_out) return;
     this.passing_out = true;
-    (await (this as any).say(text, null));
-    (await (this as any).new_day("passout"));
+    await this.say(text, null);
+    await this.say('Doctor: You pushed yourself until you collapsed! Elli and I brought you home. Please take care of your Fatigue!', 'Doctor');
+    await this.new_day('passout');
     this.passing_out = false;
   }
 
-  async new_day(reason: any): Promise<any> {
-    let _: any = undefined; let c: any = undefined; let late: any = undefined; let m: any = undefined; let nd: any = undefined; let ns: any = undefined; let objs: any = undefined; let p: any = undefined; let r: any = undefined; let report: any = undefined; let t: any = undefined; let total: any = undefined; let x: any = undefined; let y: any = undefined;
-    late = (this.minutes >= py_mult(24, 60));
-    report = [];
-    if (this.bin) {
-      total = py_sum(py_iter(py_dict_items(this.bin)).map(([i, q]: any) => py_mult(py_item(py_item(ITEMS, i), 0), q)));
-      this.gold += total;
-      this.shipped_total += total;
-      report.push(`Zack collected your shipment overnight: +${total}G.`);
-      this.bin = {  };
+  run_sprites_work(report: string[]): void {
+    let watered = 0;
+    let harvested = 0;
+    let animalsCared = 0;
+    for (const s of SPRITES) {
+      const job = this.sprite_jobs[s.name];
+      if (!job || job.days <= 0 || job.task === 'none') continue;
+      job.days -= 1;
+      job.skill = Math.min(100, job.skill + 2);
+      if (job.task === 'Watering') {
+        for (const k of this.tilled) {
+          this.wet.add(k);
+          watered += 1;
+        }
+      } else if (job.task === 'Harvesting') {
+        for (const [k, [crop, age]] of Object.entries(this.crops)) {
+          const [days, regrow] = [CROPS[crop][2], CROPS[crop][3]];
+          if (age >= days && crop !== 'Grass') {
+            this.bin[crop] = (this.bin[crop] || 0) + 1;
+            harvested += 1;
+            if (regrow) {
+              this.crops[k][1] = days - regrow;
+            } else {
+              delete this.crops[k];
+            }
+          }
+        }
+      } else if (job.task === 'Animals') {
+        this.fed = this.chickens;
+        for (const a of this.animals) {
+          a.fed = true;
+          a.aff = Math.min(100, a.aff + 1);
+          animalsCared += 1;
+        }
+      }
+      if (job.days === 0) {
+        report.push(`${s.name} finished their ${job.task} contract.`);
+        job.task = 'none';
+      }
     }
-    for (let [p, c] of py_iter(py_dict_items(this.crops))) {
-      if ((py_in(p, this.wet) && (py_item(c, 1) < py_item(py_item(CROPS, py_item(c, 0)), 2)))) {
+    if (watered > 0) report.push(`Harvest Sprites watered your tilled field!`);
+    if (harvested > 0) report.push(`Harvest Sprites harvested ${harvested} ripe crop(s) into the Shipping Bin!`);
+    if (animalsCared > 0) report.push(`Harvest Sprites fed and brushed your livestock!`);
+  }
+
+  async new_day(reason: string): Promise<void> {
+    const late = this.minutes >= 24 * 60;
+    const report: string[] = [];
+
+    // Collect any remaining items in shipping bin
+    const total = this.process_zack_pickup();
+    if (total > 0) {
+      report.push(`Zack settled your remaining shipment: +${total}G.`);
+    }
+    this.zack_paid_today = false;
+    this.honey_picked = false;
+
+    // Advance crops that were watered yesterday
+    for (const [pKey, c] of Object.entries(this.crops)) {
+      if (this.wet.has(pKey) && c[1] < CROPS[c[0]][2]) {
         c[1] += 1;
       }
     }
-    this.wet = new Set();
+    this.wet = new CoordSet();
+
+    // Advance calendar
     this.day += 1;
-    if ((this.day > 30)) {
+    if (this.day > 30) {
       this.day = 1;
       this.season += 1;
-      if ((this.season > 3)) {
+      if (this.season > 3) {
         this.season = 0;
         this.year += 1;
       }
       report.push(`${this.season_name} has arrived!`);
-      if (this.crops) {
-        report.push("The change of season withered your crops.");
-        this.crops = {  };
+      // Keep perennial Grass in Spring/Summer/Fall; wither seasonal crops
+      const surviving: Record<string, [string, number]> = {};
+      for (const [k, [crop, age]] of Object.entries(this.crops)) {
+        if (crop === 'Grass' && this.season !== 3) {
+          surviving[k] = [crop, age];
+        }
+      }
+      if (Object.keys(this.crops).length > Object.keys(surviving).length) {
+        report.push('The change of season withered your old seasonal crops.');
+      }
+      this.crops = surviving;
+    }
+
+    // Cursed Sickle / Hammer 10-day blessing progression
+    if (this.levels[this.tool] === 5 && (this.tool === 'Sickle' || this.tool === 'Hammer')) {
+      this.cursed_days[this.tool] = (this.cursed_days[this.tool] || 0) + 1;
+      if (this.cursed_days[this.tool] >= 10) {
+        this.levels[this.tool] = 6;
+        report.push(`Miracle! Carrying the Cursed ${this.tool} for 10 days turned it into a BLESSED ${this.tool}!`);
       }
     }
+
     this.weather = this.tomorrow;
-    [nd, ns] = [py_add(this.day, 1), this.season];
-    if ((nd > 30)) {
-      [nd, ns] = [1, (py_add(ns, 1) % 4)];
+    let [nd, ns] = [this.day + 1, this.season];
+    if (nd > 30) {
+      nd = 1;
+      ns = (ns + 1) % 4;
     }
-    this.tomorrow = ((this as any).roll_weather(ns, nd));
-    if (py_eq(this.weather, "Rain")) {
-      this.wet = new Set(this.tilled);
-      report.push("It's raining - your fields are watered.");
+    this.tomorrow = this.roll_weather(ns, nd);
+
+    // Run hired Harvest Sprites
+    this.run_sprites_work(report);
+
+    if (this.weather === 'Rain' || this.weather === 'Typhoon') {
+      for (const k of this.tilled) {
+        this.wet.add(k);
+      }
+      report.push("It's raining — your fields are watered.");
+    }
+    if (this.weather === 'Typhoon' || this.weather === 'Blizzard') {
+      report.push(`A fierce ${this.weather} sweeps through Mineral Town! Stay safe!`);
+    }
+
+    // Incubator & Chickens
+    if (this.incubator_days > 0) {
+      this.incubator_days -= 1;
+      if (this.incubator_days === 0 && this.chickens < this.coop_cap()) {
+        this.chickens += 1;
+        report.push('Cheep cheep! A new baby chick hatched in your Incubator!');
+      }
     }
     if (this.fed) {
       this.eggs += this.fed;
-      report.push(`Your chickens laid ${this.fed} egg${((this.fed > 1) ? "s" : "")}.`);
+      report.push(`Your chickens laid ${this.fed} egg${this.fed > 1 ? 's' : ''}.`);
     }
     this.fed = 0;
-    ((this as any).barn_new_day(report));
-    if ((this.upgrading && (((this as any).absday()) >= py_item(this.upgrading, 1)))) {
-      t = py_item(this.upgrading, 0);
-      this.levels[t] += 1;
-      if (py_eq(t, "Watering Can")) {
-        this.water = py_item(CAN_CAP, py_item(this.levels, t));
+
+    this.barn_new_day(report);
+
+    // Blacksmith completion
+    if (this.upgrading && this.absday() >= this.upgrading[1]) {
+      const t = this.upgrading[0];
+      this.levels[t] = (this.levels[t] || 0) + 1;
+      if (t === 'Watering Can') {
+        this.water = CAN_CAP[this.levels[t]];
       }
-      report.push(`Saibara finished your ${py_item(LEVELS, py_item(this.levels, t))} ${t}!`);
+      report.push(`Saibara finished your ${LEVELS[this.levels[t]]} ${t}!`);
       this.upgrading = null;
     }
-    report += ((this as any).carpentry_day());
-    if ((!py_eq(this.season, 3))) {
-      m = py_item(this.maps, "farm");
-      objs = py_item(this.objs, "farm");
-      for (let _ of py_iter(py_range(4))) {
-        [x, y] = [py_rng().randint(3, 60), py_rng().randint(9, 26)];
-        if ((py_eq(m.tile(x, y), "field") && (!py_in([x, y], this.tilled)) && (!py_in([x, y], objs)))) {
-          objs[pkey(x, y)] = "weed";
+
+    // TV Shopping delivery
+    if (this.tv_order && this.absday() >= this.tv_order[1]) {
+      const item = this.tv_order[0];
+      this.tv_order = null;
+      if (item === 'Power Berry') {
+        this.give_power_berry('tv_shopping');
+        report.push('Zack delivered your TV Shopping Power Berry!');
+      } else {
+        this.give(item, 1);
+        report.push(`Zack delivered your ${item} from TV Shopping!`);
+      }
+    }
+
+    // Carpentry completion
+    report.push(...this.carpentry_day());
+
+    // Marriage & Child Birth milestone
+    if (this.married && !this.child_name && this.marriage_day >= 0 && this.absday() - this.marriage_day >= 30) {
+      this.child_name = 'Sprout';
+      report.push(`Joyous news! ${this.married} and you welcomed a healthy baby into your family!`);
+    }
+
+    // Spawn daily weeds & mountain/beach forage
+    if (this.season !== 3) {
+      const m = this.maps['farm'];
+      const objs = this.objs['farm'];
+      for (let i = 0; i < 3; i++) {
+        const [x, y] = [py_rng().randint(3, 60), py_rng().randint(9, 26)];
+        const k = pkey(x, y);
+        if (m.tile(x, y) === 'field' && !this.tilled.has(k) && !objs[k]) {
+          objs[k] = 'weed';
         }
       }
     }
-    ((this as any).spawn_forage());
-    [this.talked, this.gifted, this.prayed] = [new Set(), new Set(), false];
-    ((this as any).fest_new_day(report));
-    if (py_eq(reason, "passout")) {
+    this.spawn_forage();
+    this.talked = new Set();
+    this.gifted = new Set();
+    this.prayed = false;
+    this.fest_new_day(report);
+
+    // Sleep Stamina & Fatigue Recovery (with Vase flower & Fireplace bonuses)
+    const vaseBonus = this.vase_flower ? 15 : 0;
+    const fireBonus = this.fireplace_lit && this.season === 3 ? 20 : 0;
+    this.fireplace_lit = false;
+    if (reason === 'passout') {
       this.stamina = Math.floor(this.max_stamina / 2);
-      report.push("You woke up at home, still aching. (half stamina)");
+      this.fatigue = 30;
+      report.push('You woke up aching from collapsing yesterday. (Half Stamina, 30 Fatigue)');
+    } else if (late) {
+      this.stamina = Math.min(this.max_stamina, Math.floor((this.max_stamina * 3) / 4) + vaseBonus);
+      this.fatigue = Math.max(0, this.fatigue - 25 - fireBonus);
+      report.push('You stayed up past midnight, so you did not fully recover.');
     } else {
-      if (late) {
-        this.stamina = Math.floor(py_mult(this.max_stamina, 3) / 4);
-        report.push("You stayed up late. You don't feel fully rested.");
-      } else {
-        this.stamina = this.max_stamina;
-      }
+      this.stamina = this.max_stamina;
+      this.fatigue = Math.max(0, this.fatigue - 50 - vaseBonus - fireBonus);
     }
-    this.minutes = py_mult(6, 60);
+
+    this.minutes = 6 * 60;
     this.acc = 0;
-    this.mapname = "house";
+    this.riding_horse = false;
+    this.mapname = 'house';
     [this.px, this.py] = HOUSE_WAKE;
-    this.face = [0, (-1)];
-    this.npc_pos = {  };
-    ((this as any).save());
+    this.face = [0, -1];
+    this.npc_pos = {};
+    this.save(1);
     this.msgs = [];
-    (await (this as any).say(`Good morning! ${((this as any).date_str())}.  Weather: ${this.weather}.`, null));
-    for (let r of py_iter(report)) {
-      (await (this as any).say(r, null));
+    await this.say(`Good morning! ${this.date_str()}.  Weather: ${this.weather}.`, null);
+    for (const r of report) {
+      await this.say(r, null);
     }
-    ((this as any).msg("Game saved.", "03"));
-    this.last = (Date.now() / 1000);
+    this.msg('Game saved to Diary Slot 1.', '03');
+    this.last = Date.now() / 1000;
   }
 
-  spawn_forage(): any {
-    let fr: any = undefined; let items: any = undefined; let m: any = undefined; let rng: any = undefined; let target: any = undefined; let tries: any = undefined; let x: any = undefined; let y: any = undefined;
-    m = py_item(this.maps, "mountain");
-    items = py_item(FORAGE, this.season_name);
-    fr = {  };
-    rng = py_rng().Random();
-    tries = 0;
-    target = (py_eq(this.season, 3) ? 5 : 10);
-    while (((py_len(fr) < target) && (tries < 500))) {
-      tries += 1;
-      [x, y] = [rng.randint(1, (m.w - 2)), rng.randint(1, (m.h - 2))];
-      if ((py_eq(m.tile(x, y), "grass") && (!m.near(x, y, ["path"], 0)))) {
-        fr[pkey(x, y)] = rng.choice(items);
+  spawn_forage(): void {
+    const items = FORAGE[this.season_name] || ['Blue Grass'];
+    const rng = py_rng();
+    for (const mapKey of ['mountain', 'beach'] as const) {
+      const m = this.maps[mapKey];
+      if (!m) continue;
+      const fr: Record<string, string> = {};
+      let tries = 0;
+      const target = mapKey === 'beach' ? 4 : this.season === 3 ? 6 : 11;
+      while (Object.keys(fr).length < target && tries < 400) {
+        tries += 1;
+        const [x, y] = [rng.randint(2, m.w - 3), rng.randint(2, m.h - 3)];
+        const tile = m.tile(x, y);
+        if ((tile === 'grass' || tile === 'sand') && !m.near(x, y, ['path', 'door', 'spring', 'pond'], 0)) {
+          fr[pkey(x, y)] = rng.choice(items);
+        }
       }
+      this.forage[mapKey] = fr;
     }
-    this.forage["mountain"] = fr;
   }
 
-  glyph(m: any, x: any, y: any, t: any): any {
-    let _: any = undefined; let age: any = undefined; let bg: any = undefined; let c: any = undefined; let ch: any = undefined; let crop: any = undefined; let d: any = undefined; let fg: any = undefined; let fr: any = undefined; let h: any = undefined; let name: any = undefined; let obj: any = undefined; let p: any = undefined; let season: any = undefined;
-    p = [x, y];
-    name = m.name;
-    obj = py_dict_get(py_dict_get(this.objs, name, {  }), p);
-    if (obj) {
-      [ch, fg] = py_item(OBJ_GLYPH, obj);
-      if ((py_eq(this.season, 3) && py_eq(name, "farm"))) {
-        fg = (py_eq(obj, "weed") ? "07" : fg);
+  glyph(m: GameMap, x: number, y: number, t: string): [string, string, string, boolean] {
+    const pKey = pkey(x, y);
+    const name = m.name;
+    const obj = this.objs[name]?.[pKey];
+    if (obj && OBJ_GLYPH[obj]) {
+      let [ch, fg] = OBJ_GLYPH[obj];
+      if (this.season === 3 && name === 'farm' && obj === 'weed') {
+        fg = '07';
       }
-      return [ch, fg, "00", false];
+      return [ch, fg, '00', false];
     }
-    fr = py_dict_get(py_dict_get(this.forage, name, {  }), p);
-    if (fr) {
-      [ch, fg] = py_item(FORAGE_GLYPH, fr);
-      return [ch, fg, "00", true];
+    const fr = this.forage[name]?.[pKey];
+    if (fr && FORAGE_GLYPH[fr]) {
+      const [ch, fg] = FORAGE_GLYPH[fr];
+      return [ch, fg, '00', true];
     }
-    if ((py_eq(name, "farm") && py_in(p, this.tilled))) {
-      bg = (py_in(p, this.wet) ? "01" : "00");
-      c = py_dict_get(this.crops, p);
-      if ((!c)) {
-        return ["=", "09", bg, false];
+    if (name === 'farm' && this.tilled.has(pKey)) {
+      const bg = this.wet.has(pKey) ? '01' : '00';
+      const c = this.crops[pKey];
+      if (!c) {
+        return ['=', '09', bg, false];
       }
-      [crop, age] = c;
-      d = py_item(CROPS, crop);
-      if ((age >= py_item(d, 2))) {
-        return [py_item(d, 5), py_item(d, 6), bg, true];
+      const [crop, age] = c;
+      const d = CROPS[crop];
+      if (age >= d[2]) {
+        return [d[5], d[6], bg, true];
       }
-      if (py_eq(age, 0)) {
-        return [":", "09", bg, false];
+      if (age === 0) {
+        return [':', '09', bg, false];
       }
-      if ((age < (py_item(d, 2) / 2))) {
-        return [",", "0B", bg, false];
+      if (age < d[2] / 2) {
+        return [',', '0B', bg, false];
       }
-      return ["\"", "0B", bg, false];
+      return ['"', '0B', bg, false];
     }
-    if (py_in(p, m.deco)) {
-      [ch, fg] = py_item(m.deco, p);
-      return [ch, fg, py_item(py_item(TILES, t), 2), false];
+    // Frozen Lake ice in Winter around Lake Mine island
+    if (name === 'mountain' && this.season === 3 && t === 'water' && x >= 11 && x <= 17 && y >= 4 && y <= 11) {
+      return ['=', '0C', '01', false];
     }
-    [ch, fg, bg, _] = py_item(TILES, t);
-    season = this.season;
-    h = (py_add(py_add(py_mult(x, 7), py_mult(y, 13)), py_mult(x, y)) % 11);
-    if (py_eq(t, "grass")) {
-      if (py_eq(season, 3)) {
-        return [((h < 4) ? "." : " "), "05", "00", false];
+    if (pKey in m.deco) {
+      const [ch, fg] = m.deco[pKey];
+      return [ch, fg, TILES[t]?.[2] || '00', false];
+    }
+    const [ch0, fg0, bg, ] = TILES[t] || [' ', '00', '00', false];
+    let ch = ch0;
+    let fg = fg0;
+    const season = this.season;
+    const h = (x * 7 + y * 13 + x * y) % 11;
+    if (t === 'grass') {
+      if (season === 3) {
+        return [h < 4 ? '.' : ' ', '05', '00', false];
       }
-      if ((h < 3)) {
-        return [(h ? "," : "\""), ((py_eq(season, 2) && (!py_eq(h, 1))) ? "09" : "0B"), "00", false];
+      if (h < 3) {
+        return [h ? ',' : '"', season === 2 && h !== 1 ? '09' : '0B', '00', false];
       }
-      return [" ", fg, bg, false];
+      return [' ', fg, bg, false];
     }
-    if ((py_eq(t, "field") && py_eq(season, 3))) {
-      return [".", "05", "00", false];
+    if (t === 'field' && season === 3) {
+      return ['.', '05', '00', false];
     }
-    if (py_eq(t, "tree")) {
-      return ["T", py_item(["0B", "0B", "09", "04"], season), "00", true];
+    if (t === 'tree') {
+      return ['T', ['0B', '0B', '09', '04'][season], '00', true];
     }
-    if (py_eq(t, "flower")) {
-      if (py_eq(season, 3)) {
-        return [".", "05", "00", false];
+    if (t === 'flower') {
+      if (season === 3) {
+        return ['.', '05', '00', false];
       }
-      return ["*", py_item(["0A", "0E", "08", "0C", "07"], (h % 5)), "00", false];
+      return ['*', ['0A', '0E', '08', '0C', '07'][h % 5], '00', false];
     }
-    if (py_in(t, ["water", "fountain"])) {
-      if (py_eq((py_add(py_add(x, y), Math.floor(Number(py_mult((Date.now() / 1000), 1.5)))) % 7), 0)) {
-        ch = "-";
+    if (t === 'water' || t === 'fountain' || t === 'spring' || t === 'pond') {
+      if ((x + y + Math.floor((Date.now() / 1000) * 1.5)) % 7 === 0) {
+        ch = '-';
       }
-      if ((py_eq(season, 3) && py_eq(t, "water") && (!py_eq(m.name, "mine")))) {
-        fg = "0C";
+      if (season === 3 && t === 'water' && m.name !== 'mine') {
+        fg = '0C';
       }
     }
     return [ch, fg, bg, false];
   }
 
-  render(): any {
-    let H: any = undefined; let W: any = undefined; let s: any = undefined; let side: any = undefined; let vh: any = undefined; let vw: any = undefined; let y: any = undefined;
-    s = this.scr;
+  render(): void {
+    const s = this.scr;
     s.clear();
-    if ((!this.started)) {
-      ((this as any).draw_title());
+    if (!this.started) {
+      this.draw_title();
       return;
     }
-    [W, H] = [s.w, s.h];
-    if (((W < 80) || (H < 24))) {
-      s.put(0, 0, `Terminal too small: need 80x24, have ${W}x${H}`, "08");
+    const [W, H] = [s.w, s.h];
+    if (W < 80 || H < 24) {
+      s.put(0, 0, `Terminal too small: need 80x24, have ${W}x${H}`, '08');
       return;
     }
-    side = 27;
-    [vw, vh] = [((W - side) - 1), (H - 5)];
-    ((this as any).draw_topbar(W));
-    ((this as any).draw_map(0, 1, vw, vh));
-    for (let y of py_iter(py_range(1, (H - 4)))) {
-      s.put(vw, y, "|", "01");
+    const side = 29;
+    const [vw, vh] = [W - side - 1, H - 5];
+    this.draw_topbar(W);
+    this.draw_map(0, 1, vw, vh);
+    for (let y = 1; y < H - 4; y++) {
+      s.put(vw, y, '|', '01');
     }
-    s.put(0, (H - 4), py_mult("-", W), "01");
-    ((this as any).draw_side(py_add(vw, 2), 2, (side - 2)));
-    ((this as any).draw_msgs((H - 3)));
+    s.put(0, H - 4, '-'.repeat(W), '01');
+    this.draw_side(vw + 2, 2, side - 2);
+    this.draw_msgs(H - 3);
   }
 
-  draw_topbar(W: any): any {
-    let fg: any = undefined; let loc: any = undefined; let s: any = undefined; let sn: any = undefined; let text: any = undefined; let x: any = undefined;
-    s = this.scr;
-    s.put(0, 0, py_mult(" ", W), "05", "01");
-    sn = this.season_name;
-    x = 1;
-    for (let [text, fg] of py_iter([[`${sn} ${this.day}`, py_item(SEASON_COL, sn)], [` ${py_item(WEEKDAYS, this.weekday)}`, "05"], [`  Year ${this.year}`, "04"], [`   ${fmt_time(this.minutes)}`, "07"], [`   ${this.weather}`, py_item(WEATHER_COL, this.weather)], [`   ${this.gold}G`, "09"]])) {
-      s.put(x, 0, text, fg, "01", true);
-      x += py_len(text);
+  draw_topbar(W: number): void {
+    const s = this.scr;
+    s.put(0, 0, ' '.repeat(W), '05', '01');
+    const sn = this.season_name;
+    let x = 1;
+    const segments: [string, string][] = [
+      [`${sn} ${this.day}`, SEASON_COL[sn]],
+      [` ${WEEKDAYS[this.weekday]}`, '05'],
+      [`  Yr ${this.year}`, '04'],
+      [`  ${fmt_time(this.minutes)}`, '07'],
+      [`  ${this.weather}`, WEATHER_COL[this.weather] || '09'],
+      [`  ${this.gold}G`, '09'],
+    ];
+    for (const [text, fg] of segments) {
+      s.put(x, 0, text, fg, '01', true);
+      x += text.length;
     }
-    loc = py_add(this.map.title, (this.map.indoor ? "   (time stops indoors)" : ""));
-    s.put(((W - py_len(loc)) - 2), 0, loc, "0C", "01");
+    const loc = this.map.title + (this.map.indoor ? ' (indoors)' : '');
+    s.put(Math.max(x + 1, W - loc.length - 2), 0, loc, '0C', '01');
   }
 
-  draw_map(ox: any, oy: any, vw: any, vh: any): any {
-    let _: any = undefined; let bg: any = undefined; let bold: any = undefined; let cell: any = undefined; let ch: any = undefined; let cx: any = undefined; let cy: any = undefined; let d: any = undefined; let drops: any = undefined; let dusk: any = undefined; let fg: any = undefined; let hour: any = undefined; let m: any = undefined; let n: any = undefined; let night: any = undefined; let rng: any = undefined; let row: any = undefined; let s: any = undefined; let sx: any = undefined; let sy: any = undefined; let tx: any = undefined; let ty: any = undefined; let x: any = undefined; let y: any = undefined;
-    s = this.scr;
-    m = this.map;
-    if ((m.w <= vw)) {
-      [cx, ox] = [0, py_add(ox, Math.floor((vw - m.w) / 2))];
+  draw_map(ox: number, oy: number, vw: number, vh: number): void {
+    const s = this.scr;
+    const m = this.map;
+    let cx = 0;
+    let cy = 0;
+    if (m.w <= vw) {
+      ox += Math.floor((vw - m.w) / 2);
     } else {
-      cx = clamp((this.px - Math.floor(vw / 2)), 0, (m.w - vw));
+      cx = clamp(this.px - Math.floor(vw / 2), 0, m.w - vw);
     }
-    if ((m.h <= vh)) {
-      [cy, oy] = [0, py_add(oy, Math.floor((vh - m.h) / 2))];
+    if (m.h <= vh) {
+      oy += Math.floor((vh - m.h) / 2);
     } else {
-      cy = clamp((this.py - Math.floor(vh / 2)), 0, (m.h - vh));
+      cy = clamp(this.py - Math.floor(vh / 2), 0, m.h - vh);
     }
-    hour = (this.minutes / 60);
-    night = ((!m.indoor) && (!py_eq(m.name, "mine")) && ((hour >= 19) || (hour < 5)));
-    dusk = ((!m.indoor) && (!py_eq(m.name, "mine")) && (17.5 <= hour) && (hour < 19));
-    [tx, ty] = ((this as any).target());
-    for (let sy of py_iter(py_range(Math.min(vh, m.h)))) {
-      y = py_add(cy, sy);
-      row = py_item(m.t, y);
-      for (let sx of py_iter(py_range(Math.min(vw, m.w)))) {
-        x = py_add(cx, sx);
-        [ch, fg, bg, bold] = ((this as any).glyph(m, x, y, py_item(row, x)));
-        if ((night && (!py_in(fg, ["00", "01"])))) {
-          fg = (py_in(fg, ["0D", "0C"]) ? "0F" : (py_in(fg, ["02", "03"]) ? "02" : "03"));
-        } else {
-          if ((dusk && py_eq(fg, "0B"))) {
-            fg = "09";
-          }
+    const hour = this.minutes / 60;
+    const night = !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
+    const dusk = !m.indoor && m.name !== 'mine' && 17.5 <= hour && hour < 19;
+    const [tx, ty] = this.target();
+    for (let sy = 0; sy < Math.min(vh, m.h); sy++) {
+      const y = cy + sy;
+      const row = m.t[y];
+      for (let sx = 0; sx < Math.min(vw, m.w); sx++) {
+        const x = cx + sx;
+        let [ch, fg, bg, bold] = this.glyph(m, x, y, row[x]);
+        if (night && fg !== '00' && fg !== '01') {
+          fg = fg === '0D' || fg === '0C' ? '0F' : fg === '02' || fg === '03' ? '02' : '03';
+        } else if (dusk && fg === '0B') {
+          fg = '09';
         }
-        if (py_eq([x, y], [tx, ty])) {
-          bg = (py_eq(bg, "01") ? "02" : "01");
+        if (x === tx && y === ty) {
+          bg = bg === '01' ? '02' : '01';
         }
-        s.put(py_add(ox, sx), py_add(oy, sy), ch, fg, bg, bold);
+        s.put(ox + sx, oy + sy, ch, fg, bg, bold);
       }
     }
-    const at = (x: any, y: any, ch: any, fg: any, bold: any = true) => {
-      [sx, sy] = [(x - cx), (y - cy)];
-      if (((0 <= sx) && (sx < Math.min(vw, m.w)) && (0 <= sy) && (sy < Math.min(vh, m.h)))) {
-        bg = py_item(py_item(py_item(s.buf, py_add(oy, sy)), py_add(ox, sx)), 2);
-        s.put(py_add(ox, sx), py_add(oy, sy), ch, fg, bg, bold);
+    const at = (x: number, y: number, ch: string, fg: string, bold = true) => {
+      const [sx, sy] = [x - cx, y - cy];
+      if (0 <= sx && sx < Math.min(vw, m.w) && 0 <= sy && sy < Math.min(vh, m.h)) {
+        const bg = s.buf[oy + sy][ox + sx][2];
+        s.put(ox + sx, oy + sy, ch, fg, bg, bold);
       }
     };
-    for (let [n, [x, y]] of py_iter(py_dict_items(this.npc_pos))) {
-      if (py_eq(py_item(py_item(py_item(NPCS, n), "where"), 0), this.mapname)) {
-        at(x, y, py_item(py_item(NPCS, n), "g"), py_item(py_item(NPCS, n), "col"));
+    for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
+      if (NPCS[n]?.where?.[0] === this.mapname) {
+        at(x, y, NPCS[n].g, NPCS[n].col);
       }
     }
-    for (let [n, d] of py_iter(py_dict_items(this.indoor_npcs))) {
-      if ((py_eq(py_item(d, "map"), this.mapname) && (!py_eq(n, this.married)))) {
-        at(...((py_iter(py_item(d, "pos")) || []) as [any, any, any]), py_item(py_item(NPCS, n), "g"), py_item(py_item(NPCS, n), "col"));
+    for (const [n, d] of Object.entries(this.indoor_npcs)) {
+      if (d.map === this.mapname && n !== this.married) {
+        at(d.pos[0], d.pos[1], NPCS[n].g, NPCS[n].col);
       }
     }
-    if ((py_eq(this.mapname, "house") && this.married)) {
-      at(...((py_iter(SPOUSE_POS) || []) as [any, any, any]), py_item(py_item(NPCS, this.married), "g"), py_item(py_item(NPCS, this.married), "col"));
+    if (this.mapname === 'house' && this.married) {
+      at(SPOUSE_POS[0], SPOUSE_POS[1], NPCS[this.married].g, NPCS[this.married].col);
+      if (this.child_name) {
+        at(SPOUSE_POS[0] + 1, SPOUSE_POS[1], 'c', '0A');
+      }
     }
-    at(this.px, this.py, "@", "07");
-    if (((!m.indoor) && (!py_eq(m.name, "mine")) && (!py_eq(this.weather, "Sunny")))) {
-      rng = py_rng().Random(Math.floor(Number(py_mult((Date.now() / 1000), 8))));
-      drops = Math.floor(py_mult(vw, vh) / (py_eq(this.weather, "Rain") ? 25 : 45));
-      for (let _ of py_iter(py_range(drops))) {
-        [sx, sy] = [rng.randrange(Math.min(vw, m.w)), rng.randrange(Math.min(vh, m.h))];
-        if (py_eq([py_add(sx, cx), py_add(sy, cy)], [this.px, this.py])) {
-          continue;
-        }
-        cell = py_item(py_item(s.buf, py_add(oy, sy)), py_add(ox, sx));
-        if (py_eq(this.weather, "Rain")) {
-          s.put(py_add(ox, sx), py_add(oy, sy), "/", "0D", py_item(cell, 2));
+    // Player glyph color reflects Stamina & Fatigue state (White -> Orange -> Red -> Blue when exhausted!)
+    const playerCol =
+      this.fatigue >= 80 || this.stamina === 0
+        ? '0D'
+        : this.stamina <= this.max_stamina * 0.2
+          ? '08'
+          : this.stamina <= this.max_stamina * 0.5 || this.fatigue >= 50
+            ? '09'
+            : '07';
+    at(this.px, this.py, '@', playerCol);
+
+    if (!m.indoor && m.name !== 'mine' && this.weather !== 'Sunny') {
+      const rng = py_rng(Math.floor((Date.now() / 1000) * 8));
+      const isRain = this.weather === 'Rain' || this.weather === 'Typhoon';
+      const drops = Math.floor((vw * vh) / (isRain ? 22 : 40));
+      for (let i = 0; i < drops; i++) {
+        const [sx, sy] = [rng.randrange(Math.min(vw, m.w)), rng.randrange(Math.min(vh, m.h))];
+        if (sx + cx === this.px && sy + cy === this.py) continue;
+        const cell = s.buf[oy + sy][ox + sx];
+        if (isRain) {
+          s.put(ox + sx, oy + sy, '/', '0D', cell[2]);
         } else {
-          s.put(py_add(ox, sx), py_add(oy, sy), rng.choice("*."), "07", py_item(cell, 2));
+          s.put(ox + sx, oy + sy, rng.choice('*.'), '07', cell[2]);
         }
       }
     }
   }
 
-  draw_side(x: any, y: any, w: any): any {
-    let binv: any = undefined; let bw: any = undefined; let col: any = undefined; let crop: any = undefined; let d: any = undefined; let filled: any = undefined; let frac: any = undefined; let held: any = undefined; let help_lines: any = undefined; let hungry: any = undefined; let idx: any = undefined; let k: any = undefined; let lvl: any = undefined; let ok: any = undefined; let s: any = undefined; let sn: any = undefined; let t: any = undefined;
-    s = this.scr;
-    sn = this.season_name;
-    s.put(x, y, "H R V S T M N", py_item(SEASON_COL, sn), "00", true);
-    s.put(x, py_add(y, 1), py_slice(`${this.name} of ${this.farm} Farm`, null, w), "04");
+  draw_side(x: number, y: number, w: number): void {
+    const s = this.scr;
+    const sn = this.season_name;
+    s.put(x, y, 'H R V S T M N', SEASON_COL[sn], '00', true);
+    s.put(x, y + 1, `${this.name} of ${this.farm} Farm`.slice(0, w), '04');
     y += 3;
-    t = this.tool;
-    s.put(x, y, "Tool", "03");
-    idx = (py_in(t, TOOLS) ? `[${py_add(TOOLS.indexOf(t), 1)}] ` : "    ");
-    s.put(py_add(x, 6), y, py_slice(py_add(idx, t), null, (w - 6)), "07", "00", true);
+
+    const t = this.tool;
+    s.put(x, y, 'Tool', '03');
+    const idx = TOOLS.includes(t) ? `[${TOOLS.indexOf(t) + 1}] ` : '    ';
+    s.put(x + 6, y, (idx + t).slice(0, w - 6), '07', '00', true);
     y += 1;
-    if (py_in(t, UPGRADABLE)) {
-      lvl = py_item(this.levels, t);
-      s.put(py_add(x, 6), y, py_item(LEVELS, lvl), py_item(LEVEL_COL, lvl));
-      if (py_eq(t, "Watering Can")) {
-        s.put(py_add(x, 15), y, `${this.water}/${py_item(CAN_CAP, lvl)}`, "0D");
+    if (UPGRADABLE.includes(t)) {
+      const lvl = this.levels[t] || 0;
+      const exp = this.tool_exp[t] || 0;
+      s.put(x + 6, y, `${LEVELS[lvl]} (${exp}%)`, LEVEL_COL[lvl]);
+      if (t === 'Watering Can') {
+        s.put(x + 19, y, `${this.water}/${CAN_CAP[lvl]}`, '0D');
       }
-    } else {
-      if (t.endsWith(" Seeds")) {
-        crop = py_slice(t, null, (-6));
-        ok = py_eq(py_item(py_item(CROPS, crop), 0), sn);
-        s.put(py_add(x, 6), y, `x${py_dict_get(this.inv, t, 0)} bags`, (ok ? "0B" : "08"));
-        if ((!ok)) {
-          s.put(py_add(x, 15), y, "(off-season)", "08");
-        }
+    } else if (t.endsWith(' Seeds')) {
+      const crop = t.slice(0, -6);
+      const ok = crop === 'Grass' || CROPS[crop]?.[0] === sn;
+      s.put(x + 6, y, `x${this.inv[t] || 0} bags`, ok ? '0B' : '08');
+      if (!ok) {
+        s.put(x + 15, y, '(off-season)', '08');
       }
     }
     y += 1;
     if (this.upgrading) {
-      s.put(x, y, py_slice(`Saibara has: ${py_item(this.upgrading, 0)}`, null, w), "03");
+      s.put(x, y, `Forge: ${this.upgrading[0]}`.slice(0, w), '03');
+    } else if (this.riding_horse) {
+      s.put(x, y, 'Riding Horse (2x speed)', '09');
     }
     y += 1;
-    s.put(x, y, "Held", "03");
-    held = (this.held ? `${this.held} x${py_dict_get(this.inv, this.held, 0)}` : "-");
-    s.put(py_add(x, 6), y, py_slice(held, null, (w - 6)), (this.held ? "0A" : "02"));
+
+    s.put(x, y, 'Held', '03');
+    const held = this.held ? `${this.held} x${this.inv[this.held] || 0}` : '-';
+    s.put(x + 6, y, held.slice(0, w - 6), this.held ? '0A' : '02');
     y += 2;
-    frac = (this.stamina / this.max_stamina);
-    col = ((frac > 0.5) ? "0B" : ((frac > 0.25) ? "09" : "08"));
-    bw = (w - 6);
-    filled = Math.floor(Number(Math.round(py_mult(frac, bw))));
-    s.put(x, y, "Stam", "03");
-    s.put(py_add(x, 6), y, py_mult("#", filled), col, "00", true);
-    s.put(py_add(py_add(x, 6), filled), y, py_mult(".", (bw - filled)), "01");
+
+    // Stamina Bar + Numerical readout
+    const frac = this.stamina / this.max_stamina;
+    const col = frac > 0.5 ? '0B' : frac > 0.2 ? '09' : '08';
+    const bw = Math.max(6, w - 14);
+    const filled = Math.round(frac * bw);
+    s.put(x, y, 'Stam', '03');
+    s.put(x + 5, y, '#'.repeat(filled), col, '00', true);
+    s.put(x + 5 + filled, y, '.'.repeat(bw - filled), '01');
+    s.put(x + 6 + bw, y, `${this.stamina}/${this.max_stamina}`, col);
+    y += 1;
+
+    // Fatigue Bar + Berries
+    const fatCol = this.fatigue < 50 ? '0C' : this.fatigue < 80 ? '09' : '08';
+    s.put(x, y, 'Fatg', '03');
+    s.put(
+      x + 5,
+      y,
+      `${this.fatigue}/100  Berries:${this.power_berries}${this.has_mystic_berry ? '+B' : ''}`.slice(0, w - 5),
+      fatCol
+    );
     y += 2;
-    s.put(x, y, "Gold", "03");
-    s.put(py_add(x, 6), y, `${this.gold}G`, "09", "00", true);
+
+    s.put(x, y, 'Gold', '03');
+    s.put(x + 6, y, `${this.gold}G`, '09', '00', true);
     y += 1;
-    binv = py_sum(py_iter(py_dict_items(this.bin)).map(([i, q]: any) => py_mult(py_item(py_item(ITEMS, i), 0), q)));
-    s.put(x, y, "Bin", "03");
-    s.put(py_add(x, 6), y, `${binv}G pending`, (binv ? "09" : "02"));
+    const binv = py_sum(
+      Object.entries(this.bin).map(([i, q]) => (ITEMS[i] ? ITEMS[i][0] : 0) * q)
+    );
+    s.put(x, y, 'Bin', '03');
+    s.put(x + 6, y, `${binv}G (5PM pickup)`, binv ? '09' : '02');
     y += 1;
+
     if (this.chickens) {
-      s.put(x, y, "Coop", "03");
-      s.put(py_add(x, 6), y, `${this.chickens} hens, ${this.eggs} eggs`, "07");
-    }
-    if (this.animals) {
-      y += 1;
-      hungry = py_sum(py_iter(this.animals).filter((a: any) => (!py_item(a, "fed"))).map((a: any) => 1));
-      s.put(x, y, "Barn", "03");
-      s.put(py_add(x, 6), y, py_slice(py_add(`${py_len(this.animals)} animals`, (hungry ? `, ${hungry} hungry` : ", all fed")), null, (w - 6)), (hungry ? "08" : "07"));
-    }
-    y += 2;
-    help_lines = [["SPC", "use tool"], ["X", "act / talk"], ["TAB", "next tool"], ["I", "rucksack"], ["?", "help"], ["Q", "quit"]];
-    for (let [k, d] of py_iter(help_lines)) {
-      if ((y >= (s.h - 5))) {
-        break;
-      }
-      s.put(x, y, `${k}`, "0D", "00", true);
-      s.put(py_add(x, 4), y, d, "03");
+      s.put(x, y, 'Coop', '03');
+      s.put(x + 6, y, `${this.chickens} hens, ${this.eggs} eggs`, '07');
       y += 1;
     }
-  }
+    if (this.animals.length) {
+      const hungry = this.animals.filter((a) => !a.fed).length;
+      s.put(x, y, 'Barn', '03');
+      s.put(
+        x + 6,
+        y,
+        `${this.animals.length} head${hungry ? `, ${hungry} hungry` : ', all fed'}`.slice(0, w - 6),
+        hungry ? '08' : '07'
+      );
+      y += 1;
+    }
 
-  draw_msgs(y0: any): any {
-    let age: any = undefined; let col: any = undefined; let cols: any = undefined; let fg: any = undefined; let i: any = undefined; let recent: any = undefined; let text: any = undefined;
-    cols = ["02", "03", null];
-    recent = py_slice(this.msgs, (-3), null);
-    for (let [i, [text, col]] of py_iter(enumerate(recent))) {
-      age = ((py_len(recent) - 1) - i);
-      fg = (py_eq(age, 0) ? col : (py_eq(age, 1) ? py_item(cols, 1) : py_item(cols, 0)));
-      this.scr.put(1, py_add(y0, i), py_slice(text, null, (this.scr.w - 2)), fg);
+    y += 1;
+    const help_lines = [
+      ['SPC', 'use tool'],
+      ['X', 'act / talk'],
+      ['TAB', 'next tool'],
+      ['I', 'rucksack'],
+      ['M', 'memo/stats'],
+      ['ESC', 'diary/save'],
+      ['?', 'help'],
+    ];
+    for (const [k, d] of help_lines) {
+      if (y >= s.h - 4) break;
+      s.put(x, y, k, '0D', '00', true);
+      s.put(x + 4, y, d, '03');
+      y += 1;
     }
   }
 
-  draw_title(): any {
-    let H: any = undefined; let W: any = undefined; let ch: any = undefined; let cols: any = undefined; let field: any = undefined; let fx: any = undefined; let hills: any = undefined; let i: any = undefined; let line: any = undefined; let lw: any = undefined; let palette: any = undefined; let s: any = undefined; let scene_y: any = undefined; let sub: any = undefined; let tag: any = undefined; let x0: any = undefined;
-    s = this.scr;
-    [W, H] = [s.w, s.h];
-    lw = py_len(py_item(LOGO, 0));
-    x0 = Math.max(0, Math.floor((W - lw) / 2));
-    cols = ["0A", "0E", "0D", "0C", "0B"];
-    for (let [i, line] of py_iter(enumerate(LOGO))) {
-      s.put(x0, py_add(2, i), line, py_item(cols, i), "00", true);
+  draw_msgs(y0: number): void {
+    const cols = ['02', '03', null];
+    const recent = this.msgs.slice(-3);
+    for (let i = 0; i < recent.length; i++) {
+      const [text, col] = recent[i];
+      const age = recent.length - 1 - i;
+      const fg = age === 0 ? col : age === 1 ? cols[1]! : cols[0]!;
+      this.scr.put(1, y0 + i, text.slice(0, this.scr.w - 2), fg);
     }
-    sub = "~ an ASCII tribute to Harvest Moon: Friends of Mineral Town ~";
-    s.put(Math.max(0, Math.floor((W - py_len(sub)) / 2)), 8, sub, "04");
-    scene_y = 10;
-    hills = "   T   T  .-^-.   T        T   .-^-.   T   ";
-    s.put(Math.max(0, Math.floor((W - py_len(hills)) / 2)), scene_y, hills, "0B");
-    field = " o * j o Y * o v d o * j O o * A o v * o j ";
-    fx = Math.max(0, Math.floor((W - py_len(field)) / 2));
-    palette = ["07", "08", "0B", "09", "0E", "0A"];
-    for (let [i, ch] of py_iter(enumerate(field))) {
-      s.put(py_add(fx, i), py_add(scene_y, 1), ch, ((!py_eq(ch, " ")) ? py_item(palette, (i % py_len(palette))) : "00"), "00", true);
-    }
-    s.put(fx, py_add(scene_y, 2), py_mult("=", py_len(field)), "09");
-    tag = "base16 isotope dark";
-    s.put(Math.max(0, Math.floor((W - py_len(tag)) / 2)), (H - 2), tag, "02");
   }
 
-  async modal(draw: any): Promise<any> {
-    let k: any = undefined;
+  draw_title(): void {
+    const s = this.scr;
+    const [W, H] = [s.w, s.h];
+    const lw = LOGO[0].length;
+    const x0 = Math.max(0, Math.floor((W - lw) / 2));
+    const cols = ['0A', '0E', '0D', '0C', '0B'];
+    for (let i = 0; i < LOGO.length; i++) {
+      s.put(x0, 2 + i, LOGO[i], cols[i], '00', true);
+    }
+    const sub = '~ Harvest Moon: Friends of Mineral Town (Complete ASCII Edition) ~';
+    s.put(Math.max(0, Math.floor((W - sub.length) / 2)), 8, sub, '04');
+    const scene_y = 10;
+    const hills = '   T   T  .-^-.   T   [Hot Spring]   T   .-^-.   T   ';
+    s.put(Math.max(0, Math.floor((W - hills.length) / 2)), scene_y, hills, '0B');
+    const field = ' o * j o Y * o v d o * j O o * A o v * o j ';
+    const fx = Math.max(0, Math.floor((W - field.length) / 2));
+    const palette = ['07', '08', '0B', '09', '0E', '0A'];
+    for (let i = 0; i < field.length; i++) {
+      const ch = field[i];
+      s.put(fx + i, scene_y + 1, ch, ch !== ' ' ? palette[i % palette.length] : '00', '00', true);
+    }
+    s.put(fx, scene_y + 2, '='.repeat(field.length), '09');
+    const tag = 'base16 isotope dark · 255-floor mines · 7 sprites · 20+ festivals · 108 recipes';
+    s.put(Math.max(0, Math.floor((W - tag.length) / 2)), H - 2, tag, '02');
+  }
+
+  async modal(draw: () => void): Promise<string> {
     while (true) {
-      ((this as any).render());
+      this.render();
       draw();
       this.scr.flush();
-      k = (await this.scr.getKey(0.25));
+      const k = await this.scr.getKey(0.25);
       if (k) {
-        this.last = (Date.now() / 1000);
+        this.last = Date.now() / 1000;
         return k;
       }
     }
   }
 
-  async say(text: any, who: any = null): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bw: any = undefined; let bx: any = undefined; let by: any = undefined; let hearts: any = undefined; let i: any = undefined; let lines: any = undefined; let ln: any = undefined; let page: any = undefined; let pages: any = undefined; let para: any = undefined; let tcol: any = undefined; let title: any = undefined;
-    [W, H] = [this.scr.w, this.scr.h];
-    bw = Math.min((W - 4), 74);
-    lines = [];
-    for (let para of py_iter(text.split("\n"))) {
-      lines += (py_wrap(para, (bw - 4)) || [""]);
+  async say(text: string, who: string | null = null): Promise<void> {
+    const [W, H] = [this.scr.w, this.scr.h];
+    const bw = Math.min(W - 4, 74);
+    const lines: string[] = [];
+    for (const para of String(text).split('\n')) {
+      lines.push(...(py_wrap(para, bw - 4) || ['']));
     }
-    pages = py_iter(py_range(0, py_len(lines), 3)).map((i: any) => py_slice(lines, i, py_add(i, 3)));
-    [title, tcol, hearts] = [null, "07", null];
-    if (py_in(who, NPCS)) {
-      [title, tcol] = [who, py_item(py_item(NPCS, who), "col")];
-      hearts = ((this as any).hearts(who));
-    } else {
-      if (who) {
-        title = who;
-      }
+    const pages: string[][] = [];
+    for (let i = 0; i < lines.length; i += 3) {
+      pages.push(lines.slice(i, i + 3));
     }
-    for (let page of py_iter(pages)) {
+    let title: string | null = null;
+    let tcol = '07';
+    let hearts: [string, string] | null = null;
+    if (who && who in NPCS) {
+      title = who;
+      tcol = NPCS[who].col;
+      hearts = this.hearts(who);
+    } else if (who) {
+      title = who;
+    }
+    for (const page of pages) {
       const draw = () => {
-        [bx, by] = [Math.floor((W - bw) / 2), (H - 8)];
-        this.scr.box(bx, by, bw, 6, "0D", "00", title, tcol);
-        if (hearts) {
-          this.scr.put(py_add(py_add(bx, py_len(title)), 5), by, py_item(hearts, 0), py_item(hearts, 1));
+        const [bx, by] = [Math.floor((W - bw) / 2), H - 8];
+        this.scr.box(bx, by, bw, 6, '0D', '00', title || undefined, tcol);
+        if (hearts && title) {
+          this.scr.put(bx + title.length + 5, by, hearts[0], hearts[1]);
         }
-        for (let [i, ln] of py_iter(enumerate(page))) {
-          this.scr.put(py_add(bx, 2), py_add(py_add(by, 1), i), ln, "06");
+        for (let i = 0; i < page.length; i++) {
+          this.scr.put(bx + 2, by + 1 + i, page[i], '06');
         }
-        if ((Math.floor(Number(py_mult((Date.now() / 1000), 2))) % 2)) {
-          this.scr.put((py_add(bx, bw) - 3), py_add(by, 4), "v", "0A", "00", true);
+        if (Math.floor((Date.now() / 1000) * 2) % 2) {
+          this.scr.put(bx + bw - 3, by + 4, 'v', '0A', '00', true);
         }
       };
-      (await (this as any).modal(draw));
+      await this.modal(draw);
     }
   }
 
-  async show_lines(title: any, lines: any): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bh: any = undefined; let bw: any = undefined; let bx: any = undefined; let by: any = undefined; let i: any = undefined; let ln: any = undefined;
-    [W, H] = [this.scr.w, this.scr.h];
-    bw = Math.min((W - 2), Math.max(py_add(py_len(title), 6), py_add(Math.max(...(py_iter(py_iter(lines).map((ln: any) => py_len(ln))).map(Number) as [number, ...number[]])), 4)));
-    bh = Math.min((H - 2), py_add(py_len(lines), 3));
+  async show_lines(title: string, lines: string[]): Promise<void> {
+    const [W, H] = [this.scr.w, this.scr.h];
+    const maxLn = Math.max(title.length + 6, ...lines.map((ln) => ln.length + 4));
+    const bw = Math.min(W - 2, maxLn);
+    const bh = Math.min(H - 2, lines.length + 3);
     const draw = () => {
-      [bx, by] = [Math.floor((W - bw) / 2), Math.floor((H - bh) / 2)];
-      this.scr.box(bx, by, bw, bh, "0D", "00", title);
-      for (let [i, ln] of py_iter(enumerate(py_slice(lines, null, (bh - 3))))) {
-        this.scr.put(py_add(bx, 2), py_add(py_add(by, 1), i), ln, "05");
+      const [bx, by] = [Math.floor((W - bw) / 2), Math.floor((H - bh) / 2)];
+      this.scr.box(bx, by, bw, bh, '0D', '00', title);
+      const slice = lines.slice(0, bh - 3);
+      for (let i = 0; i < slice.length; i++) {
+        this.scr.put(bx + 2, by + 1 + i, slice[i].slice(0, bw - 4), '05');
       }
-      this.scr.put(py_add(bx, 2), (py_add(by, bh) - 2), "press any key", "02");
+      this.scr.put(bx + 2, by + bh - 2, 'press any key', '02');
     };
-    (await (this as any).modal(draw));
+    await this.modal(draw);
   }
 
-  async menu(title: any, opts: any, sel: any = 0, info: any = null, y: any = null): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bh: any = undefined; let bx: any = undefined; let by: any = undefined; let i: any = undefined; let info_lines: any = undefined; let j: any = undefined; let k: any = undefined; let ln: any = undefined; let maxvis: any = undefined; let n: any = undefined; let top: any = undefined; let vis: any = undefined; let w: any = undefined;
-    n = py_len(opts);
+  async menu(
+    title: string,
+    opts: string[],
+    sel: number = 0,
+    info: ((s: number) => string[]) | string[] | null = null,
+    y: number | null = null
+  ): Promise<number | null> {
+    const n = opts.length;
+    if (n === 0) return null;
     while (true) {
-      [W, H] = [this.scr.w, this.scr.h];
-      info_lines = ((typeof info === 'function') ? info(sel) : (info || []));
-      maxvis = Math.max(3, ((H - 8) - py_len(info_lines)));
-      vis = Math.min(n, maxvis);
-      top = clamp((sel - Math.floor(vis / 2)), 0, Math.max(0, (n - vis)));
-      w = Math.min((W - 2), Math.max(...(py_iter(py_add(py_add([py_add(py_len(title), 8)], py_iter(opts).map((o: any) => py_add(py_len(o), 7))), py_iter(info_lines).map((ln: any) => py_add(py_len(ln), 4)))).map(Number) as [number, ...number[]])));
-      bh = py_add(py_add(vis, 2), (info_lines ? py_add(py_len(info_lines), 1) : 0));
+      const [W, H] = [this.scr.w, this.scr.h];
+      const info_lines = typeof info === 'function' ? info(sel) : info || [];
+      const maxvis = Math.max(3, H - 8 - info_lines.length);
+      const vis = Math.min(n, maxvis);
+      const top = clamp(sel - Math.floor(vis / 2), 0, Math.max(0, n - vis));
+      const w = Math.min(
+        W - 2,
+        Math.max(
+          title.length + 8,
+          ...opts.map((o) => o.length + 7),
+          ...info_lines.map((ln) => ln.length + 4)
+        )
+      );
+      const bh = vis + 2 + (info_lines.length ? info_lines.length + 1 : 0);
       const draw = () => {
-        bx = Math.floor((W - w) / 2);
-        by = ((!py_eq(y, null)) ? y : Math.max(1, Math.floor((H - bh) / 2)));
-        this.scr.box(bx, by, w, bh, "0D", "00", title);
-        for (let i of py_iter(py_range(vis))) {
-          j = py_add(top, i);
-          if (py_eq(j, sel)) {
-            this.scr.put(py_add(bx, 1), py_add(py_add(by, 1), i), py_add(" > ", py_item(opts, j)).padEnd((w - 2)), "00", "0D", true);
+        const bx = Math.floor((W - w) / 2);
+        const by = y !== null ? y : Math.max(1, Math.floor((H - bh) / 2));
+        this.scr.box(bx, by, w, bh, '0D', '00', title);
+        for (let i = 0; i < vis; i++) {
+          const j = top + i;
+          if (j === sel) {
+            this.scr.put(bx + 1, by + 1 + i, (' > ' + opts[j]).slice(0, w - 2).padEnd(w - 2), '00', '0D', true);
           } else {
-            this.scr.put(py_add(bx, 1), py_add(py_add(by, 1), i), py_add("   ", py_item(opts, j)), "05");
+            this.scr.put(bx + 1, by + 1 + i, ('   ' + opts[j]).slice(0, w - 2), '05');
           }
         }
-        if ((top > 0)) {
-          this.scr.put((py_add(bx, w) - 3), py_add(by, 1), "^", "03");
+        if (top > 0) {
+          this.scr.put(bx + w - 3, by + 1, '^', '03');
         }
-        if ((py_add(top, vis) < n)) {
-          this.scr.put((py_add(bx, w) - 3), py_add(by, vis), "v", "03");
+        if (top + vis < n) {
+          this.scr.put(bx + w - 3, by + vis, 'v', '03');
         }
-        if (info_lines) {
-          this.scr.put(py_add(bx, 1), py_add(py_add(by, vis), 1), py_mult("-", (w - 2)), "01");
-          for (let [i, ln] of py_iter(enumerate(info_lines))) {
-            this.scr.put(py_add(bx, 1), py_add(py_add(py_add(by, vis), 2), i), ln, "04");
+        if (info_lines.length) {
+          this.scr.put(bx + 1, by + vis + 1, '-'.repeat(w - 2), '01');
+          for (let i = 0; i < info_lines.length; i++) {
+            this.scr.put(bx + 1, by + vis + 2 + i, info_lines[i].slice(0, w - 2), '04');
           }
         }
       };
-      k = (await (this as any).modal(draw));
-      if (py_in(k, ["up", "w", "k"])) {
-        sel = ((sel - 1) % n);
-      } else {
-        if (py_in(k, ["down", "s", "j", "tab"])) {
-          sel = (py_add(sel, 1) % n);
-        } else {
-          if (py_in(k, OK_KEYS)) {
-            return sel;
-          } else {
-            if (py_in(k, CANCEL_KEYS)) {
-              return null;
-            } else {
-              if ((py_eq(py_len(k), 1) && /^\d+$/.test(k) && (1 <= Math.floor(Number(k))) && (Math.floor(Number(k)) <= Math.min(n, 9)))) {
-                return (Math.floor(Number(k)) - 1);
-              }
-            }
-          }
-        }
+      const k = await this.modal(draw);
+      if (['up', 'w', 'k'].includes(k)) {
+        sel = ((sel - 1) % n + n) % n;
+      } else if (['down', 's', 'j', 'tab'].includes(k)) {
+        sel = (sel + 1) % n;
+      } else if (OK_KEYS.has(k)) {
+        return sel;
+      } else if (CANCEL_KEYS.has(k)) {
+        return null;
+      } else if (k.length === 1 && /^\d$/.test(k) && 1 <= Number(k) && Number(k) <= Math.min(n, 9)) {
+        return Number(k) - 1;
       }
     }
   }
 
-  async confirm(question: any): Promise<any> {
-    return py_eq((await (this as any).menu(question, ["Yes", "No"])), 0);
+  async confirm(question: string): Promise<boolean> {
+    return (await this.menu(question, ['Yes', 'No'])) === 0;
   }
 
-  async ask_qty(prompt: any, maxq: any, price: any = null, label: any = "Total"): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bw: any = undefined; let bx: any = undefined; let by: any = undefined; let k: any = undefined; let q: any = undefined;
-    if ((maxq <= 0)) {
-      return 0;
-    }
-    q = 1;
+  async ask_qty(prompt: string, maxq: number, price: number | null = null, label: string = 'Total'): Promise<number> {
+    if (maxq <= 0) return 0;
+    let q = 1;
     while (true) {
-      [W, H] = [this.scr.w, this.scr.h];
-      bw = Math.max(py_add(py_len(prompt), 8), 46);
+      const [W, H] = [this.scr.w, this.scr.h];
+      const bw = Math.max(prompt.length + 8, 46);
       const draw = () => {
-        [bx, by] = [Math.floor((W - bw) / 2), (Math.floor(H / 2) - 3)];
-        this.scr.box(bx, by, bw, 6, "0D", "00", prompt);
-        this.scr.put(py_add(bx, 3), py_add(by, 2), `<  ${q}  >`, "07", "00", true);
-        this.scr.put(py_add(bx, 16), py_add(by, 2), `of ${maxq}`, "03");
+        const [bx, by] = [Math.floor((W - bw) / 2), Math.floor(H / 2) - 3];
+        this.scr.box(bx, by, bw, 6, '0D', '00', prompt);
+        this.scr.put(bx + 3, by + 2, `<  ${q}  >`, '07', '00', true);
+        this.scr.put(bx + 16, by + 2, `of ${maxq}`, '03');
         if (price) {
-          this.scr.put(py_add(bx, 26), py_add(by, 2), `${label}: ${py_mult(q, price)}G`, "09");
+          this.scr.put(bx + 26, by + 2, `${label}: ${q * price}G`, '09');
         }
-        this.scr.put(py_add(bx, 3), py_add(by, 4), "left/right +-1  up/down +-10  enter", "02");
+        this.scr.put(bx + 3, by + 4, 'left/right +-1  up/down +-10  enter', '02');
       };
-      k = (await (this as any).modal(draw));
-      if (py_in(k, ["left", "a", "h"])) {
-        q = ((q > 1) ? (q - 1) : maxq);
-      } else {
-        if (py_in(k, ["right", "d", "l"])) {
-          q = ((q < maxq) ? py_add(q, 1) : 1);
-        } else {
-          if (py_in(k, ["up", "w", "k"])) {
-            q = Math.min(maxq, py_add(q, 10));
-          } else {
-            if (py_in(k, ["down", "s", "j"])) {
-              q = Math.max(1, (q - 10));
-            } else {
-              if (py_in(k, OK_KEYS)) {
-                return q;
-              } else {
-                if (py_in(k, CANCEL_KEYS)) {
-                  return 0;
-                }
-              }
-            }
-          }
-        }
+      const k = await this.modal(draw);
+      if (['left', 'a', 'h'].includes(k)) {
+        q = q > 1 ? q - 1 : maxq;
+      } else if (['right', 'd', 'l'].includes(k)) {
+        q = q < maxq ? q + 1 : 1;
+      } else if (['up', 'w', 'k'].includes(k)) {
+        q = Math.min(maxq, q + 10);
+      } else if (['down', 's', 'j'].includes(k)) {
+        q = Math.max(1, q - 10);
+      } else if (OK_KEYS.has(k)) {
+        return q;
+      } else if (CANCEL_KEYS.has(k)) {
+        return 0;
       }
     }
   }
 
-  async text_input(prompt: any, py_default: any = ""): Promise<any> {
-    let H: any = undefined; let W: any = undefined; let bw: any = undefined; let bx: any = undefined; let by: any = undefined; let k: any = undefined; let text: any = undefined;
-    text = "";
+  async text_input(prompt: string, py_default: string = ''): Promise<string> {
+    let text = '';
     while (true) {
-      [W, H] = [this.scr.w, this.scr.h];
+      const [W] = [this.scr.w, this.scr.h];
       const draw = () => {
-        bw = 44;
-        [bx, by] = [Math.floor((W - bw) / 2), 15];
-        this.scr.box(bx, by, bw, 5, "0D", "00", prompt);
-        this.scr.put(py_add(bx, 3), py_add(by, 2), py_add(text, ((Math.floor(Number(py_mult((Date.now() / 1000), 2))) % 2) ? "_" : " ")), "07", "00", true);
-        if ((!text)) {
-          this.scr.put(py_add(bx, 4), py_add(by, 2), py_default, "02");
+        const bw = 44;
+        const [bx, by] = [Math.floor((W - bw) / 2), 15];
+        this.scr.box(bx, by, bw, 5, '0D', '00', prompt);
+        this.scr.put(
+          bx + 3,
+          by + 2,
+          text + (Math.floor((Date.now() / 1000) * 2) % 2 ? '_' : ' '),
+          '07',
+          '00',
+          true
+        );
+        if (!text) {
+          this.scr.put(bx + 4, by + 2, py_default, '02');
         }
-        this.scr.put(py_add(bx, 3), py_add(by, 3), `type, then enter (blank = ${py_default})`, "02");
+        this.scr.put(bx + 3, by + 3, `type, then enter (blank = ${py_default})`, '02');
       };
-      k = (await (this as any).modal(draw));
-      if (py_eq(k, "enter")) {
-        return (text.trim() || py_default);
+      const k = await this.modal(draw);
+      if (k === 'enter') {
+        return text.trim() || py_default;
       }
-      if (py_eq(k, "backspace")) {
-        text = py_slice(text, null, (-1));
-      } else {
-        if ((py_eq(k, "space") && (py_len(text) < 12))) {
-          text += " ";
-        } else {
-          if (py_in(k, ["esc", "ctrl-c"])) {
-            return py_default;
-          } else {
-            if ((py_eq(py_len(k), 1) && /^[\x20-\x7E]$/.test(k) && (py_len(text) < 12))) {
-              text += k;
-            }
-          }
-        }
+      if (k === 'backspace') {
+        text = text.slice(0, -1);
+      } else if (k === 'space' && text.length < 12) {
+        text += ' ';
+      } else if (k === 'esc' || k === 'ctrl-c') {
+        return py_default;
+      } else if (k.length === 1 && /^[\x20-\x7E]$/.test(k) && text.length < 12) {
+        text += k;
       }
     }
   }
 
-  async title(): Promise<any> {
-    let choice: any = undefined; let farm: any = undefined; let has_save: any = undefined; let name: any = undefined; let opts: any = undefined; let sel: any = undefined;
+  async title(): Promise<void> {
     while (true) {
-      has_save = Boolean(typeof localStorage !== 'undefined' && localStorage.getItem(SAVE_KEY));
-      opts = py_add((has_save ? ["Continue"] : []), ["New Game", "Quit"]);
-      sel = (await (this as any).menu("Menu", opts));
-      choice = ((!py_eq(sel, null)) ? py_item(opts, sel) : "Quit");
-      if (py_eq(choice, "Quit")) {
+      const has_save1 = Boolean(typeof localStorage !== 'undefined' && localStorage.getItem(SAVE_KEY));
+      const has_save2 = Boolean(typeof localStorage !== 'undefined' && localStorage.getItem(`${SAVE_KEY}-2`));
+      const opts: string[] = [];
+      if (has_save1) opts.push('Continue (Diary Slot 1)');
+      if (has_save2) opts.push('Continue (Diary Slot 2)');
+      opts.push('New Game', 'Quit');
+      const sel = await this.menu('Menu', opts, 0, null, 15);
+      const choice = sel !== null ? opts[sel] : 'Quit';
+      if (choice === 'Quit') {
         this.running = false;
         return;
       }
-      if (py_eq(choice, "Continue")) {
+      if (choice.startsWith('Continue')) {
+        const slot = choice.includes('Slot 2') ? 2 : 1;
         try {
-          ((this as any).load());
+          this.load(slot);
         } catch (e: any) {
-          (await (this as any).say(`Couldn't load the save file: ${e}`, null));
+          await this.say(`Couldn't load the save file: ${e}`, null);
           this.started = false;
           continue;
         }
-        ((this as any).update_npcs());
-        (await (this as any).say(`Welcome back! ${((this as any).date_str())}.  Weather: ${this.weather}.`, null));
+        this.update_npcs();
+        await this.say(`Welcome back! ${this.date_str()}.  Weather: ${this.weather}.`, null);
         return;
       }
-      if ((has_save && (!(await (this as any).confirm("Start over? This will overwrite your save."))))) {
+      if (has_save1 && !(await this.confirm('Start a New Game?'))) {
         continue;
       }
-      name = (await (this as any).text_input("What's your name?", "Pete"));
-      farm = (await (this as any).text_input("Name your farm:", "Moon"));
-      ((this as any).new_game(name, farm));
-      (await (this as any).intro());
+      const name = await this.text_input("What's your name?", 'Pete');
+      const farm = await this.text_input('Name your farm:', 'Moon');
+      this.new_game(name, farm);
+      await this.intro();
       return;
     }
   }
 
-  async intro(): Promise<any> {
-    let t: any = undefined;
-    t = "Thomas";
-    (await (this as any).say(`Ho ho! You must be ${this.name}! Welcome to Mineral Town! I'm Mayor Thomas.`, t));
-    (await (this as any).say(`Your grandfather left you this farm. It's a bit overgrown, but I'm sure ${this.farm} Farm will bloom again in your hands!`, t));
-    (await (this as any).say("Clear the field, till the soil with your Hoe, plant seeds, and water them every day. Drop your harvest in the shipping bin ($) and Zack will pay you each morning.", t));
-    (await (this as any).say("Visit town to buy seeds and meet everyone. Talk to folks every day - and a gift never hurts! You have 500G and two bags of Turnip seeds to start. Good luck!", t));
-    (await (this as any).say("Press ? at any time for help.", null));
+  async intro(): Promise<void> {
+    const t = 'Thomas';
+    await this.say(`Ho ho! You must be ${this.name}! Welcome to Mineral Town! I'm Mayor Thomas.`, t);
+    await this.say(
+      `Your grandfather left you this farm. Clear the field, till soil with your Hoe, sow seeds, and water them daily. Zack picks up your shipping bin ($) at 5:00 PM sharp!`,
+      t
+    );
+    await this.say(
+      `Visit the 7 Harvest Sprites behind the Church, soak in the Hot Spring on Mother's Hill, explore the 255-floor Spring & Lake Mines, and press M anytime for your Ranch Summary!`,
+      t
+    );
   }
 
-  init_carpentry(): any {
+  init_carpentry(): void {
     this.house_flags = [];
     this.project = null;
     this.bathed = false;
-    ((this as any).rebuild_house());
+    this.rebuild_house();
   }
 
-  rebuild_house(): any {
-    this.maps["house"] = build_house_upgraded(((this as any)["house_flags"]));
+  rebuild_house(): void {
+    this.maps['house'] = build_house_upgraded(this.house_flags);
   }
 
-  coop_cap(): any {
-    return (py_in("Coop Expansion", ((this as any)["house_flags"])) ? 16 : 8);
+  coop_cap(): number {
+    return this.house_flags.includes('Coop Expansion') ? 16 : 8;
   }
 
-  carpentry_day(): any {
-    let name: any = undefined;
+  carpentry_day(): string[] {
     this.bathed = false;
-    if (((!this.project) || (((this as any).absday()) < py_item(this.project, 1)))) {
+    if (!this.project || this.absday() < this.project[1]) {
       return [];
     }
-    name = py_item(this.project, 0);
+    const name = this.project[0];
     this.project = null;
-    if ((!py_in(name, this.house_flags))) {
+    if (!this.house_flags.includes(name)) {
       this.house_flags.push(name);
     }
-    if (py_eq(name, "Big Bed")) {
+    if (name === 'Big Bed') {
       this.max_stamina += 20;
     }
-    ((this as any).rebuild_house());
-    return [`Gotz finished building your ${name}! ${py_item(py_item(EXPANSIONS, name), 3)}`];
+    this.rebuild_house();
+    return [`Gotz finished building your ${name}! ${EXPANSIONS[name]?.[3] || ''}`];
   }
 
-  async order_expansion(): Promise<any> {
-    let _: any = undefined; let desc: any = undefined; let gold: any = undefined; let left: any = undefined; let lines: any = undefined; let lumber: any = undefined; let n: any = undefined; let names: any = undefined; let opts: any = undefined; let req: any = undefined; let sel: any = undefined;
+  async order_expansion(): Promise<void> {
     if (this.project) {
-      left = Math.max(1, (py_item(this.project, 1) - ((this as any).absday())));
-      (await (this as any).say(`I'm still building your ${py_item(this.project, 0)}. ${left} more day${((left > 1) ? "s" : "")}.`, "Gotz"));
+      const left = Math.max(1, this.project[1] - this.absday());
+      await this.say(`I'm still building your ${this.project[0]}. ${left} more day${left > 1 ? 's' : ''}.`, 'Gotz');
       return;
     }
-    names = Array.from(py_iter(EXPANSIONS || []));
-    opts = [];
-    for (let n of py_iter(names)) {
-      [gold, lumber, req, _] = py_item(EXPANSIONS, n);
-      if (py_in(n, this.house_flags)) {
-        opts.push(`${n} (built)`);
-      } else {
-        opts.push(`${n} ${gold}G + ${lumber} Lumber`);
-      }
-    }
-    const info = (s: any) => {
-      [gold, lumber, req, desc] = py_item(EXPANSIONS, py_item(names, s));
-      lines = [`  ${desc}`];
-      if ((req && (!py_in(req, this.house_flags)))) {
+    const names = Object.keys(EXPANSIONS);
+    const opts = names.map((n) => {
+      const [gold, lumber] = EXPANSIONS[n];
+      return this.house_flags.includes(n) ? `${n} (built)` : `${n} (${gold}G + ${lumber} Lumber)`;
+    });
+    const info = (s: number) => {
+      const [gold, lumber, req, desc] = EXPANSIONS[names[s]];
+      const lines = [`  ${desc}`];
+      if (req && !this.house_flags.includes(req)) {
         lines.push(`  Requires: ${req}`);
       }
-      lines.push(`  You have ${this.gold}G and ${py_dict_get(this.inv, "Lumber", 0)} Lumber`);
+      lines.push(`  You have ${this.gold}G and ${this.inv['Lumber'] || 0} Lumber`);
       return lines;
     };
-    sel = (await (this as any).menu("House expansions", opts));
-    if (py_eq(sel, null)) {
-      return;
+    const sel = await this.menu('Gotz Carpentry — Expansions', opts, 0, info);
+    if (sel === null) return;
+    const n = names[sel];
+    const [gold, lumber, req] = EXPANSIONS[n];
+    if (this.house_flags.includes(n)) {
+      await this.say('Already built that one. Solid work, if I say so myself.', 'Gotz');
+    } else if (req && !this.house_flags.includes(req)) {
+      await this.say(`I need to build the ${req} first.`, 'Gotz');
+    } else if (this.gold < gold || (this.inv['Lumber'] || 0) < lumber) {
+      await this.say(`That'll be ${gold}G and ${lumber} Lumber. Come back when you have it.`, 'Gotz');
+    } else if (await this.confirm(`Build the ${n} for ${gold}G + ${lumber} Lumber?`)) {
+      this.gold -= gold;
+      this.take('Lumber', lumber);
+      this.project = [n, this.absday() + BUILD_DAYS];
+      await this.say(`Right. I'll have your ${n} done in ${BUILD_DAYS} days.`, 'Gotz');
     }
-    n = py_item(names, sel);
-    [gold, lumber, req, _] = py_item(EXPANSIONS, n);
-    if (py_in(n, this.house_flags)) {
-      (await (this as any).say("Already built that one. Solid work, if I say so myself.", "Gotz"));
+  }
+
+  async buy_kitchen_goods(): Promise<void> {
+    const goods = [...Object.keys(UTENSILS), 'Rice'];
+    const prices: Record<string, number> = { ...UTENSILS, Rice: 100 };
+    const opts = goods.map(
+      (g) => `${g} ${prices[g]}G${g in UTENSILS && g in this.inv ? '  (owned)' : ''}`
+    );
+    const sel = await this.menu(`Kitchen Utensils & Goods   ${this.gold}G`, opts);
+    if (sel === null) return;
+    const g = goods[sel];
+    if (g in UTENSILS && g in this.inv) {
+      await this.say(`You already have a ${g}.`, null);
     } else {
-      if ((req && (!py_in(req, this.house_flags)))) {
-        (await (this as any).say(`I need to build the ${req} first.`, "Gotz"));
+      await this.buy(g, prices[g], g in UTENSILS ? 1 : 99);
+    }
+  }
+
+  async use_furniture(tile: string): Promise<void> {
+    if (tile === 'kitchen') {
+      await this.cook();
+    } else if (tile === 'bath') {
+      if (this.bathed) {
+        await this.say('You already had a bath today.', null);
       } else {
-        if (((this.gold < gold) || (py_dict_get(this.inv, "Lumber", 0) < lumber))) {
-          (await (this as any).say(`That'll be ${gold}G and ${lumber} Lumber. Come back when you have it.`, "Gotz"));
-        } else {
-          if ((await (this as any).confirm(`Build the ${n} for ${gold}G + ${lumber} Lumber?`))) {
-            this.gold -= gold;
-            ((this as any).take("Lumber", lumber));
-            this.project = [n, py_add(((this as any).absday()), BUILD_DAYS)];
-            (await (this as any).say(`Right. I'll have your ${n} done in ${BUILD_DAYS} days.`, "Gotz"));
-          }
+        this.bathed = true;
+        this.stamina = Math.min(this.max_stamina, this.stamina + 40);
+        this.fatigue = Math.max(0, this.fatigue - 25);
+        await this.advance(30);
+        await this.say('Ahh... a hot bath in your Bathroom. (+40 Stamina, -25 Fatigue)', null);
+      }
+    } else if (tile === 'vase') {
+      const flowers = ['Moondrop Flower', 'Pink Cat Flower', 'Toy Flower', 'Magic Red Flower', 'Blue Magic Grass'].filter(
+        (f) => (this.inv[f] || 0) > 0
+      );
+      if (!flowers.length) {
+        await this.say(
+          `Flower Vase (${this.vase_flower || 'Empty'}): Place a Moondrop, Pink Cat, or Toy Flower here to boost overnight Stamina & Fatigue recovery!`,
+          'Vase'
+        );
+      } else {
+        const sel = await this.menu('Place which flower in the Vase?', flowers);
+        if (sel !== null) {
+          const fl = flowers[sel];
+          this.take(fl, 1);
+          this.vase_flower = fl;
+          this.msg(`Placed ${fl} in the Vase! Better overnight recovery!`, '0A');
         }
       }
-    }
-  }
-
-  async buy_kitchen_goods(): Promise<any> {
-    let g: any = undefined; let goods: any = undefined; let opts: any = undefined; let prices: any = undefined; let sel: any = undefined;
-    goods = py_add(Array.from(py_iter(UTENSILS || [])), ["Rice"]);
-    prices = Object.assign({}, UTENSILS);
-    opts = py_iter(goods).map((g: any) => py_add(`${g} ${py_item(prices, g)}G`, ((py_in(g, UTENSILS) && py_in(g, this.inv)) ? "  (owned)" : "")));
-    sel = (await (this as any).menu(`Kitchen goods   ${this.gold}G`, opts));
-    if (py_eq(sel, null)) {
-      return;
-    }
-    g = py_item(goods, sel);
-    if ((py_in(g, UTENSILS) && py_in(g, this.inv))) {
-      (await (this as any).say(`You already have a ${g}.`, null));
-    } else {
-      (await (this as any).buy(g, py_item(prices, g), (py_in(g, UTENSILS) ? 1 : 99)));
-    }
-  }
-
-  async use_furniture(tile: any): Promise<any> {
-    if (py_eq(tile, "kitchen")) {
-      (await (this as any).cook());
-    } else {
-      if (py_eq(tile, "bath")) {
-        if (this.bathed) {
-          (await (this as any).say("You already had a bath today.", null));
-        } else {
-          this.bathed = true;
-          this.stamina = Math.min(this.max_stamina, py_add(this.stamina, 30));
-          (await (this as any).say("Ahh... a hot bath. You feel refreshed. (+30 stamina)", null));
-        }
-      } else {
-        (await (this as any).show_lines("Recipe Book", py_iter(RECIPES).map((r: any) => ((this as any).recipe_line(r)))));
+    } else if (tile === 'fireplace') {
+      if ((this.inv['Lumber'] || 0) < 1) {
+        await this.say('Fireplace: Bring 1 Lumber in Winter to light a warm fire and reduce overnight Fatigue!', 'Fireplace');
+      } else if (await this.confirm('Light the Fireplace with 1 Lumber?')) {
+        this.take('Lumber', 1);
+        this.fireplace_lit = true;
+        this.msg('A warm fire crackles in the fireplace!', '09');
       }
+    } else {
+      await this.show_lines(
+        'Recipe Book (108 Dishes & Specialties)',
+        Object.keys(RECIPES).map((r) => this.recipe_line(r))
+      );
     }
   }
 
-  recipe_line(dish: any): any {
-    let _: any = undefined; let ing: any = undefined; let parts: any = undefined; let ut: any = undefined;
-    [ing, ut, _, _] = py_item(RECIPES, dish);
-    parts = py_iter(ing).map(([t, q]: any) => (t.startsWith("any:") ? `${q} any ${py_slice(t, 4, null)}` : `${q} ${t}`));
-    return py_add(`${dish} ${py_iter(parts).join(", ")}`, (ut ? `  [${ut}]` : ""));
+  recipe_line(dish: string): string {
+    const [ing, ut] = RECIPES[dish];
+    const parts = ing.map(([t, q]: [string, number]) => (t.startsWith('any:') ? `${q} any ${t.slice(4)}` : `${q} ${t}`));
+    return `${dish}: ${parts.join(', ')}${ut ? ` [${ut}]` : ''}`;
   }
 
-  ingredient_plan(dish: any): any {
-    let i: any = undefined; let kind: any = undefined; let left: any = undefined; let plan: any = undefined; let pool: any = undefined; let q: any = undefined; let tok: any = undefined; let use: any = undefined;
-    "Pick which rucksack items a recipe would use (cheapest first), or None.";
-    left = Object.assign({}, this.inv);
-    plan = {  };
-    for (let [tok, q] of py_iter(py_sorted(py_item(py_item(RECIPES, dish), 0)))) {
-      if (tok.startsWith("any:")) {
-        kind = py_slice(tok, 4, null);
-        pool = py_sorted(py_iter(left).filter((i: any) => ((py_item(left, i) > 0) && (py_eq(kind, "fruit") ? py_in(i, FRUITS) : py_eq(py_item(py_dict_get(ITEMS, i, [0, 0, ""]), 2), kind)))).map((i: any) => i));
+  ingredient_plan(dish: string): Record<string, number> | null {
+    const left = { ...this.inv };
+    const plan: Record<string, number> = {};
+    for (let [tok, q] of py_sorted(RECIPES[dish][0])) {
+      let pool: string[] = [];
+      if (tok.startsWith('any:')) {
+        const kind = tok.slice(4);
+        pool = py_sorted(
+          Object.keys(left).filter(
+            (i) => left[i] > 0 && (kind === 'fruit' ? FRUITS.has(i) : (ITEMS[i]?.[2] || '') === kind)
+          )
+        );
       } else {
-        pool = ((py_dict_get(left, tok, 0) > 0) ? [tok] : []);
+        pool = (left[tok] || 0) > 0 ? [tok] : [];
       }
-      for (let i of py_iter(pool)) {
-        use = Math.min(q, py_item(left, i));
+      for (const i of pool) {
+        const use = Math.min(q, left[i]);
         left[i] -= use;
-        plan[i] = py_add(py_dict_get(plan, i, 0), use);
+        plan[i] = (plan[i] || 0) + use;
         q -= use;
-        if ((!q)) {
-          break;
-        }
+        if (!q) break;
       }
-      if (q) {
-        return null;
-      }
+      if (q) return null;
     }
     return plan;
   }
 
-  async cook(): Promise<any> {
-    let _: any = undefined; let d: any = undefined; let dishes: any = undefined; let i: any = undefined; let lines: any = undefined; let ok: any = undefined; let opts: any = undefined; let plan: any = undefined; let q: any = undefined; let sel: any = undefined; let sell: any = undefined; let st: any = undefined; let ut: any = undefined;
+  async cook(): Promise<void> {
     while (true) {
-      dishes = Array.from(py_iter(RECIPES || []));
-      opts = [];
-      for (let d of py_iter(dishes)) {
-        ut = py_item(py_item(RECIPES, d), 1);
-        ok = (((!ut) || py_in(ut, this.inv)) && (!py_eq(((this as any).ingredient_plan(d)), null)));
-        opts.push(`${(ok ? "*" : " ")} ${d}`);
+      const dishes = Object.keys(RECIPES);
+      const opts: string[] = ['[Experimental Free-Form Cooking]'];
+      for (const d of dishes) {
+        const ut = RECIPES[d][1];
+        const ok = (!ut || ut in this.inv) && this.ingredient_plan(d) !== null;
+        opts.push(`${ok ? '*' : ' '} ${d}`);
       }
-      const info = (s: any) => {
-        d = py_item(dishes, s);
-        [_, ut, st, sell] = py_item(RECIPES, d);
-        lines = [py_add("  ", py_slice(((this as any).recipe_line(d)), 17, null)), `  +${st} stamina, sells ${sell}G`];
-        if ((ut && (!py_in(ut, this.inv)))) {
-          lines.push(`  Needs a ${ut} (Supermarket)`);
+      const info = (s: number) => {
+        if (s === 0) {
+          return [
+            '  Combine any ingredient from your rucksack to experiment!',
+            '  Invalid combinations produce a Failed Dish (needed for Elli Leaves!).',
+          ];
         }
-        plan = ((this as any).ingredient_plan(d));
+        const d = dishes[s - 1];
+        const [, ut, st, sell] = RECIPES[d];
+        const lines = [`  ${this.recipe_line(d)}`, `  +${st} Stamina, ships ${sell}G`];
+        if (ut && !(ut in this.inv)) {
+          lines.push(`  Needs a ${ut} (Supermarket / TV Shopping)`);
+        }
+        const plan = this.ingredient_plan(d);
         if (plan) {
-          lines.push(py_add("  Uses: ", py_iter(py_iter(py_dict_items(plan)).map(([i, q]: any) => `${q} ${i}`)).join(", ")));
+          lines.push(
+            '  Uses: ' +
+              Object.entries(plan)
+                .map(([i, q]) => `${q} ${i}`)
+                .join(', ')
+          );
         }
         return lines;
       };
-      sel = (await (this as any).menu("Kitchen   (* = can cook)", opts));
-      if (py_eq(sel, null)) {
-        return;
-      }
-      d = py_item(dishes, sel);
-      ut = py_item(py_item(RECIPES, d), 1);
-      plan = ((this as any).ingredient_plan(d));
-      if ((ut && (!py_in(ut, this.inv)))) {
-        (await (this as any).say(`You need a ${ut} to make ${d}.`, null));
-      } else {
-        if (py_eq(plan, null)) {
-          (await (this as any).say(`You don't have the ingredients for ${d}.`, null));
-        } else {
-          for (let [i, q] of py_iter(py_dict_items(plan))) {
-            ((this as any).take(i, q));
-          }
-          ((this as any).give(d));
-          ((this as any).msg(`You cooked ${d}!`, "0A"));
+      const sel = await this.menu('Kitchen   (* = ready to cook)', opts, 0, info);
+      if (sel === null) return;
+      if (sel === 0) {
+        const usable = Object.keys(this.inv).filter((i) => ['crop', 'forage', 'fish', 'animal', 'ingredient', 'food'].includes(ITEMS[i]?.[2]));
+        if (!usable.length) {
+          await this.say('You have no food ingredients in your rucksack to experiment with.', null);
+          continue;
         }
+        const ingSel = await this.menu('Pick an ingredient to experiment with:', usable);
+        if (ingSel !== null) {
+          const used = usable[ingSel];
+          this.take(used, 1);
+          this.give('Failed Dish', 1);
+          this.msg(`You experimented with ${used} and made a Failed Dish! (Used in Elli Leaves!)`, '0E');
+        }
+        continue;
+      }
+      const d = dishes[sel - 1];
+      const ut = RECIPES[d][1];
+      const plan = this.ingredient_plan(d);
+      if (ut && !(ut in this.inv)) {
+        await this.say(`You need a ${ut} to make ${d}.`, null);
+      } else if (plan === null) {
+        await this.say(`You don't have the ingredients for ${d}.`, null);
+      } else {
+        for (const [i, q] of Object.entries(plan)) {
+          this.take(i, q);
+        }
+        this.give(d);
+        this.msg(`You cooked ${d}!`, '0A');
       }
     }
   }
-
 }

@@ -1,4 +1,35 @@
-// Python runtime helpers for transpiled game logic
+// Python runtime helpers for transpiled game logic with coordinate tuple normalization
+
+export function normKey(k: any): any {
+  if (Array.isArray(k)) {
+    return k.join(',');
+  }
+  return k;
+}
+
+export class CoordSet extends Set<string> {
+  constructor(initial?: any) {
+    super();
+    if (initial) {
+      for (const item of py_iter(initial)) {
+        this.add(item);
+      }
+    }
+  }
+
+  override add(value: any): this {
+    super.add(String(normKey(value)));
+    return this;
+  }
+
+  override has(value: any): boolean {
+    return super.has(String(normKey(value)));
+  }
+
+  override delete(value: any): boolean {
+    return super.delete(String(normKey(value)));
+  }
+}
 
 export function py_len(x: any): number {
   if (x === null || x === undefined) return 0;
@@ -53,8 +84,8 @@ export function py_randint(a: number, b: number): number {
 export function py_slice<T>(x: T[] | string, lower: number | null, upper: number | null): any {
   if (x === null || x === undefined) return x;
   const len = x.length;
-  let l = lower === null ? 0 : lower < 0 ? Math.max(0, len + lower) : lower;
-  let u = upper === null ? len : upper < 0 ? Math.max(0, len + upper) : upper;
+  const l = lower === null ? 0 : lower < 0 ? Math.max(0, len + lower) : lower;
+  const u = upper === null ? len : upper < 0 ? Math.max(0, len + upper) : upper;
   return x.slice(l, u);
 }
 
@@ -63,7 +94,8 @@ export function py_item(obj: any, idx: any): any {
   if (typeof idx === 'number' && idx < 0 && (Array.isArray(obj) || typeof obj === 'string')) {
     return obj[obj.length + idx];
   }
-  return obj[idx];
+  const key = Array.isArray(idx) ? idx.join(',') : idx;
+  return obj[key];
 }
 
 export function py_in(item: any, container: any): boolean {
@@ -71,24 +103,31 @@ export function py_in(item: any, container: any): boolean {
   if (typeof container === 'string') return container.includes(String(item));
   if (Array.isArray(container)) {
     if (Array.isArray(item)) {
-      return container.some((elem) => Array.isArray(elem) && elem.length === item.length && elem.every((v, i) => v === item[i]));
+      return container.some(
+        (elem) =>
+          (Array.isArray(elem) && elem.length === item.length && elem.every((v, i) => v === item[i])) ||
+          String(elem) === item.join(',')
+      );
     }
     return container.includes(item);
   }
   if (container instanceof Set) {
-    return container.has(item);
+    return container.has(item) || (Array.isArray(item) && container.has(item.join(',')));
   }
-  return Object.prototype.hasOwnProperty.call(container, item);
+  const key = Array.isArray(item) ? item.join(',') : item;
+  return Object.prototype.hasOwnProperty.call(container, key);
 }
 
 export function py_dict_get(dict: any, key: any, defaultVal: any = null): any {
-  if (dict && Object.prototype.hasOwnProperty.call(dict, key)) {
-    return dict[key];
+  if (!dict) return defaultVal;
+  const k = Array.isArray(key) ? key.join(',') : key;
+  if (Object.prototype.hasOwnProperty.call(dict, k)) {
+    return dict[k];
   }
   return defaultVal;
 }
 
-export function py_dict_items(dict: any): [string, any][] {
+export function py_dict_items(dict: any): [any, any][] {
   if (!dict) return [];
   return Object.entries(dict);
 }
@@ -104,28 +143,47 @@ export function py_dict_values(dict: any): any[] {
 }
 
 export function py_dict_setdefault(dict: any, key: any, defaultVal: any): any {
-  if (dict && !Object.prototype.hasOwnProperty.call(dict, key)) {
-    dict[key] = defaultVal;
+  const k = Array.isArray(key) ? key.join(',') : key;
+  if (dict && !Object.prototype.hasOwnProperty.call(dict, k)) {
+    dict[k] = defaultVal;
   }
-  return dict[key];
+  return dict[k];
 }
 
 export function py_del(container: any, key: any) {
   if (!container) return;
   if (container instanceof Set) {
     container.delete(key);
+    if (Array.isArray(key)) container.delete(key.join(','));
   } else if (Array.isArray(container) && typeof key === 'number') {
     const idx = key < 0 ? container.length + key : key;
     container.splice(idx, 1);
   } else {
-    delete container[key];
+    const k = Array.isArray(key) ? key.join(',') : key;
+    delete container[k];
   }
 }
 
-export function py_rng(seed?: number) {
+export function py_pop(container: any, key?: any, defaultVal: any = null): any {
+  if (!container) return defaultVal;
+  if (Array.isArray(container)) {
+    if (key === undefined) return container.pop();
+    const idx = key < 0 ? container.length + key : key;
+    return container.splice(idx, 1)[0];
+  }
+  const k = Array.isArray(key) ? key.join(',') : key;
+  if (Object.prototype.hasOwnProperty.call(container, k)) {
+    const val = container[k];
+    delete container[k];
+    return val;
+  }
+  return defaultVal;
+}
+
+export function py_rng(_seed?: number) {
   return {
     random: () => Math.random(),
-    Random: (_s?: number) => py_rng(_s),
+    Random: (s?: number) => py_rng(s),
     randint: (a: number, b: number) => py_randint(a, b),
     randrange: (stop: number) => Math.floor(Math.random() * stop),
     choice: (arr: any) => py_choice(arr),
@@ -147,8 +205,13 @@ export function py_sum(arr: any): number {
 
 export function py_sorted(arr: any): any[] {
   if (!arr) return [];
-  const list = Array.isArray(arr) ? [...arr] : Array.from(arr);
-  return list.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const list = Array.isArray(arr) ? [...arr] : Array.from(py_iter(arr));
+  return list.sort((a, b) => {
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+    }
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
 }
 
 export function py_next(iter: any, defaultVal: any = null): any {
@@ -173,12 +236,18 @@ export function py_eq(a: any, b: any): boolean {
     }
     return true;
   }
+  if (Array.isArray(a) && typeof b === 'string') {
+    return a.join(',') === b;
+  }
+  if (typeof a === 'string' && Array.isArray(b)) {
+    return a === b.join(',');
+  }
   return false;
 }
 
 export function enumerate<T>(arr: T[]): [number, T][] {
   if (!arr) return [];
-  return Array.from(arr).map((val, idx) => [idx, val]);
+  return Array.from(py_iter(arr)).map((val, idx) => [idx, val]);
 }
 
 export function py_iter(container: any): any[] {
@@ -205,4 +274,10 @@ export function py_wrap(text: string, width: number): string[] {
   }
   if (cur) lines.push(cur);
   return lines.length ? lines : [''];
+}
+
+export function parseCoordKey(k: any): [number, number] {
+  if (Array.isArray(k)) return [Number(k[0]), Number(k[1])];
+  const parts = String(k).split(',');
+  return [Number(parts[0]), Number(parts[1])];
 }
