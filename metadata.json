@@ -1,0 +1,6 @@
+{
+  "name": "HRVSTMN",
+  "description": "An ASCII tribute to Harvest Moon: Friends of Mineral Town drawn in the base16 Isotope Dark palette.",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

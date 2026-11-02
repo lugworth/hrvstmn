@@ -1,36 +1,27 @@
-# HRVSTMN
+# HRVSTMN (Next.js Edition)
 
-An ASCII tribute to *Harvest Moon: Friends of Mineral Town*, drawn in the
-base16 Isotope Dark palette. One Python file (`hrvstmn.py`, standard library
-only) runs in both a terminal and a browser.
+An ASCII tribute to *Harvest Moon: Friends of Mineral Town*, rendered in the base16 Isotope Dark palette and rewritten as a high-performance **Next.js 15+ (App Router)** web application with React 19 and HTML5 Canvas.
 
-## Terminal
+## Features
 
+- **Native Web Performance**: Rebuilt with pure TypeScript running directly in the browser—no WebAssembly/Pyodide download overhead, and no SharedArrayBuffer cross-origin isolation restrictions.
+- **Complete Harvest Moon Gameplay**:
+  - Full crop cycle: tilling, planting, watering, and harvesting 15 seasonal crops.
+  - Animal husbandry: barns & coops with chickens, cows, and sheep (feeding, petting, brushing, milking, shearing).
+  - Town & villagers: 18 NPCs with daily schedules, dialogue, heart levels, gift preferences, festivals, and marriage.
+  - Mountain & Mines: forage wild herbs, bamboo shoots, mushrooms, and delve through 10 mine floors for ores and precious gems.
+  - House expansions: carpentry upgrades (kitchen, extension, bathroom, big bed, coop expansion) and cooking with utensils and recipes.
+  - Seasonal festivals: New Year's Day, Goddess Festival, Chicken Sumo, Egg Hunt, Fireworks, Harvest Festival, and more.
+- **Controls**:
+  - Keyboard: Arrow keys / WASD to move, Space / Z to use tool, X / E / Enter to interact, Tab / Shift+Tab to switch tools, I for rucksack, Esc for menu, ? for help.
+  - Touch: Full on-screen D-Pad (with tap-or-hold repeat) and action buttons for mobile & tablet gameplay.
+- **Auto-Save**: Farm progress, crops, animals, and relationships persist in your browser's local storage.
+
+## Development
+
+```bash
+npm install
+npm run dev
 ```
-python3 hrvstmn.py            # truecolor terminal, 80x24 or larger
-python3 hrvstmn.py --256      # 256-color fallback
-python3 hrvstmn.py --clock 3  # real seconds per 10 game minutes (default 6)
-```
 
-Saves go to `~/.local/share/hrvstmn/save.json` (or `$XDG_DATA_HOME`).
-
-## Browser
-
-```
-python3 web/serve.py          # then open http://localhost:8000/web/
-```
-
-The web build runs the same `hrvstmn.py` under [Pyodide](https://pyodide.org)
-inside a Web Worker, so game changes need no web-side work. `web/webscreen.py`
-replaces the terminal screen: it posts frame diffs to the page (`web/main.js`
-draws them on a canvas) and reads keys from a `SharedArrayBuffer`, so the
-game's blocking input loops work unchanged.
-
-- `SharedArrayBuffer` needs cross-origin isolation. `web/serve.py` sends the
-  COOP/COEP headers. On static hosts that can't set headers, such as GitHub
-  Pages, `web/coi-serviceworker.js` adds them (the page reloads itself once on
-  first visit). Publish the repo root so that `web/` can fetch `../hrvstmn.py`.
-- Saves are stored in the browser's `localStorage`.
-- Touch devices get an on-screen d-pad and action buttons.
-- Pyodide loads from jsDelivr (`v0.26.4`) on first visit, about 10 MB.
-- Opening `index.html` straight from disk (`file://`) won't work; serve it.
+Runs on [http://0.0.0.0:3000](http://0.0.0.0:3000).
