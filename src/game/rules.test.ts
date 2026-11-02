@@ -12,6 +12,9 @@ import {
   convertWithMaker,
   rollSpringMineDrop,
   rollLakeMineDrop,
+  checkSecretCropUnlock,
+  getBasketTotal,
+  BASKET_CAPACITY,
 } from './rules';
 
 describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
@@ -118,4 +121,17 @@ describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
     assert.equal(rollLakeMineDrop(60, 2), 'Alexandrite');
     assert.equal(rollLakeMineDrop(10, 2), 'Diamond');
   });
+
+  test('Secret crop shipment gates and Harvest Basket capacity', () => {
+    const locked = checkSecretCropUnlock('Strawberry', { Turnip: 100, Potato: 45, Cucumber: 10 });
+    assert.equal(locked.unlocked, false);
+    assert.equal(locked.progressText, 'Turnip: 100/100, Potato: 45/100, Cucumber: 10/100');
+
+    const unlocked = checkSecretCropUnlock('Strawberry', { Turnip: 120, Potato: 100, Cucumber: 105 });
+    assert.equal(unlocked.unlocked, true);
+
+    assert.equal(BASKET_CAPACITY, 30);
+    assert.equal(getBasketTotal({ Turnip: 12, Copper: 8, Bamboo_Shoot: 5 }), 25);
+  });
 });
+

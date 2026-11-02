@@ -256,10 +256,76 @@ export default function GameScreen() {
         />
       </div>
 
-      {/* Control hints for desktop keyboard users */}
+      {/* Interactive Quick-Action Toolbar for Desktop Users */}
       {!isTouch && (
-        <div id="hint" className="text-[#606060] text-xs text-center py-1 tracking-wide font-mono">
-          arrows/WASD move &middot; space use tool &middot; x act &middot; tab tools &middot; i rucksack &middot; m memo &middot; esc diary &middot; ? help
+        <div
+          id="hint"
+          className="flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 border-t border-[#404040]/50 bg-[#080808] text-xs font-mono"
+        >
+          <span className="text-[#808080] mr-2 hidden sm:inline">WASD/Arrows: Move</span>
+          <button
+            type="button"
+            onClick={() => sendKey('space')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
+          >
+            [SPC] Use Tool
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('x')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff0099] cursor-pointer"
+          >
+            [X] Act/Talk
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('tab')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#d0d0d0] cursor-pointer"
+          >
+            [TAB] Next Tool
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('i')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#d0d0d0] cursor-pointer"
+          >
+            [I] Rucksack
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('h')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff9900] cursor-pointer"
+          >
+            [H] Horse
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('b')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
+          >
+            [B] Bell
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('m')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
+          >
+            [M] Memo
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('esc')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#c0c0c0] cursor-pointer"
+          >
+            [ESC] Diary
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('?')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
+          >
+            [?] Help
+          </button>
         </div>
       )}
 
@@ -315,46 +381,60 @@ export default function GameScreen() {
         </div>
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-1.5">
           <button
             onPointerDown={(e) => handleButtonDown('space', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-4 py-3 text-sm font-bold text-[#33ff00] shadow"
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-2.5 text-xs font-bold text-[#33ff00] shadow"
           >
             USE
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('x', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-4 py-3 text-sm font-bold text-[#ff0099] shadow"
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-2.5 text-xs font-bold text-[#ff0099] shadow"
           >
             ACT
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('tab', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-3 text-sm font-medium text-[#d0d0d0] shadow"
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
           >
             TOOL
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('i', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-3 text-sm font-medium text-[#d0d0d0] shadow"
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
           >
             BAG
           </button>
           <button
+            onPointerDown={(e) => handleButtonDown('h', e)}
+            onPointerUp={handleButtonUp}
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#ff9900] shadow"
+          >
+            HORSE
+          </button>
+          <button
+            onPointerDown={(e) => handleButtonDown('m', e)}
+            onPointerUp={handleButtonUp}
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#00ffff] shadow"
+          >
+            MEMO
+          </button>
+          <button
             onPointerDown={(e) => handleButtonDown('esc', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-3 text-sm font-medium text-[#d0d0d0] shadow"
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
           >
-            MENU
+            DIARY
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('?', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-3 text-sm font-medium text-[#00ffff] shadow"
+            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#00ffff] shadow"
           >
             HELP
           </button>

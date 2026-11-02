@@ -132,23 +132,25 @@ export function build_farm(): GameMap {
 
 export function build_town(): GameMap {
   const m = GameMap.fromPrebuilt('town');
-  // Add Harvest Sprite Hut door behind the Church in NE corner
-  m.building(62, 2, 7, 4, 3, 'sprites', 'SPRITES', '0A');
-  m.rect(64, 6, 3, 3, 'path');
-  // Add Aja Winery in NW area
-  m.building(2, 9, 9, 4, 4, 'winery', 'WINERY', '0E');
-  m.rect(6, 13, 2, 2, 'path');
-  // Add Rose Square Trash Can & Lamppost (for Truth Jewel)
+  // Add Harvest Sprite Hut behind the Church in NE area (below Church at y=9..12 so Church at y=2..6 is untouched)
+  m.building(61, 9, 9, 4, 4, 'sprites', 'SPRITES', '0A');
+  m.rect(61, 7, 2, 2, 'path');
+  m.rect(61, 13, 5, 1, 'path');
+  // Add Aja Winery in NW area with cobblestone alley to the street
+  m.building(3, 9, 9, 4, 4, 'winery', 'WINERY', '0E');
+  m.rect(15, 7, 1, 13, 'path');
+  m.rect(7, 13, 9, 1, 'path');
+  // Add Rose Square Trash Can & Plaza Sign
   m.set(30, 11, 'trash');
   m.signs[pkey(30, 11)] = 'trash';
   m.set(30, 15, 'sign');
   m.signs[pkey(30, 15)] = 'Rose Square — Drop litter in the Trash Can (U) north of the plaza!';
-  // Add South path & warp to Mineral Beach
-  for (let y = 20; y < m.h; y++) {
-    m.rect(35, y, 3, 1, 'path');
-    m.warps[pkey(35, y)] = ['beach', 32, 2, [0, 1]];
-    m.warps[pkey(36, y)] = ['beach', 32, 2, [0, 1]];
-    m.warps[pkey(37, y)] = ['beach', 32, 2, [0, 1]];
+  // Add South path & bridge across the river to Mineral Beach (warp only at the south border y=31!)
+  m.rect(35, 21, 3, 7, 'path');
+  m.rect(35, 28, 3, 2, 'bridge');
+  m.rect(35, 30, 3, 2, 'path');
+  for (const x of [35, 36, 37]) {
+    m.warps[pkey(x, m.h - 1)] = ['beach', 32, 2, [0, 1]];
   }
   return m;
 }
@@ -156,21 +158,21 @@ export function build_town(): GameMap {
 export function build_mountain(): GameMap {
   const m = GameMap.fromPrebuilt('mountain');
   // Hot Spring pool in SW Mother's Hill (soak to recover Stamina & Fatigue, or toss Egg for Spa-Boiled Egg!)
-  m.rect(6, 15, 5, 3, 'spring');
-  m.set(5, 16, 'sign');
-  m.signs[pkey(5, 16)] = 'Hot Spring — Step in or press X to soak (+Stamina, -Fatigue). Hold an Egg and press X to make a Spa-Boiled Egg!';
+  m.rect(6, 16, 5, 3, 'spring');
+  m.set(5, 17, 'sign');
+  m.signs[pkey(5, 17)] = 'Hot Spring — Step in or press X to soak (+Stamina, -Fatigue). Hold an Egg and press X to make a Spa-Boiled Egg!';
 
   // Goddess Pond waterfall next to Spring Mine entrance
   m.rect(45, 7, 3, 2, 'pond');
   m.set(44, 8, 'sign');
   m.signs[pkey(44, 8)] = 'Goddess Pond — Hold an item and press X facing the pond to make an offering to the Harvest Goddess!';
 
-  // Lake Mine island in the middle of Mother's Hill Lake
-  m.rect(13, 5, 3, 2, 'grass');
-  m.set(14, 5, 'cave');
-  m.doors[pkey(14, 5)] = 'lakemine';
-  m.set(14, 10, 'sign');
-  m.signs[pkey(14, 10)] = "Mother's Hill Lake — Freezes over in Winter so you can cross to the Lake Mine! (Or toss a Cucumber to summon Kappa!)";
+  // Lake Mine island in the middle of Mother's Hill Lake (surrounded by water; freezes in Winter!)
+  m.rect(14, 8, 3, 2, 'grass');
+  m.set(15, 8, 'cave');
+  m.doors[pkey(15, 8)] = 'lakemine';
+  m.set(15, 15, 'sign');
+  m.signs[pkey(15, 15)] = "Mother's Hill Lake — Freezes over in Winter so you can cross to the Lake Mine! (Or toss a Cucumber to summon Kappa!)";
   return m;
 }
 
@@ -180,7 +182,7 @@ export function build_beach(): GameMap {
   // North exit back to Town
   m.rect(31, 0, 4, 4, 'path');
   for (const x of [31, 32, 33, 34]) {
-    m.warps[pkey(x, 0)] = ['town', 36, 26, [0, -1]];
+    m.warps[pkey(x, 0)] = ['town', 36, 30, [0, -1]];
   }
   // Ocean water along bottom
   m.rect(1, 17, 62, 6, 'water');
@@ -329,6 +331,8 @@ export function build_house_upgraded(flags: Set<string> | string[]): GameMap {
     }
   }
   m.set(7, 9, 'exit');
-  m.warps[pkey(7, 9)] = ['farm', 14, 8, [0, 1]];
+  m.doors[pkey(7, 9)] = 'house_out';
+  m.warps[pkey(7, 9)] = ['farm', 8, 6, [0, 1]];
   return m;
 }
+

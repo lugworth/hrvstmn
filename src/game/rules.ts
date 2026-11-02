@@ -326,3 +326,41 @@ export function rollLakeMineDrop(floor: number, rngPct: number): string | null {
   }
   return null;
 }
+
+export const SECRET_CROP_REQS: Record<string, string[]> = {
+  Strawberry: ['Turnip', 'Potato', 'Cucumber'],
+  Pumpkin: ['Tomato', 'Corn', 'Onion'],
+  Spinach: ['Eggplant', 'Carrot', 'Sweet Potato'],
+};
+
+export const WON_EXCLUSIVE_CROPS = new Set([
+  'Cabbage',
+  'Pineapple',
+  'Green Pepper',
+  'Moondrop Flower',
+  'Toy Flower',
+  'Pink Cat Flower',
+  'Magic Red Flower',
+]);
+
+export function checkSecretCropUnlock(
+  crop: string,
+  shippedCounts: Record<string, number>
+): { unlocked: boolean; progressText: string } {
+  const reqs = SECRET_CROP_REQS[crop];
+  if (!reqs) {
+    return { unlocked: true, progressText: '' };
+  }
+  const unlocked = reqs.every((r) => (shippedCounts[r] || 0) >= 100);
+  const progressText = reqs
+    .map((r) => `${r}: ${Math.min(100, shippedCounts[r] || 0)}/100`)
+    .join(', ');
+  return { unlocked, progressText };
+}
+
+export const BASKET_CAPACITY = 30;
+
+export function getBasketTotal(basket: Record<string, number>): number {
+  return Object.values(basket).reduce((sum, n) => sum + n, 0);
+}
+

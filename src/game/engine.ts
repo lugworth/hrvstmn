@@ -104,6 +104,10 @@ import {
   CURSED_TOOL_FLOORS,
   GODDESS_JEWEL_FLOORS,
   KAPPA_JEWEL_FLOORS,
+  checkSecretCropUnlock,
+  WON_EXCLUSIVE_CROPS,
+  BASKET_CAPACITY,
+  getBasketTotal,
 } from './rules';
 
 export class Game {
@@ -158,6 +162,7 @@ export class Game {
   hp: Record<string, number> = {};
   forage: Record<string, Record<string, string>> = { mountain: {}, beach: {} };
   bin: Record<string, number> = {};
+  basket: Record<string, number> = {};
   shipped_counts: Record<string, number> = {};
   zack_paid_today: boolean = false;
 
@@ -165,6 +170,7 @@ export class Game {
   chicken_aff: number = 20;
   chicken_fest_won: boolean = false;
   outdoor_hours: number = 0;
+  animals_grazing: boolean = false;
   incubator_days: number = 0;
   fed: number = 0;
   eggs: number = 0;
@@ -227,8 +233,8 @@ export class Game {
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
     'stamina', 'max_stamina', 'fatigue', 'power_berries', 'berry_sources', 'has_mystic_berry',
     'inv', 'held', 'tool', 'levels', 'tool_exp', 'cursed_uses', 'cursed_days', 'cursed_blesses',
-    'water', 'upgrading', 'bin', 'shipped_counts', 'chickens', 'chicken_aff', 'chicken_fest_won',
-    'outdoor_hours', 'incubator_days', 'fed', 'eggs', 'dog_aff', 'dog_frisbee_dist',
+    'water', 'upgrading', 'bin', 'basket', 'shipped_counts', 'chickens', 'chicken_aff', 'chicken_fest_won',
+    'outdoor_hours', 'animals_grazing', 'incubator_days', 'fed', 'eggs', 'dog_aff', 'dog_frisbee_dist',
     'horse_aff', 'horse_grown', 'medals', 'friend', 'sprite_aff', 'sprite_jobs',
     'heart_events_seen', 'rival_events_seen', 'married', 'marriage_day', 'child_name', 'child_days',
     'shipped_total', 'steps', 'fish_caught', 'goddess_gifts', 'kappa_gifts',
@@ -295,12 +301,14 @@ export class Game {
     this.hp = {};
     this.forage = { mountain: {}, beach: {} };
     this.bin = {};
+    this.basket = {};
     this.shipped_counts = {};
     this.zack_paid_today = false;
     this.chickens = 0;
     this.chicken_aff = 20;
     this.chicken_fest_won = false;
     this.outdoor_hours = 0;
+    this.animals_grazing = false;
     this.incubator_days = 0;
     this.fed = 0;
     this.eggs = 0;
@@ -659,12 +667,65 @@ export class Game {
       await this.rucksack();
     } else if (k === 'm') {
       await this.ranch_summary();
+    } else if (k === 'h') {
+      this.whistle_horse();
+    } else if (k === 'b') {
+      this.ring_grazing_bell();
+    } else if (k === 't') {
+      if (this.inv['Teleport Stone']) {
+        await this.use_teleport_stone();
+      } else {
+        this.msg('Unearth the Teleport Stone on Floor 255 of the Spring Mine to warp anywhere!');
+      }
     } else if (k === '?') {
       await this.show_lines('Help & Controls', HELP);
     } else if (k === 'esc') {
       await this.pause_menu();
     } else if (k === 'Q' || k === 'ctrl-c') {
       await this.quit_prompt();
+    }
+  }
+
+  whistle_horse(): void {
+    if (this.mapname !== 'farm') {
+      this.msg('Your horse stays on your farm. Whistle (H) while outdoors on your farm!');
+      return;
+    }
+    this.riding_horse = !this.riding_horse;
+    this.horse_aff = Math.min(100, this.horse_aff + 1);
+    if (this.riding_horse) {
+      this.msg('Wheeeet! Your horse gallops to your side! Riding at 2x speed! (Press H to dismount)', '09');
+    } else {
+      this.msg('You dismount and pat your horse.', '0B');
+    }
+  }
+
+  ring_grazing_bell(): void {
+    if (this.mapname !== 'farm') {
+      this.msg('Ring the Grazing Bell (B) while on your farm to call animals outside/inside!');
+      return;
+    }
+    if (this.chickens === 0 && this.animals.length === 0) {
+      this.msg('You do not have any chickens or barn livestock yet.');
+      return;
+    }
+    if (!this.animals_grazing) {
+      if (this.weather !== 'Sunny') {
+        this.msg('Keep your animals indoors during Rain or Snow so they stay happy!', '08');
+        return;
+      }
+      this.animals_grazing = true;
+      this.outdoor_hours += 10;
+      this.fed = this.chickens;
+      this.chicken_aff = Math.min(100, this.chicken_aff + 2);
+      for (const a of this.animals) {
+        a.fed = true;
+        a.aff = Math.min(100, a.aff + 2);
+      }
+      this.msg(`Ding-a-ling! Your animals come outside to graze in the sunshine! (+Outdoor hours: ${this.outdoor_hours}h)`, '0B');
+    } else {
+      this.animals_grazing = false;
+      this.msg('Ding-a-ling! Your chickens and livestock return safely to the Coop and Barn.', '0C');
     }
   }
 
@@ -769,8 +830,8 @@ export class Game {
     const m = this.maps[mapname];
     if (!m || !m.inside(x, y)) return false;
     const t = m.tile(x, y);
-    // In Winter, Mother's Hill Lake water near the island freezes into walkable ice!
-    if (mapname === 'mountain' && this.season === 3 && t === 'water' && x >= 11 && x <= 17 && y >= 4 && y <= 11) {
+    // In Winter, Mother's Hill Lake water forms a frozen ice bridge from the south shore to the Lake Mine island!
+    if (mapname === 'mountain' && this.season === 3 && t === 'water' && x >= 13 && x <= 17 && y >= 7 && y <= 14) {
       return true;
     }
     if (!TILES[t] || !TILES[t][3]) {
@@ -895,7 +956,7 @@ export class Game {
       this.enter_mine(this.mine_floor + 1, this.mine_type);
     } else if (m.tile(nx, ny) === 'up') {
       if (this.mine_type === 'lake') {
-        this.warp('mountain', 14, 6, [0, 1]);
+        this.warp('mountain', 15, 9, [0, 1]);
       } else {
         this.warp('mountain', 52, 5, [0, 1]);
       }
@@ -1399,6 +1460,23 @@ export class Game {
       await this.enter(m.doors[pKey]);
       return;
     }
+    if (pKey in m.warps) {
+      const [mp, wx, wy] = m.warps[pKey];
+      this.riding_horse = false;
+      this.warp(mp, wx, wy);
+      return;
+    }
+    // Check if interacting with outdoor Dog or Horse on the farm
+    if (this.mapname === 'farm') {
+      if (tx === 21 && ty === 6) {
+        await this.dog_menu();
+        return;
+      }
+      if (!this.riding_horse && tx === 25 && ty === 6) {
+        await this.horse_menu();
+        return;
+      }
+    }
     const tile = m.tile(tx, ty);
 
     // Hot Spring on Mother's Hill (either standing in or facing 'spring')
@@ -1464,13 +1542,18 @@ export class Game {
           this.msg('Use your Sickle to cut ripe pasture Grass into Fodder.');
           return;
         }
-        this.give(crop);
+        if (this.held === 'Basket' && getBasketTotal(this.basket) < BASKET_CAPACITY) {
+          this.basket[crop] = (this.basket[crop] || 0) + 1;
+          this.msg(`Harvested ${crop} into Basket (${getBasketTotal(this.basket)}/${BASKET_CAPACITY})!`, '0B');
+        } else {
+          this.give(crop);
+          this.msg(`You harvested a ${crop}!`, '0B');
+        }
         if (regrow) {
           this.crops[pKey][1] = days - regrow;
         } else {
           delete this.crops[pKey];
         }
-        this.msg(`You harvested a ${crop}!`, '0B');
       } else {
         this.msg(`${crop}: ${days - age} more day${days - age > 1 ? 's' : ''} to go.${this.wet.has(pKey) ? '' : ' (needs water)'}`);
       }
@@ -1852,23 +1935,37 @@ export class Game {
 
   async ship(): Promise<void> {
     while (true) {
+      const basketCount = getBasketTotal(this.basket);
       const items = py_sorted(Object.keys(this.inv)).filter((i) => ITEMS[i] && ITEMS[i][0] > 0);
-      if (!items.length) {
-        await this.say('You have nothing shippable in your rucksack.', 'Shipping Bin');
+      if (!items.length && basketCount === 0) {
+        await this.say('You have nothing shippable in your rucksack or Basket.', 'Shipping Bin');
         return;
       }
-      const opts = [
-        ...items.map((i) => `${i} x${this.inv[i]} (${ITEMS[i][0]}G each)`),
-        'Done',
-      ];
+      const opts: string[] = [];
+      if (basketCount > 0) {
+        const bVal = py_sum(
+          Object.entries(this.basket).map(([i, q]) => (ITEMS[i] ? ITEMS[i][0] : 0) * q)
+        );
+        opts.push(`Empty Harvest Basket into Bin (${basketCount}/${BASKET_CAPACITY} items — ${bVal}G)`);
+      }
+      opts.push(...items.map((i) => `${i} x${this.inv[i]} (${ITEMS[i][0]}G each)`), 'Done');
       const pending = py_sum(
         Object.entries(this.bin).map(([i, q]) => (ITEMS[i] ? ITEMS[i][0] : 0) * q)
       );
       const sel = await this.menu(`Shipping Bin  (in bin: ${pending}G — pickup at 5PM)`, opts);
-      if (sel === null || sel === items.length) {
+      if (sel === null || opts[sel] === 'Done') {
         return;
       }
-      const item = items[sel];
+      if (basketCount > 0 && sel === 0) {
+        for (const [bItem, bQty] of Object.entries(this.basket)) {
+          this.bin[bItem] = (this.bin[bItem] || 0) + bQty;
+        }
+        this.basket = {};
+        this.msg(`Dumped all ${basketCount} items from your Basket into the Shipping Bin!`, '09');
+        continue;
+      }
+      const itemIdx = basketCount > 0 ? sel - 1 : sel;
+      const item = items[itemIdx];
       const q = await this.ask_qty(`Ship how many ${item}?`, this.inv[item], ITEMS[item][0], 'Value');
       if (q) {
         this.take(item, q);
@@ -1885,9 +1982,24 @@ export class Game {
         await this.say('Your rucksack is empty.', null);
         return;
       }
-      const opts = items.map((i) => `${i === this.held ? '>' : ' '} ${i} x${this.inv[i]}`);
+      const basketTotal = getBasketTotal(this.basket);
+      const opts = items.map((i) => {
+        if (i === 'Basket') {
+          return `${i === this.held ? '>' : ' '} Basket (${basketTotal}/${BASKET_CAPACITY} items)`;
+        }
+        return `${i === this.held ? '>' : ' '} ${i} x${this.inv[i]}`;
+      });
       const info = (s: number) => {
         const i = items[s];
+        if (i === 'Basket') {
+          const contents = Object.entries(this.basket)
+            .map(([k, v]) => `${k} x${v}`)
+            .join(', ');
+          return [
+            `  Holds up to ${BASKET_CAPACITY} shippable items (${basketTotal}/${BASKET_CAPACITY} full)`,
+            `  Contents: ${contents || 'Empty — Hold Basket while harvesting crops!'}`,
+          ];
+        }
         const [sell, eat, cat] = ITEMS[i] || [0, 0, 'item'];
         const parts = [cat];
         if (sell) parts.push(`ships ${sell}G`);
@@ -1897,9 +2009,12 @@ export class Game {
       const sel = await this.menu('Rucksack', opts, 0, info);
       if (sel === null) return;
       const item = items[sel];
-      const sub = [this.held === item ? 'Put away' : 'Hold (to gift / offer)'];
+      const sub = [this.held === item ? 'Put away' : 'Hold (to gift / offer / use)'];
       if (ITEMS[item] && ITEMS[item][1] !== 0) {
         sub.push('Eat');
+      }
+      if (item !== 'Basket' && this.inv['Basket'] && ITEMS[item]?.[0] > 0 && basketTotal < BASKET_CAPACITY) {
+        sub.push(`Put in Basket (${basketTotal}/${BASKET_CAPACITY})`);
       }
       if (item === 'Teleport Stone') {
         sub.push('Teleport');
@@ -1915,6 +2030,15 @@ export class Game {
           this.fatigue = Math.max(0, this.fatigue - 35);
         }
         this.msg(`You ate the ${item}. (${gain >= 0 ? '+' : ''}${gain} Stamina)`, '0B');
+      } else if (sub[s2].startsWith('Put in Basket')) {
+        const space = BASKET_CAPACITY - basketTotal;
+        const maxPut = Math.min(space, this.inv[item]);
+        const q = maxPut === 1 ? 1 : await this.ask_qty(`Put how many ${item} in Basket?`, maxPut, ITEMS[item][0], 'Value');
+        if (q > 0) {
+          this.take(item, q);
+          this.basket[item] = (this.basket[item] || 0) + q;
+          this.msg(`Placed ${q} ${item} into your Basket (${getBasketTotal(this.basket)}/${BASKET_CAPACITY}).`, '09');
+        }
       } else if (sub[s2] === 'Teleport') {
         await this.use_teleport_stone();
         return;
@@ -1923,7 +2047,11 @@ export class Game {
         this.msg(`You put away the ${item}.`);
       } else {
         this.held = item;
-        this.msg(`You hold the ${item}. Face someone or a pond and press X.`);
+        this.msg(
+          item === 'Basket'
+            ? `Holding Basket (${basketTotal}/${BASKET_CAPACITY}). Harvest crops with X to fill it automatically!`
+            : `You hold the ${item}. Face someone or a pond and press X.`
+        );
         return;
       }
     }
@@ -2786,22 +2914,40 @@ export class Game {
 
   async buy_seeds(): Promise<void> {
     const crops = Object.entries(CROPS)
-      .filter(([, d]) => d[0] === this.season_name || d[0] === 'All')
+      .filter(([c, d]) => (d[0] === this.season_name || d[0] === 'All') && !WON_EXCLUSIVE_CROPS.has(c))
       .map(([c]) => c);
     if (!crops.length) {
       await this.say('Nothing grows outdoors in Winter, dear. Come back in Spring!', 'Jeff');
       return;
     }
-    const opts = crops.map((c) => `${c} Seeds (${CROPS[c][1]}G)`);
+    const opts = crops.map((c) => {
+      const gate = checkSecretCropUnlock(c, this.shipped_counts);
+      return `${c} Seeds (${CROPS[c][1]}G)${gate.unlocked ? '' : ' [LOCKED — Ship 100 each]'}`;
+    });
     const info = (s: number) => {
       const c = crops[s];
       const d = CROPS[c];
       const regrow = d[3] ? `, regrows every ${d[3]}d` : '';
-      return [`  ${d[2]} days to grow${regrow}`, `  ships for ${d[4]}G each, sows 3x3`];
+      const gate = checkSecretCropUnlock(c, this.shipped_counts);
+      const lines = [`  ${d[2]} days to grow${regrow} — ships for ${d[4]}G each (sows 3x3)`];
+      if (gate.progressText) {
+        lines.push(`  Unlock Gate: ${gate.progressText}`);
+      } else {
+        lines.push('  Rare exotic & flower seeds are also sold by Won at Mineral Beach!');
+      }
+      return lines;
     };
-    const sel = await this.menu(`Seeds   ${this.gold}G`, opts, 0, info);
+    const sel = await this.menu(`Jeff's Supermarket Seeds   ${this.gold}G`, opts, 0, info);
     if (sel !== null) {
       const c = crops[sel];
+      const gate = checkSecretCropUnlock(c, this.shipped_counts);
+      if (!gate.unlocked) {
+        await this.say(
+          `We will stock ${c} Seeds as soon as you ship 100 of each seasonal crop! (${gate.progressText})`,
+          'Jeff'
+        );
+        return;
+      }
       await this.buy(`${c} Seeds`, CROPS[c][1]);
     }
   }
@@ -3823,7 +3969,7 @@ export class Game {
       return ['"', '0B', bg, false];
     }
     // Frozen Lake ice in Winter around Lake Mine island
-    if (name === 'mountain' && this.season === 3 && t === 'water' && x >= 11 && x <= 17 && y >= 4 && y <= 11) {
+    if (name === 'mountain' && this.season === 3 && t === 'water' && x >= 13 && x <= 17 && y >= 7 && y <= 14) {
       return ['=', '0C', '01', false];
     }
     if (pKey in m.deco) {
@@ -3931,6 +4077,22 @@ export class Game {
     const night = !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
     const dusk = !m.indoor && m.name !== 'mine' && 17.5 <= hour && hour < 19;
     const [tx, ty] = this.target();
+    const aoeSet = new Set<string>();
+    aoeSet.add(pkey(tx, ty));
+    if (this.mapname === 'farm') {
+      if (['Hoe', 'Watering Can', 'Sickle'].includes(this.tool)) {
+        for (const [qx, qy] of this.area()) {
+          aoeSet.add(pkey(qx, qy));
+        }
+      } else if (this.tool.endsWith(' Seeds')) {
+        for (const dx of [-1, 0, 1]) {
+          for (const dy of [-1, 0, 1]) {
+            aoeSet.add(pkey(tx + dx, ty + dy));
+          }
+        }
+      }
+    }
+
     for (let sy = 0; sy < Math.min(vh, m.h); sy++) {
       const y = cy + sy;
       const row = m.t[y];
@@ -3942,7 +4104,7 @@ export class Game {
         } else if (dusk && fg === '0B') {
           fg = '09';
         }
-        if (x === tx && y === ty) {
+        if (aoeSet.has(pkey(x, y))) {
           bg = bg === '01' ? '02' : '01';
         }
         s.put(ox + sx, oy + sy, ch, fg, bg, bold);
@@ -3955,6 +4117,29 @@ export class Game {
         s.put(ox + sx, oy + sy, ch, fg, bg, bold);
       }
     };
+    // Draw outdoor Dog, Horse, and grazing Chickens/Cows/Sheep on the Farm
+    if (this.mapname === 'farm') {
+      at(21, 6, 'd', '09'); // Faithful Dog by Doghouse
+      if (!this.riding_horse) {
+        at(25, 6, 'H', '04'); // Horse by Stable
+      }
+      if (this.animals_grazing && this.weather === 'Sunny') {
+        const tick = Math.floor(Date.now() / 1500);
+        for (let i = 0; i < Math.min(6, this.chickens); i++) {
+          const gx = 18 + ((i * 3 + tick) % 7);
+          const gy = 8 + (i % 2);
+          if (!(gx === this.px && gy === this.py)) at(gx, gy, 'c', '07');
+        }
+        for (let i = 0; i < Math.min(8, this.animals.length); i++) {
+          const a = this.animals[i];
+          const gx = 28 + ((i * 4 + tick) % 10);
+          const gy = 8 + (i % 2);
+          if (!(gx === this.px && gy === this.py)) {
+            at(gx, gy, a.kind === 'cow' ? 'C' : 'S', a.kind === 'cow' ? '07' : '05');
+          }
+        }
+      }
+    }
     for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
       if (NPCS[n]?.where?.[0] === this.mapname) {
         at(x, y, NPCS[n].g, NPCS[n].col);
@@ -3979,7 +4164,9 @@ export class Game {
           ? '08'
           : this.stamina <= this.max_stamina * 0.5 || this.fatigue >= 50
             ? '09'
-            : '07';
+            : this.riding_horse
+              ? '0A'
+              : '07';
     at(this.px, this.py, '@', playerCol);
 
     if (!m.indoor && m.name !== 'mine' && this.weather !== 'Sunny') {
@@ -4035,8 +4222,16 @@ export class Game {
     y += 1;
 
     s.put(x, y, 'Held', '03');
-    const held = this.held ? `${this.held} x${this.inv[this.held] || 0}` : '-';
-    s.put(x + 6, y, held.slice(0, w - 6), this.held ? '0A' : '02');
+    const bCount = getBasketTotal(this.basket);
+    const held =
+      this.held === 'Basket'
+        ? `Basket (${bCount}/${BASKET_CAPACITY})`
+        : this.held
+          ? `${this.held} x${this.inv[this.held] || 0}`
+          : bCount > 0
+            ? `Basket: ${bCount}/${BASKET_CAPACITY}`
+            : '-';
+    s.put(x + 6, y, held.slice(0, w - 6), this.held ? '0A' : bCount > 0 ? '09' : '02');
     y += 2;
 
     // Stamina Bar + Numerical readout
@@ -4093,8 +4288,8 @@ export class Game {
       ['SPC', 'use tool'],
       ['X', 'act / talk'],
       ['TAB', 'next tool'],
-      ['I', 'rucksack'],
-      ['M', 'memo/stats'],
+      ['I/M', 'bag / memo'],
+      ['H/B', 'horse / bell'],
       ['ESC', 'diary/save'],
       ['?', 'help'],
     ];
