@@ -315,6 +315,34 @@ describe('computeFrame', () => {
     }
   });
 
+  test('large sprites are lit from the top-left', () => {
+    const s = scene({ zoom: 2 });
+    for (const [x, sub] of [[10, 0], [11, 1]] as const) {
+      s.put(x, 5, sub ? ' ' : 'T', '0B', '00', true);
+      s.tag(x, 5, { t: 'tree', wx: 5, wy: 5, sub, zw: 2 });
+    }
+    const out = computeFrame(s, 0);
+    assert.ok(lum(out[5][10].fg) > lum(out[5][11].fg));
+  });
+
+  test('water is deeper (darker) away from the shore', () => {
+    const s = scene();
+    for (let y = 2; y < 18; y++) for (let x = 5; x < 40; x++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
+    const out = computeFrame(s, 0);
+    assert.ok(lum(out[10][20].bg) < lum(out[3][20].bg));
+  });
+
+  test('walls under the eaves are shaded and building ends get corner posts', () => {
+    const s = scene();
+    for (let x = 10; x < 16; x++) {
+      s.tag(x, 4, { t: 'roof', wx: x, wy: 4, k: 'deco', dch: '^', dfg: '08' });
+      for (const y of [5, 6, 7]) s.tag(x, y, { t: 'wall', wx: x, wy: y });
+    }
+    const out = computeFrame(s, 0);
+    assert.equal(out[6][10].ch, '║');
+    assert.ok(lum(out[5][12].bg) < lum(out[6][12].bg));
+  });
+
   test('hash is deterministic and in range', () => {
     for (let i = 0; i < 50; i++) {
       const v = hash(i, i * 3, 2);
