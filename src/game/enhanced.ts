@@ -492,6 +492,7 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31 + sub)), bg: gb, bold: true };
       if (th.fruit && hs > 0.93) return { ch: 'ʷ', fg: th.tuft, bg: gb, bold: false }; // tall summer grass
       if (hs < 0.1) return { ch: "'", fg: th.grassDetail, bg: gb, bold: false };
+      if (hs > 0.62 && hs < 0.8) return { ch: '˙', fg: mix(gb, th.grassDetail, 0.45), bg: gb, bold: false }; // faint meadow stipple
       if (hs < 0.15) return { ch: '`', fg: th.grassDetail, bg: gb, bold: false };
       return { ch: ' ', fg: th.grassDetail, bg: gb, bold: false };
     }
@@ -1371,7 +1372,48 @@ const SUBPIX: Record<string, string[]> = {
   '═': ['════'],
   '≡': ['≡≡≡≡'],
   '─': ['────'],
+  '˙': ['˙  ˙', ' ˙  ', '  ˙ ', '˙   ', ' ˙˙ '],
 };
+
+// Small things drawn as clusters across their tile: [centre pool, edge pool].
+const SPRITE_POOLS: Record<string, [string, string]> = {
+  'ψ': [' ', '    ʷ, '],
+  '✿': ['✿❀✿', '  ·, '],
+  '❀': ['❀✿❀', '  ·, '],
+  '∴': ['·∙', ' ·'],
+  ',': [',ʷ,', '  , '],
+  '"': ['"ʷ"', '  , '],
+  'ʷ': ['ʷ,ʷ', '   ,'],
+  '•': [' ', '     · '],
+};
+/** Field obstacles keep their full-size glyph at the centre (they must stay easy to spot). */
+export const SPRITE_KEEP = new Set(['ψ', '•']);
+
+/**
+ * Rows of a small-object cluster spanning the object's tile (2 cells wide when centred in Large
+ * mode): `level` rows of `level * width` glyphs, denser toward the middle. Null when the object
+ * should stay a single glyph (glowing crops, tokens, the HUD, small fonts).
+ */
+export function spritePattern(o: OutCell, fontPx: number, level: number): string[] | null {
+  if (level < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.token || o.glow) return null;
+  const pools = SPRITE_POOLS[o.ch];
+  if (!pools) return null;
+  const cols = level * (o.dx ? 2 : 1);
+  const seed = o.seed ?? 0;
+  const rows: string[] = [];
+  for (let r = 0; r < level; r++) {
+    let row = '';
+    for (let c = 0; c < cols; c++) {
+      const dx = (c + 0.5) / cols - 0.5;
+      const dy = (r + 0.5) / level - 0.5;
+      const pool = Math.sqrt(dx * dx * 1.6 + dy * dy) < 0.3 ? pools[0] : pools[1];
+      const j = Math.sin(seed * 6151 + r * 17.3 + c * 41.9) * 43758.5453;
+      row += pool[Math.floor((j - Math.floor(j)) * pool.length) % pool.length];
+    }
+    rows.push(row);
+  }
+  return rows;
+}
 /** Smallest font size at which the half-size texture glyphs are still legible. */
 export const HIRES_MIN_FONT = 12;
 
@@ -1423,6 +1465,15 @@ export function rowAlpha(ch: string, seed: number, r: number, n: number): number
 export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics) {
   const { cw, ch, fontPx, font } = m;
   const level = hiresLevel(fontPx, m.dpr ?? 1);
+  const mx: number[] = [];
+  const my: number[] = [];
+  const ms: string[] = [];
+  const mf: string[] = [];
+  const ma: number[] = [];
+  const mb: boolean[] = [];
+  const mini = (x: number, y: number, str: string, fg: string, a: number, b: boolean) => {
+    mx.push(x); my.push(y); ms.push(str); mf.push(fg); ma.push(a); mb.push(b);
+  };
   g.save();
   g.textBaseline = 'middle';
   g.shadowBlur = 0;
@@ -1468,32 +1519,29 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fill();
         continue;
       }
-      const pat = subPattern(o, fontPx, level);
-      if (pat) {
-        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
-        const f2 = `${o.bold ? 'bold ' : ''}${fontPx / level}px ${font}`;
-        if (f2 !== curFont) {
-          g.font = f2;
-          curFont = f2;
+      // Small glyphs are queued and drawn in one batch after this loop, so the canvas font
+      // switches once per frame instead of once per cell.
+      const spr = spritePattern(o, fontPx, level);
+      if (spr) {
+        const left = px - (o.dx ?? 0) * cw; // a centred sprite spans its whole tile
+        for (let r = 0; r < spr.length; r++) {
+          if (spr[r].trim() !== '') mini(left, py + r * (ch / level) + ch / (2 * level) + 0.5, spr[r], o.fg, 1, o.bold);
         }
-        g.fillStyle = o.fg;
+        if (!SPRITE_KEEP.has(o.ch)) continue; // obstacles also draw their full-size glyph below
+      }
+      const pat = spr ? null : subPattern(o, fontPx, level);
+      if (pat) {
         if (level === 2) {
           for (let k = 0; k < 4; k++) {
-            const c = pat[k];
-            if (c === ' ') continue;
-            g.globalAlpha = subAlpha(o.ch, o.seed ?? 0, k);
-            g.fillText(c, px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5);
+            if (pat[k] !== ' ') mini(px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5, pat[k], o.fg, subAlpha(o.ch, o.seed ?? 0, k), o.bold);
           }
         } else {
           // one call per row: a monospace font at size fontPx/n advances exactly cw/n per glyph
           for (let r = 0; r < level; r++) {
             const rowStr = pat.slice(r * level, r * level + level);
-            if (rowStr.trim() === '') continue;
-            g.globalAlpha = rowAlpha(o.ch, o.seed ?? 0, r, level);
-            g.fillText(rowStr, px, py + r * (ch / level) + ch / (2 * level) + 0.5);
+            if (rowStr.trim() !== '') mini(px, py + r * (ch / level) + ch / (2 * level) + 0.5, rowStr, o.fg, rowAlpha(o.ch, o.seed ?? 0, r, level), o.bold);
           }
         }
-        g.globalAlpha = 1;
         continue;
       }
       if (o.token) {
@@ -1526,6 +1574,21 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       g.fillText(o.ch, px, py + ch / 2 + 1);
     }
   }
+  // batched small glyphs (high-res textures and clusters)
+  if (ms.length) {
+    g.shadowBlur = 0;
+    for (const bold of [false, true]) {
+      g.font = `${bold ? 'bold ' : ''}${fontPx / Math.max(2, level)}px ${font}`;
+      for (let i = 0; i < ms.length; i++) {
+        if (mb[i] !== bold) continue;
+        g.globalAlpha = ma[i];
+        g.fillStyle = mf[i];
+        g.fillText(ms[i], mx[i], my[i]);
+      }
+    }
+    g.globalAlpha = 1;
+  }
+
   // shoreline foam: a thin light line where water meets land
   const fw = Math.max(1, Math.round(ch / 12));
   for (let y = 0; y < frame.length; y++) {
