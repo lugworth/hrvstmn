@@ -35,6 +35,14 @@ Runs on [http://0.0.0.0:3000](http://0.0.0.0:3000).
 npm test     # unit + integration tests (game rules, renderer, engine rendering)
 ```
 
+### Colour
+
+Every colour the Enhanced renderer draws is snapped to ramps built only from the 16 base16
+Isotope Dark colours (`toIsotope` in `src/game/enhanced.ts`). Each hue gets a value ramp with hue
+shifting: shadows lean toward the palette's indigo, highlights toward its orange and white. Where
+two grounds meet, there's no in-between hue in the palette, so the border is dithered with `░`
+instead of blended.
+
 ### How the Enhanced renderer works
 
 The engine still writes plain `(glyph, fg, bg)` cells, and also tags each map cell with what it is
