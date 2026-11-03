@@ -30,16 +30,10 @@ export type OutCell = {
 // ---------------------------------------------------------------- colour math
 
 type RGB = [number, number, number];
-const rgbCache = new Map<string, RGB>();
+/** '#rrggbb' -> [r, g, b]. A single parseInt is cheaper than caching: lighting makes thousands of unique colours. */
 export function hexToRgb(h: string): RGB {
-  let c = rgbCache.get(h);
-  if (!c) {
-    const s = h.charAt(0) === '#' ? h.slice(1) : h;
-    c = [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
-    if (rgbCache.size > 4096) rgbCache.clear();
-    rgbCache.set(h, c);
-  }
-  return c;
+  const n = parseInt(h.charCodeAt(0) === 35 ? h.slice(1) : h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
 export function rgbToHex(c: RGB): string {
@@ -471,6 +465,10 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return { ch: ' ', fg: '#000000', bg: '#000000', bold: false };
     case 'grass': {
       const gb = grassBg(F, wx, wy);
+      const above = F.tags[y - 1]?.[x];
+      if (above && above.t === 'tree' && hash(wx, wy, 72) < 0.6) {
+        return centre({ ch: '╿', fg: th.snow ? '#6a5a4a' : '#6a4a2c', bg: gb, bold: false }); // trunk under the canopy
+      }
       if (th.snow) {
         if (hs < 0.18) return { ch: hs < 0.08 ? '∙' : '·', fg: th.grassDetail, bg: gb, bold: false };
         return { ch: ' ', fg: th.grassDetail, bg: gb, bold: false };
@@ -500,6 +498,11 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       const ch = (hs < 0.72) !== sway ? th.treeGlyphs[0] : th.treeGlyphs[1];
       const bg = mix(th.treeBg, '#000000', hash(wx, wy, 2) * 0.5);
       let fgc = pick(th.trees, hash(wx * 2 + sub, wy, 1));
+      // canopies are lit from above: bright crown, shaded underside
+      const up = F.tags[y - 1]?.[x];
+      const dn = F.tags[y + 1]?.[x];
+      if (!up || up.t !== 'tree') fgc = mix(fgc, '#ffffff', 0.2);
+      else if (!dn || dn.t !== 'tree') fgc = mix(fgc, '#000000', 0.32);
       // seasonal accents: spring blossom, summer fruit, winter snow on the tips
       const acc = hash(wx * 2 + sub, wy, 41);
       if (th.blossom && acc < 0.12) return { ch: '❀', fg: pick(th.blossom, hash(wx, wy, 42 + sub)), bg, bold: true, accent: true };
@@ -963,6 +966,12 @@ export function computeFrame(
         // Entities stay a little brighter so the player can always find them.
         const entBoost = tag.ent ? 0.35 : 0;
         o.bg = shade(o.bg, lr, lg, lb, ls);
+        // the rim of each light pool fades out through ':' and '.' (an ASCII gradient)
+        if (ls > 0.04 && ls < 0.32 && o.ch === ' ' && SHADOW_RECEIVERS.has(tag.t) && !tag.ent && !o.dx && !(x > 0 && out[y][x - 1].dx)
+          && hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 73) < 0.45) {
+          o.ch = ls < 0.14 ? '.' : ':';
+          o.fg = mix(o.bg, '#ffe0a0', 0.22 + ls * 0.6);
+        }
         o.fg = entBoost && ls < entBoost ? shade(o.fg, 255 * entBoost, 240 * entBoost, 210 * entBoost, entBoost) : shade(o.fg, lr, lg, lb, ls);
         if (o.token) o.token = shade(o.token, lr, lg, lb, ls);
         if (o.rim) o.rim = shade(o.rim, lr, lg, lb, ls);
@@ -998,10 +1007,59 @@ export function computeFrame(
       }
     }
   }
+  // ---- reflections in calm water (after lighting, so lit windows reflect too)
+  if (outdoor && ctx.weather === 'Sunny') reflections(out, tags, v, t, W, H);
+
   monochrome(out, boxes);
   decorateBoxes(out, boxes, W, H);
   snapFrame(out);
   return out;
+}
+
+const MIRROR: Record<string, string> = { '▄': '▀', '▀': '▄', '◢': '◥', '◣': '◤', '▲': '▼' };
+const TALL = new Set(['tree', 'wall', 'roof', 'door', 'cliff']);
+
+/** Water mirrors what stands on its shore: dimmed, flipped, broken up by ripples. */
+function reflections(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], t: number, W: number, H: number) {
+  const f = Math.floor(t * 2);
+  for (let y = v.y + 1; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tag = tags[y][x];
+      if (!tag || !WATERY.has(tag.t) || tag.ent) continue;
+      let k = 0;
+      for (let d = 1; d <= 4; d++) {
+        const n = tags[y - d]?.[x];
+        if (!n || n.t === 'ui') break;
+        if (!WATERY.has(n.t)) {
+          k = d;
+          break;
+        }
+      }
+      if (!k) continue;
+      const sy = y - 2 * k + 1; // mirror line sits on the shore
+      if (sy < v.y) continue;
+      const st = tags[sy]?.[x];
+      if (!st || st.t === 'ui') continue;
+      const src = out[sy][x];
+      if (!(TALL.has(st.t) || st.ent || src.accent)) continue;
+      const o = out[y][x];
+      if (src.ch === ' ') {
+        if (x > 0 && out[sy][x - 1].dx) out[y][x] = { ...o, ch: ' ', glow: undefined };
+        continue;
+      }
+      if (hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 120 + (f % 31)) < 0.22) continue; // ripple break-up
+      out[y][x] = {
+        ch: MIRROR[src.ch] ?? src.ch,
+        fg: mix(src.fg, o.bg, 0.5 + 0.1 * k),
+        bg: o.bg,
+        bold: false,
+        accent: src.accent,
+        dx: src.dx,
+        glow: src.accent && src.glow ? mix(src.glow, '#000000', 0.5) : undefined,
+        glowR: 4,
+      };
+    }
+  }
 }
 
 // ---------------------------------------------------------------- scene extras

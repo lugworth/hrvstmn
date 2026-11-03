@@ -399,6 +399,37 @@ describe('computeFrame', () => {
     }
   });
 
+  test('calm water reflects the trees on its shore', () => {
+    const shore = (weather: string) => {
+      const s = scene({ weather });
+      for (let x = 0; x < 50; x++) {
+        for (let y = 2; y < 7; y++) { s.put(x, y, 'T', '0B', '00', true); s.tag(x, y, { t: 'tree', wx: x, wy: y }); }
+        for (let y = 7; y < 14; y++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
+      }
+      return computeFrame(s, 0)[7].filter((o) => '♣♠❀•'.includes(o.ch)).length;
+    };
+    assert.ok(shore('Sunny') > 15, 'shore row mirrors the treeline');
+    assert.equal(shore('Rain'), 0, 'rain breaks reflections up');
+  });
+
+  test('trunks show under the forest edge and canopies are lit from above', () => {
+    const s = scene();
+    for (let x = 0; x < 50; x++) for (let y = 2; y < 8; y++) { s.put(x, y, 'T', '0B', '00', true); s.tag(x, y, { t: 'tree', wx: x, wy: y }); }
+    const out = computeFrame(s, 0);
+    assert.ok(out[8].filter((o) => o.ch === '╿').length > 10, 'trunks under the bottom row');
+    const avg = (row: typeof out[0]) => { const c = row.slice(0, 50).filter((o) => !o.accent); return c.reduce((a, o) => a + lum(o.fg), 0) / c.length; };
+    assert.ok(avg(out[2]) > avg(out[7]), 'crown brighter than underside');
+  });
+
+  test('light pools fade out through an ASCII dither at night', () => {
+    const ring = (s: Screen) => computeFrame(s, 0).flat().filter((o) => o.ch === '.' || o.ch === ':').length;
+    const night = scene({ minutes: 22 * 60 });
+    night.put(25, 10, '@', '07', '00', true);
+    night.tag(25, 10, { t: 'grass', wx: 25, wy: 10, ent: 'player' });
+    assert.ok(ring(night) > 5);
+    assert.equal(ring(scene()), 0);
+  });
+
   test('hash is deterministic and in range', () => {
     for (let i = 0; i < 50; i++) {
       const v = hash(i, i * 3, 2);
