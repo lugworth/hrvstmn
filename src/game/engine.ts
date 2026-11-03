@@ -1,6 +1,6 @@
 // Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
-import { Screen } from './screen';
+import { Screen, CellTag } from './screen';
 import {
   GameMap,
   build_farm,
@@ -677,6 +677,9 @@ export class Game {
       } else {
         this.msg('Unearth the Teleport Stone on Floor 255 of the Spring Mine to warp anywhere!');
       }
+    } else if (k === 'v' || k === 'V') {
+      const style = this.scr.toggleStyle();
+      this.msg(style === 'enhanced' ? 'Visual style: Enhanced (V to switch)' : 'Visual style: Classic ASCII (V to switch)', '0C');
     } else if (k === '?') {
       await this.show_lines('Help & Controls', HELP);
     } else if (k === 'esc') {
@@ -3933,6 +3936,47 @@ export class Game {
     }
   }
 
+  /** Semantic tag for a map cell, mirroring the precedence used by glyph(). */
+  cell_tag(m: GameMap, x: number, y: number, t: string, hl: boolean): CellTag {
+    const pKey = pkey(x, y);
+    const name = m.name;
+    const tag: CellTag = { t, wx: x, wy: y, hl };
+    const obj = this.objs[name]?.[pKey];
+    if (obj && OBJ_GLYPH[obj]) {
+      tag.k = `obj:${obj}`;
+      return tag;
+    }
+    const fr = this.forage[name]?.[pKey];
+    if (fr && FORAGE_GLYPH[fr]) {
+      tag.k = 'forage';
+      return tag;
+    }
+    if (name === 'farm' && this.tilled.has(pKey)) {
+      const wet = this.wet.has(pKey);
+      const c = this.crops[pKey];
+      if (!c) {
+        tag.k = wet ? 'soil:wet' : 'soil';
+      } else {
+        const [crop, age] = c;
+        const d = CROPS[crop];
+        const stage = age >= d[2] ? 'ripe' : age === 0 ? 'seed' : age < d[2] / 2 ? 'sprout' : 'young';
+        tag.k = `crop:${stage}${wet ? ':wet' : ''}`;
+      }
+      return tag;
+    }
+    if (name === 'mountain' && this.season === 3 && t === 'water' && x >= 13 && x <= 17 && y >= 7 && y <= 14) {
+      tag.t = 'ice';
+      return tag;
+    }
+    if (pKey in m.deco) {
+      const [ch, fg] = m.deco[pKey];
+      tag.k = 'deco';
+      tag.dch = ch;
+      tag.dfg = fg;
+    }
+    return tag;
+  }
+
   glyph(m: GameMap, x: number, y: number, t: string): [string, string, string, boolean] {
     const pKey = pkey(x, y);
     const name = m.name;
@@ -4027,6 +4071,17 @@ export class Game {
     }
     const side = 29;
     const [vw, vh] = [W - side - 1, H - 5];
+    s.ctx = {
+      mapName: this.mapname,
+      indoor: !!this.map.indoor,
+      minutes: this.minutes,
+      season: this.season,
+      weather: this.map.indoor ? 'Sunny' : this.weather,
+      view: { x: 0, y: 1, w: vw, h: vh },
+      divX: vw,
+      divY: H - 4,
+      icons: [],
+    };
     this.draw_topbar(W);
     this.draw_map(0, 1, vw, vh);
     for (let y = 1; y < H - 4; y++) {
@@ -4052,6 +4107,7 @@ export class Game {
     ];
     for (const [text, fg] of segments) {
       s.put(x, 0, text, fg, '01', true);
+      if (text === `  ${this.weather}`) s.ctx?.icons.push({ x: x + 1, y: 0, icon: 'weather' });
       x += text.length;
     }
     const loc = this.map.title + (this.map.indoor ? ' (indoors)' : '');
@@ -4074,8 +4130,10 @@ export class Game {
       cy = clamp(this.py - Math.floor(vh / 2), 0, m.h - vh);
     }
     const hour = this.minutes / 60;
-    const night = !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
-    const dusk = !m.indoor && m.name !== 'mine' && 17.5 <= hour && hour < 19;
+    const classic = s.style === 'classic';
+    const night = classic && !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
+    const dusk = classic && !m.indoor && m.name !== 'mine' && 17.5 <= hour && hour < 19;
+    if (s.ctx) s.ctx.view = { x: ox, y: oy, w: Math.min(vw, m.w), h: Math.min(vh, m.h) };
     const [tx, ty] = this.target();
     const aoeSet = new Set<string>();
     aoeSet.add(pkey(tx, ty));
@@ -4104,38 +4162,42 @@ export class Game {
         } else if (dusk && fg === '0B') {
           fg = '09';
         }
-        if (aoeSet.has(pkey(x, y))) {
+        const hl = aoeSet.has(pkey(x, y));
+        if (hl) {
           bg = bg === '01' ? '02' : '01';
         }
         s.put(ox + sx, oy + sy, ch, fg, bg, bold);
+        s.tag(ox + sx, oy + sy, this.cell_tag(m, x, y, row[x], hl));
       }
     }
-    const at = (x: number, y: number, ch: string, fg: string, bold = true) => {
+    const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc') => {
       const [sx, sy] = [x - cx, y - cy];
       if (0 <= sx && sx < Math.min(vw, m.w) && 0 <= sy && sy < Math.min(vh, m.h)) {
         const bg = s.buf[oy + sy][ox + sx][2];
+        const under = s.tags[oy + sy][ox + sx];
         s.put(ox + sx, oy + sy, ch, fg, bg, bold);
+        if (under) s.tag(ox + sx, oy + sy, { ...under, ent });
       }
     };
     // Draw outdoor Dog, Horse, and grazing Chickens/Cows/Sheep on the Farm
     if (this.mapname === 'farm') {
-      at(21, 6, 'd', '09'); // Faithful Dog by Doghouse
+      at(21, 6, 'd', '09', true, 'pet'); // Faithful Dog by Doghouse
       if (!this.riding_horse) {
-        at(25, 6, 'H', '04'); // Horse by Stable
+        at(25, 6, 'H', '04', true, 'pet'); // Horse by Stable
       }
       if (this.animals_grazing && this.weather === 'Sunny') {
         const tick = Math.floor(Date.now() / 1500);
         for (let i = 0; i < Math.min(6, this.chickens); i++) {
           const gx = 18 + ((i * 3 + tick) % 7);
           const gy = 8 + (i % 2);
-          if (!(gx === this.px && gy === this.py)) at(gx, gy, 'c', '07');
+          if (!(gx === this.px && gy === this.py)) at(gx, gy, 'c', '07', true, 'animal');
         }
         for (let i = 0; i < Math.min(8, this.animals.length); i++) {
           const a = this.animals[i];
           const gx = 28 + ((i * 4 + tick) % 10);
           const gy = 8 + (i % 2);
           if (!(gx === this.px && gy === this.py)) {
-            at(gx, gy, a.kind === 'cow' ? 'C' : 'S', a.kind === 'cow' ? '07' : '05');
+            at(gx, gy, a.kind === 'cow' ? 'C' : 'S', a.kind === 'cow' ? '07' : '05', true, 'animal');
           }
         }
       }
@@ -4153,7 +4215,7 @@ export class Game {
     if (this.mapname === 'house' && this.married) {
       at(SPOUSE_POS[0], SPOUSE_POS[1], NPCS[this.married].g, NPCS[this.married].col);
       if (this.child_name) {
-        at(SPOUSE_POS[0] + 1, SPOUSE_POS[1], 'c', '0A');
+        at(SPOUSE_POS[0] + 1, SPOUSE_POS[1], 'c', '0A', true, 'npc');
       }
     }
     // Player glyph color reflects Stamina & Fatigue state (White -> Orange -> Red -> Blue when exhausted!)
@@ -4167,9 +4229,9 @@ export class Game {
             : this.riding_horse
               ? '0A'
               : '07';
-    at(this.px, this.py, '@', playerCol);
+    at(this.px, this.py, '@', playerCol, true, 'player');
 
-    if (!m.indoor && m.name !== 'mine' && this.weather !== 'Sunny') {
+    if (classic && !m.indoor && m.name !== 'mine' && this.weather !== 'Sunny') {
       const rng = py_rng(Math.floor((Date.now() / 1000) * 8));
       const isRain = this.weather === 'Rain' || this.weather === 'Typhoon';
       const drops = Math.floor((vw * vh) / (isRain ? 22 : 40));
@@ -4194,6 +4256,8 @@ export class Game {
     y += 3;
 
     const t = this.tool;
+    const icon = (iy: number, kind: 'stamina' | 'fatigue' | 'gold' | 'bin' | 'tool') => s.ctx?.icons.push({ x: x - 1, y: iy, icon: kind });
+    icon(y, 'tool');
     s.put(x, y, 'Tool', '03');
     const idx = TOOLS.includes(t) ? `[${TOOLS.indexOf(t) + 1}] ` : '    ';
     s.put(x + 6, y, (idx + t).slice(0, w - 6), '07', '00', true);
@@ -4239,14 +4303,17 @@ export class Game {
     const col = frac > 0.5 ? '0B' : frac > 0.2 ? '09' : '08';
     const bw = Math.max(6, w - 14);
     const filled = Math.round(frac * bw);
+    icon(y, 'stamina');
     s.put(x, y, 'Stam', '03');
     s.put(x + 5, y, '#'.repeat(filled), col, '00', true);
     s.put(x + 5 + filled, y, '.'.repeat(bw - filled), '01');
+    for (let i = 0; i < bw; i++) s.tag(x + 5 + i, y, { t: 'ui', k: i < filled ? 'bar' : 'bar:empty' });
     s.put(x + 6 + bw, y, `${this.stamina}/${this.max_stamina}`, col);
     y += 1;
 
     // Fatigue Bar + Berries
     const fatCol = this.fatigue < 50 ? '0C' : this.fatigue < 80 ? '09' : '08';
+    icon(y, 'fatigue');
     s.put(x, y, 'Fatg', '03');
     s.put(
       x + 5,
@@ -4256,12 +4323,14 @@ export class Game {
     );
     y += 2;
 
+    icon(y, 'gold');
     s.put(x, y, 'Gold', '03');
     s.put(x + 6, y, `${this.gold}G`, '09', '00', true);
     y += 1;
     const binv = py_sum(
       Object.entries(this.bin).map(([i, q]) => (ITEMS[i] ? ITEMS[i][0] : 0) * q)
     );
+    icon(y, 'bin');
     s.put(x, y, 'Bin', '03');
     s.put(x + 6, y, `${binv}G (5PM pickup)`, binv ? '09' : '02');
     y += 1;
@@ -4290,6 +4359,7 @@ export class Game {
       ['TAB', 'next tool'],
       ['I/M', 'bag / memo'],
       ['H/B', 'horse / bell'],
+      ['V', 'visual style'],
       ['ESC', 'diary/save'],
       ['?', 'help'],
     ];
