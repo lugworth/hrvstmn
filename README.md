@@ -50,6 +50,11 @@ keeping its light and shade. Only things of interest keep their colour as accent
 villagers and animals, ripe crops, forage and flowers, doors, lit windows, bins, signs, fixtures,
 stairs, fires, torches and ore, and a few seasonal touches.
 
+**High-resolution textures:** where the font is large enough (12px or more), map texture cells
+(grass, specks, cobbles, water, foliage, shingles, planks, furrows, rock, floorboards) are drawn as a
+2×2 grid of half-size glyphs, four times the detail per cell. Sprites, text and the HUD stay full
+size. The patterns are seeded by world position, so they don't shimmer when the view scrolls.
+
 ### How the Enhanced renderer works
 
 The engine still writes plain `(glyph, fg, bg)` cells, and also tags each map cell with what it is

@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -477,6 +477,28 @@ describe('computeFrame', () => {
     const near = out[6].filter((o) => o.accent && '•❦,'.includes(o.ch)).length + out[4].filter((o) => o.accent && '•❦,'.includes(o.ch)).length;
     const far = out[15].filter((o) => o.accent && '•❦,'.includes(o.ch)).length + out[16].filter((o) => o.accent && '•❦,'.includes(o.ch)).length;
     assert.ok(near > far);
+  });
+
+  test('high-resolution textures: map texture cells get a 2x2 half-size pattern', () => {
+    const s = scene();
+    for (let x = 0; x < 50; x++) for (let y = 2; y < 6; y++) { s.put(x, y, 'T', '0B', '00', true); s.tag(x, y, { t: 'tree', wx: x, wy: y }); }
+    s.put(10, 10, '@', '07', '00', true);
+    s.tag(10, 10, { t: 'grass', wx: 10, wy: 10, ent: 'player' });
+    const out = computeFrame(s, 0);
+    const tree = out[3].find((o) => o.ch === '♣' && !o.accent)!;
+    const pat = subPattern(tree, 16);
+    assert.ok(pat && [...pat].length === 4, 'trees become four mini leaves');
+    assert.equal(subPattern(tree, HIRES_MIN_FONT - 1), null, 'off when the font is too small');
+    assert.equal(subPattern(out[10][10], 16), null, 'sprites stay full size');
+    assert.equal(subPattern({ ch: '♣', fg: '#fff', bg: '#000', bold: false, ui: true }, 16), null, 'HUD stays full size');
+  });
+
+  test('high-resolution patterns are anchored to the world, not the screen', () => {
+    const a = scene();
+    const b = scene();
+    a.tag(3, 4, { t: 'grass', wx: 3, wy: 4 });
+    b.tag(7, 9, { t: 'grass', wx: 3, wy: 4 });
+    assert.equal(computeFrame(a, 0)[4][3].seed, computeFrame(b, 0)[9][7].seed);
   });
 
   test('hash is deterministic and in range', () => {

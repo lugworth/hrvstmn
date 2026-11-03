@@ -25,6 +25,8 @@ export type OutCell = {
   accent?: boolean;
   /** HUD / panel cell: left untouched by the scene passes. */
   ui?: boolean;
+  /** Per-world-cell noise for the high-resolution texture pass. */
+  seed?: number;
 };
 
 // ---------------------------------------------------------------- colour math
@@ -750,6 +752,7 @@ export function computeFrame(
         o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
       }
       if (uiCell) o.ui = true;
+      else if (tag) o.seed = hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 200);
       row[x] = o;
     }
     out[y] = row;
@@ -1320,6 +1323,40 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
 export type Metrics = { cw: number; ch: number; fontPx: number; font: string };
 
 /** Paint a computed frame. Block shapes are drawn as rects/paths so they tile without seams. */
+// ---------------------------------------------------------------- high-resolution textures
+//
+// Texture cells (grass, specks, cobbles, water, foliage, shingles, planks, furrows, rock) are
+// drawn as a 2x2 grid of half-size glyphs: four times the detail per cell. Sprites, text and
+// the HUD stay full size so everything stays readable. Each entry lists 4-glyph variants
+// (top-left, top-right, bottom-left, bottom-right), picked by the cell's world seed.
+const SUBPIX: Record<string, string[]> = {
+  "'": ["'  `", " '` ", "` ' ", "'' `"],
+  '`': ["`  '", " `' ", "' ` ", "`` '"],
+  '·': ['·  ·', ' ·· ', '·   ', '  · '],
+  '∙': ['∙  ·', ' ·∙ '],
+  '▪': ['▪▫▫▪', '▫▪▪▫', '▪▪ ▫', '▫ ▪▪'],
+  '≈': ['∼≈≈∼', '≈∼∼≈', '∼∼≈≈'],
+  '∼': ['∼  ∼', ' ∼∼ ', '∼ ∼ '],
+  '♣': ['♣♠♣♣', '♣♣♠♣', '♠♣♣♣', '♣♣♣♠'],
+  '♠': ['♠♠♣♠', '♠♣♠♠', '♠♠♠♣'],
+  '░': ['░░░░'],
+  '▒': ['▒▒▒▒', '▒░▒▒'],
+  '▓': ['▓▒▒▓', '▒▓▓▒'],
+  '═': ['════'],
+  '≡': ['≡≡≡≡'],
+  '─': ['────'],
+};
+/** Smallest font size at which the half-size texture glyphs are still legible. */
+export const HIRES_MIN_FONT = 12;
+
+/** The 2x2 high-resolution pattern for a cell, or null to draw it as one full-size glyph. */
+export function subPattern(o: OutCell, fontPx: number): string | null {
+  if (fontPx < HIRES_MIN_FONT || o.ui || o.dx || o.token || o.glow) return null;
+  const v = SUBPIX[o.ch];
+  if (!v) return null;
+  return v[Math.floor((o.seed ?? 0) * v.length) % v.length];
+}
+
 export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics) {
   const { cw, ch, fontPx, font } = m;
   g.save();
@@ -1367,6 +1404,21 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fill();
         continue;
       }
+      const pat = subPattern(o, fontPx);
+      if (pat) {
+        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
+        const f2 = `${o.bold ? 'bold ' : ''}${fontPx / 2}px ${font}`;
+        if (f2 !== curFont) {
+          g.font = f2;
+          curFont = f2;
+        }
+        g.fillStyle = o.fg;
+        for (let k = 0; k < 4; k++) {
+          const c = pat[k];
+          if (c !== ' ') g.fillText(c, px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5);
+        }
+        continue;
+      }
       if (o.token) {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
         const wide = !!o.dx;
@@ -1403,6 +1455,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 /** Cheap change detection so we only repaint when something visible changed. */
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '');
+  // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '');
   return s;
 }
