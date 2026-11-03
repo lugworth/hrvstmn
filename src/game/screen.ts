@@ -64,6 +64,10 @@ export class Screen {
   buf: Cell[][] = [];
   tags: (CellTag | null)[][] = [];
   ctx: RenderCtx | null = null;
+  /** Special full-screen scenes the renderer can dress up (currently 'title'). */
+  scene: string | null = null;
+  /** Rectangles of boxes (dialogs, menus) drawn this frame, top-most last. */
+  boxes: { x: number; y: number; w: number; h: number }[] = [];
   style: VisualStyle = 'large';
   onStyleChange?: (style: VisualStyle) => void;
   keyQueue: string[] = [];
@@ -90,6 +94,8 @@ export class Screen {
     );
     this.tags = Array.from({ length: this.h }, () => new Array<CellTag | null>(this.w).fill(null));
     this.ctx = null;
+    this.scene = null;
+    this.boxes = [];
   }
 
   /** Attach semantic info to a cell (call after `put`). */
@@ -142,6 +148,7 @@ export class Screen {
     for (let j = 0; j < h; j++) {
       this.put(x, y + j, ' '.repeat(w), fg, bg);
     }
+    this.boxes.push({ x, y, w, h });
     const edge = '+' + '-'.repeat(Math.max(0, w - 2)) + '+';
     this.put(x, y, edge, fg, bg);
     this.put(x, y + h - 1, edge, fg, bg);
