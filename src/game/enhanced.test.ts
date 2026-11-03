@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex } from './enhanced';
+import { computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -341,6 +341,14 @@ describe('computeFrame', () => {
     const out = computeFrame(s, 0);
     assert.equal(out[6][10].ch, '║');
     assert.ok(lum(out[5][12].bg) < lum(out[6][12].bg));
+  });
+
+  test('neon pulls muted glyph colours toward the nearest pure Isotope hue', () => {
+    const before = hsv(hexToRgb('#2c6e1e'));
+    const after = hsv(hexToRgb(neon('#2c6e1e')));
+    assert.ok(after[1] >= before[1] && after[2] > before[2], 'more saturated and brighter');
+    assert.ok(Math.abs(after[0] - 108) < 20, 'stays green');
+    assert.equal(neon('#808080'), '#808080', 'greys untouched');
   });
 
   test('hash is deterministic and in range', () => {
