@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* DejaVu Sans Mono subset (see public/fonts/LICENSE-DejaVu.txt): guarantees the
+   box-drawing, block and symbol glyphs used by the Enhanced renderer. */
+@font-face {
+  font-family: "HRVSTMN Mono";
+  src: url("/fonts/DejaVuSansMono.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "HRVSTMN Mono";
+  src: url("/fonts/DejaVuSansMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
 :root {
   --base00: #000000;
   --base01: #404040;
@@ -24,7 +39,7 @@ html, body {
   height: 100%;
   background: var(--base00);
   color: var(--base05);
-  font-family: ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  font-family: "HRVSTMN Mono", ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;

@@ -2495,6 +2495,7 @@ export const HELP: string[] = [
   "RUCKSACK  i   hold/eat/wrap items, equip Gems, blow Whistle",
   "SUMMARY   m   Ranch Summary, Memo, Sprites, Fish & Collectibles",
   "DIARY     esc Save/Load anywhere (2 slots), Teleport, Status",
+  "STYLE     v   switch Enhanced / Classic ASCII graphics",
   "",
   "Zack picks up shipments at 5:00 PM daily. Sleep in bed to advance day.",
   "Visit the Hot Spring on Mother's Hill or your Bathroom to recover.",
