@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -517,6 +517,27 @@ describe('computeFrame', () => {
     assert.ok((out[8][20].foam ?? 0) & 1, 'top shore');
     assert.ok((out[13][20].foam ?? 0) & 4, 'bottom shore');
     assert.equal(out[10][20].foam, undefined, 'open water has none');
+  });
+
+  test('detail level: 3x3 on sharp screens, 2x2 on ordinary ones, plain when tiny', () => {
+    assert.equal(hiresLevel(16, 2), 3);
+    assert.equal(hiresLevel(16, 1), 2);
+    assert.equal(hiresLevel(13, 3), 2, 'needs a 14px font for 3x3');
+    assert.equal(hiresLevel(8, 3), 1);
+  });
+
+  test('3x3 patterns: nine glyphs drawn from the texture pool, deterministic, density kept', () => {
+    const cell = { ch: '♣', fg: '#fff', bg: '#000', bold: false, seed: 0.37 };
+    const p3 = subPattern(cell, 16, 3)!;
+    assert.equal([...p3].length, 9);
+    assert.equal(p3, subPattern(cell, 16, 3), 'deterministic');
+    assert.ok([...p3].every((c) => '♣♠'.includes(c)));
+    // grass detail stays sparse
+    let blanks = 0;
+    for (let i = 0; i < 200; i++) blanks += [...subPattern({ ch: "'", fg: '#fff', bg: '#000', bold: false, seed: i / 200 }, 16, 3)!].filter((c) => c === ' ').length;
+    assert.ok(blanks / (200 * 9) > 0.3);
+    assert.equal(subPattern(cell, 16, 2)!.length, 4, '2x2 unchanged');
+    assert.ok(rowAlpha('♣', 0, 0, 3) > rowAlpha('♣', 0, 2, 3), 'top row brightest');
   });
 
   test('hash is deterministic and in range', () => {

@@ -184,7 +184,7 @@ export default function GameScreen() {
       const sig = frameSignature(frame);
       if (sig === lastSig) return;
       lastSig = sig;
-      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT });
+      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1 });
     };
 
     screen.onRender = () => {

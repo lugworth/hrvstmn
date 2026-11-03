@@ -1346,7 +1346,7 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
 
 // ---------------------------------------------------------------- drawing
 
-export type Metrics = { cw: number; ch: number; fontPx: number; font: string };
+export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number };
 
 /** Paint a computed frame. Block shapes are drawn as rects/paths so they tile without seams. */
 // ---------------------------------------------------------------- high-resolution textures
@@ -1375,12 +1375,32 @@ const SUBPIX: Record<string, string[]> = {
 /** Smallest font size at which the half-size texture glyphs are still legible. */
 export const HIRES_MIN_FONT = 12;
 
-/** The 2x2 high-resolution pattern for a cell, or null to draw it as one full-size glyph. */
-export function subPattern(o: OutCell, fontPx: number): string | null {
-  if (fontPx < HIRES_MIN_FONT || o.ui || o.dx || o.token || o.glow) return null;
+/** Glyph pools for the 3x3 level: every variant's glyphs (spaces included, so density is kept). */
+const SUBPOOL: Record<string, string[]> = Object.fromEntries(Object.entries(SUBPIX).map(([k, v]) => [k, [...v.join('')]]));
+
+/**
+ * Texture detail level for a font size and device pixel ratio: 3 (3x3 glyphs) on sharp
+ * screens, 2 (2x2) where half-size glyphs are still legible, otherwise 1 (plain glyph).
+ */
+export function hiresLevel(fontPx: number, dpr = 1): number {
+  if (fontPx >= 14 && fontPx * dpr >= 28) return 3;
+  return fontPx >= HIRES_MIN_FONT ? 2 : 1;
+}
+
+/** The n x n high-resolution pattern for a cell (n*n glyphs, row by row), or null for a plain glyph. */
+export function subPattern(o: OutCell, fontPx: number, n = 2): string | null {
+  if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.dx || o.token || o.glow) return null;
   const v = SUBPIX[o.ch];
   if (!v) return null;
-  return v[Math.floor((o.seed ?? 0) * v.length) % v.length];
+  const seed = o.seed ?? 0;
+  if (n === 2) return v[Math.floor(seed * v.length) % v.length];
+  const pool = SUBPOOL[o.ch];
+  let out = '';
+  for (let k = 0; k < n * n; k++) {
+    const j = Math.sin(seed * 7919 + k * 31.7) * 43758.5453;
+    out += pool[Math.floor((j - Math.floor(j)) * pool.length) % pool.length];
+  }
+  return out;
 }
 
 /** Textures with form are lit from the top-left; the rest get a gentle per-glyph jitter. */
@@ -1394,8 +1414,15 @@ export function subAlpha(ch: string, seed: number, k: number): number {
   return 0.6 + 0.4 * (j - Math.floor(j));
 }
 
+/** Row brightness for the 3x3 level: lit textures fade from top to bottom, others jitter per row. */
+export function rowAlpha(ch: string, seed: number, r: number, n: number): number {
+  if (LIT_SUB.has(ch)) return 1 - (0.36 * r) / Math.max(1, n - 1);
+  return subAlpha(ch, seed, r);
+}
+
 export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics) {
   const { cw, ch, fontPx, font } = m;
+  const level = hiresLevel(fontPx, m.dpr ?? 1);
   g.save();
   g.textBaseline = 'middle';
   g.shadowBlur = 0;
@@ -1441,20 +1468,30 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fill();
         continue;
       }
-      const pat = subPattern(o, fontPx);
+      const pat = subPattern(o, fontPx, level);
       if (pat) {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
-        const f2 = `${o.bold ? 'bold ' : ''}${fontPx / 2}px ${font}`;
+        const f2 = `${o.bold ? 'bold ' : ''}${fontPx / level}px ${font}`;
         if (f2 !== curFont) {
           g.font = f2;
           curFont = f2;
         }
         g.fillStyle = o.fg;
-        for (let k = 0; k < 4; k++) {
-          const c = pat[k];
-          if (c === ' ') continue;
-          g.globalAlpha = subAlpha(o.ch, o.seed ?? 0, k);
-          g.fillText(c, px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5);
+        if (level === 2) {
+          for (let k = 0; k < 4; k++) {
+            const c = pat[k];
+            if (c === ' ') continue;
+            g.globalAlpha = subAlpha(o.ch, o.seed ?? 0, k);
+            g.fillText(c, px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5);
+          }
+        } else {
+          // one call per row: a monospace font at size fontPx/n advances exactly cw/n per glyph
+          for (let r = 0; r < level; r++) {
+            const rowStr = pat.slice(r * level, r * level + level);
+            if (rowStr.trim() === '') continue;
+            g.globalAlpha = rowAlpha(o.ch, o.seed ?? 0, r, level);
+            g.fillText(rowStr, px, py + r * (ch / level) + ch / (2 * level) + 0.5);
+          }
         }
         g.globalAlpha = 1;
         continue;
