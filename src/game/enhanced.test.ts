@@ -565,6 +565,33 @@ describe('computeFrame', () => {
     assert.ok(computeFrame(scene(), 0).flat().filter((o) => o.ch === '˙').length > 50);
   });
 
+  test('sunlight dapples the ground under trees on fine days', () => {
+    const fleck = (weather: string) => {
+      const s = scene({ weather });
+      for (let x = 0; x < 50; x++) { s.put(x, 5, 'T', '0B', '00', true); s.tag(x, 5, { t: 'tree', wx: x, wy: 5 }); }
+      const out = computeFrame(s, 0);
+      const stipple = Math.max(0, ...out[15].filter((o) => o.ch === '˙').map((o) => lum(o.fg)));
+      return out[6].filter((o) => o.ch === '˙' && lum(o.fg) > stipple).length;
+    };
+    assert.ok(fleck('Sunny') > 3, 'bright flecks under the canopy');
+    assert.equal(fleck('Rain'), 0);
+  });
+
+  test('paths get a kerb line where they meet grass', () => {
+    const s = scene();
+    for (let x = 0; x < 50; x++) for (const y of [9, 10, 11]) s.tag(x, y, { t: 'path', wx: x, wy: y });
+    const out = computeFrame(s, 0);
+    assert.ok((out[9][20].foam ?? 0) & 1);
+    assert.ok((out[11][20].foam ?? 0) & 4);
+    assert.equal(out[10][20].foam, undefined);
+  });
+
+  test('dew twinkles on the grass in the early morning only', () => {
+    const dew = (minutes: number) => [0, 0.5, 1, 1.5].reduce((n, tt) => n + computeFrame(scene({ minutes }), tt).flat().filter((o) => o.ch === '✧').length, 0);
+    assert.ok(dew(7 * 60) > 0);
+    assert.equal(dew(13 * 60), 0);
+  });
+
   test('hash is deterministic and in range', () => {
     for (let i = 0; i < 50; i++) {
       const v = hash(i, i * 3, 2);

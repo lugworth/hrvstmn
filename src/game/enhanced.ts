@@ -341,6 +341,8 @@ type Frame = {
   weather: string;
   /** Ambient light (1 = full day). */
   amb: number;
+  /** Minutes since midnight. */
+  minutes: number;
 };
 
 const roofShades = (fgCode: string) => {
@@ -491,6 +493,10 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves, hash(wx, wy, 4 + sub)), bg: gb, bold: false };
       if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31 + sub)), bg: gb, bold: true };
       if (th.fruit && hs > 0.93) return { ch: 'ʷ', fg: th.tuft, bg: gb, bold: false }; // tall summer grass
+      const dewy = !th.snow && !F.indoor && F.weather === 'Sunny' && F.minutes >= 360 && F.minutes < 480;
+      if (dewy && hs < 0.03 && hash(wx * 2 + sub, wy, 140 + (Math.floor(F.t * 2) % 20)) > 0.45) {
+        return { ch: '✧', fg: '#ffffff', bg: gb, bold: true }; // morning dew twinkling
+      }
       if (hs < 0.1) return { ch: "'", fg: th.grassDetail, bg: gb, bold: false };
       if (hs > 0.62 && hs < 0.8) return { ch: '˙', fg: mix(gb, th.grassDetail, 0.45), bg: gb, bold: false }; // faint meadow stipple
       if (hs < 0.15) return { ch: '`', fg: th.grassDetail, bg: gb, bold: false };
@@ -710,7 +716,7 @@ export function computeFrame(
   const W = H ? buf[0].length : 0;
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
   const skyNow = ctx ? skyFor(ctx) : null;
-  const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1 };
+  const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720 };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -834,6 +840,12 @@ export function computeFrame(
         const o = out[y][x];
         o.bg = mix(o.bg, '#000000', k);
         o.fg = mix(o.fg, '#000000', k * 0.6);
+        // sunlight dapples through the leaves onto the shaded ground
+        if (up && up.t === 'tree' && o.ch === ' ' && !o.dx && sky.amb > 0.85 && ctx.weather === 'Sunny'
+          && hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 150) < 0.5) {
+          o.ch = '˙';
+          o.fg = mix(o.bg, '#fff4d8', 0.55);
+        }
       }
     }
   }
@@ -1111,6 +1123,23 @@ function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['v
       const o = out[y][x];
       o.foam = m;
       o.foamCol = mix(o.bg, '#ffffff', 0.42);
+    }
+  }
+  // the same thin edge line, fainter, gives paths a stone kerb where they meet grass or soil
+  const soft = (n: CellTag | null | undefined) => !!n && (n.t === 'grass' || n.t === 'flower' || n.t === 'field');
+  for (let y = v.y; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tg = tags[y][x];
+      if (!tg || tg.t !== 'path') continue;
+      let m = 0;
+      if (soft(tags[y - 1]?.[x])) m |= 1;
+      if (soft(tags[y][x + 1])) m |= 2;
+      if (soft(tags[y + 1]?.[x])) m |= 4;
+      if (soft(tags[y][x - 1])) m |= 8;
+      if (!m) continue;
+      const o = out[y][x];
+      o.foam = m;
+      o.foamCol = mix(o.bg, '#ffffff', 0.2);
     }
   }
 }
