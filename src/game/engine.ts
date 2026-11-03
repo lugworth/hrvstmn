@@ -1,6 +1,6 @@
 // Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
-import { Screen, CellTag } from './screen';
+import { Screen, CellTag, STYLE_LABEL } from './screen';
 import {
   GameMap,
   build_farm,
@@ -679,7 +679,7 @@ export class Game {
       }
     } else if (k === 'v' || k === 'V') {
       const style = this.scr.toggleStyle();
-      this.msg(style === 'enhanced' ? 'Visual style: Enhanced (V to switch)' : 'Visual style: Classic ASCII (V to switch)', '0C');
+      this.msg(`Visual style: ${STYLE_LABEL[style]} (V to switch)`, '0C');
     } else if (k === '?') {
       await this.show_lines('Help & Controls', HELP);
     } else if (k === 'esc') {
@@ -4077,6 +4077,7 @@ export class Game {
       minutes: this.minutes,
       season: this.season,
       weather: this.map.indoor ? 'Sunny' : this.weather,
+      zoom: s.zoom,
       view: { x: 0, y: 1, w: vw, h: vh },
       divX: vw,
       divY: H - 4,
@@ -4117,11 +4118,16 @@ export class Game {
   draw_map(ox: number, oy: number, vw: number, vh: number): void {
     const s = this.scr;
     const m = this.map;
+    // Large-tile mode draws each map tile into ZX screen cells; the viewport is measured in tiles.
+    const ZX = s.zoom;
+    const cellW = vw;
+    vw = Math.floor(cellW / ZX);
     let cx = 0;
     let cy = 0;
     if (m.w <= vw) {
-      ox += Math.floor((vw - m.w) / 2);
+      ox += Math.floor((cellW - m.w * ZX) / 2);
     } else {
+      ox += Math.floor((cellW - vw * ZX) / 2);
       cx = clamp(this.px - Math.floor(vw / 2), 0, m.w - vw);
     }
     if (m.h <= vh) {
@@ -4133,7 +4139,7 @@ export class Game {
     const classic = s.style === 'classic';
     const night = classic && !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
     const dusk = classic && !m.indoor && m.name !== 'mine' && 17.5 <= hour && hour < 19;
-    if (s.ctx) s.ctx.view = { x: ox, y: oy, w: Math.min(vw, m.w), h: Math.min(vh, m.h) };
+    if (s.ctx) s.ctx.view = { x: ox, y: oy, w: Math.min(vw, m.w) * ZX, h: Math.min(vh, m.h) };
     const [tx, ty] = this.target();
     const aoeSet = new Set<string>();
     aoeSet.add(pkey(tx, ty));
@@ -4166,17 +4172,22 @@ export class Game {
         if (hl) {
           bg = bg === '01' ? '02' : '01';
         }
-        s.put(ox + sx, oy + sy, ch, fg, bg, bold);
-        s.tag(ox + sx, oy + sy, this.cell_tag(m, x, y, row[x], hl));
+        const tag = this.cell_tag(m, x, y, row[x], hl);
+        for (let i = 0; i < ZX; i++) {
+          const px = ox + sx * ZX + i;
+          s.put(px, oy + sy, i === 0 ? ch : ' ', fg, bg, bold);
+          s.tag(px, oy + sy, ZX > 1 ? { ...tag, sub: i, zw: ZX } : tag);
+        }
       }
     }
     const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc') => {
       const [sx, sy] = [x - cx, y - cy];
       if (0 <= sx && sx < Math.min(vw, m.w) && 0 <= sy && sy < Math.min(vh, m.h)) {
-        const bg = s.buf[oy + sy][ox + sx][2];
-        const under = s.tags[oy + sy][ox + sx];
-        s.put(ox + sx, oy + sy, ch, fg, bg, bold);
-        if (under) s.tag(ox + sx, oy + sy, { ...under, ent });
+        const px = ox + sx * ZX;
+        const bg = s.buf[oy + sy][px][2];
+        const under = s.tags[oy + sy][px];
+        s.put(px, oy + sy, ch, fg, bg, bold);
+        if (under) s.tag(px, oy + sy, { ...under, ent });
       }
     };
     // Draw outdoor Dog, Horse, and grazing Chickens/Cows/Sheep on the Farm
@@ -4238,11 +4249,11 @@ export class Game {
       for (let i = 0; i < drops; i++) {
         const [sx, sy] = [rng.randrange(Math.min(vw, m.w)), rng.randrange(Math.min(vh, m.h))];
         if (sx + cx === this.px && sy + cy === this.py) continue;
-        const cell = s.buf[oy + sy][ox + sx];
+        const cell = s.buf[oy + sy][ox + sx * ZX];
         if (isRain) {
-          s.put(ox + sx, oy + sy, '/', '0D', cell[2]);
+          s.put(ox + sx * ZX, oy + sy, '/', '0D', cell[2]);
         } else {
-          s.put(ox + sx, oy + sy, rng.choice('*.'), '07', cell[2]);
+          s.put(ox + sx * ZX, oy + sy, rng.choice('*.'), '07', cell[2]);
         }
       }
     }

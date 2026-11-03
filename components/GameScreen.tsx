@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Screen, Cell, VisualStyle } from '@/src/game/screen';
+import { Screen, Cell, VisualStyle, STYLE_CYCLE } from '@/src/game/screen';
 import { Game } from '@/src/game/engine';
 import { PALETTE } from '@/src/game/constants';
 import { computeFrame, drawFrame, frameSignature } from '@/src/game/enhanced';
@@ -12,14 +12,16 @@ const STYLE_KEY = 'hrvstmn-style';
 function initialStyle(): VisualStyle {
   try {
     const q = new URLSearchParams(window.location.search).get('style');
-    if (q === 'classic' || q === 'enhanced') return q;
+    if (STYLE_CYCLE.includes(q as VisualStyle)) return q as VisualStyle;
     const saved = window.localStorage.getItem(STYLE_KEY);
-    if (saved === 'classic' || saved === 'enhanced') return saved;
+    if (STYLE_CYCLE.includes(saved as VisualStyle)) return saved as VisualStyle;
   } catch {
     // storage unavailable (private mode etc.) - fall through to default
   }
-  return 'enhanced';
+  return 'large';
 }
+
+const STYLE_BUTTON: Record<VisualStyle, string> = { large: 'Large', enhanced: 'Enhanced', classic: 'Classic' };
 const MIN_COLS = 80;
 const MIN_ROWS = 24;
 const MAX_COLS = 160;
@@ -46,7 +48,7 @@ export default function GameScreen() {
   const [isTouch, setIsTouch] = useState(false);
   const [running, setRunning] = useState(true);
   const [ready, setReady] = useState(false);
-  const [style, setStyleState] = useState<VisualStyle>('enhanced');
+  const [style, setStyleState] = useState<VisualStyle>('large');
 
   // Send a key to the game engine
   const sendKey = useCallback((name: string) => {
@@ -187,7 +189,7 @@ export default function GameScreen() {
 
     screen.onRender = () => {
       if (!canvas || !ctx) return;
-      if (screen.style === 'enhanced') {
+      if (screen.style !== 'classic') {
         renderEnhanced();
         return;
       }
@@ -393,7 +395,7 @@ export default function GameScreen() {
             className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#cc00ff] cursor-pointer"
             title="Switch between Enhanced and Classic ASCII graphics"
           >
-            [V] Style: {style === 'enhanced' ? 'Enhanced' : 'Classic'}
+            [V] Style: {STYLE_BUTTON[style]}
           </button>
         </div>
       )}
@@ -512,7 +514,7 @@ export default function GameScreen() {
             onClick={() => screenRef.current?.toggleStyle()}
             className="col-span-4 bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-1.5 text-xs font-medium text-[#cc00ff] shadow"
           >
-            STYLE: {style === 'enhanced' ? 'ENHANCED' : 'CLASSIC'}
+            STYLE: {STYLE_BUTTON[style].toUpperCase()}
           </button>
         </div>
       </div>

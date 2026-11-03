@@ -16,6 +16,7 @@ function scene(over: Partial<RenderCtx> = {}): Screen {
     minutes: 12 * 60,
     season: 0,
     weather: 'Sunny',
+    zoom: 1,
     view: { x: 0, y: 1, w: 50, h: 19 },
     divX: 50,
     divY: 20,
@@ -185,6 +186,45 @@ describe('computeFrame', () => {
     s.put(1, 1, 'HRVSTMN', '0A');
     const out = computeFrame(s, 0);
     assert.equal(out[1][1].ch, 'H');
+  });
+
+  test('large tiles draw two-cell sprites (boulders, cliffs, windows)', () => {
+    const s = scene({ zoom: 2 });
+    const two = (x: number, y: number, tag: object, ch = ' ', fg = '05', bg = '00') => {
+      s.put(x, y, ch, fg, bg);
+      s.put(x + 1, y, ' ', fg, bg);
+      s.tag(x, y, { ...tag, sub: 0, zw: 2 } as any);
+      s.tag(x + 1, y, { ...tag, sub: 1, zw: 2 } as any);
+    };
+    two(4, 4, { t: 'field', wx: 2, wy: 4, k: 'obj:boulder' }, 'O', '04');
+    two(8, 4, { t: 'cliff', wx: 4, wy: 4 }, '^', '03');
+    two(12, 4, { t: 'wall', wx: 6, wy: 4, k: 'deco', dch: '=', dfg: '0C' }, '=', '0C', '01');
+    two(16, 4, { t: 'field', wx: 8, wy: 4, k: 'obj:stone' }, '*', '04');
+    const out = computeFrame(s, 0);
+    assert.deepEqual([out[4][4].ch, out[4][5].ch], ['◖', '◗']);
+    assert.deepEqual([out[4][8].ch, out[4][9].ch], ['◢', '◣']);
+    assert.deepEqual([out[4][12].ch, out[4][13].ch], ['▐', '▌']);
+    assert.equal(out[4][16].dx, 0.5, 'single glyphs are centred in their tile');
+    assert.equal(out[4][17].ch, ' ');
+  });
+
+  test('ground right below a building is shaded', () => {
+    const s = scene();
+    s.put(10, 5, '#', '02', '01');
+    s.tag(10, 5, { t: 'wall', wx: 10, wy: 5 });
+    const shaded = computeFrame(s, 0)[6][10].bg;
+    const open = computeFrame(scene(), 0)[6][10].bg;
+    assert.ok(lum(shaded) < lum(open));
+  });
+
+  test('cloud shadows appear on sunny days only, and drift', () => {
+    const bgs = (s: Screen, t: number) => computeFrame(s, t).slice(1, 20).map((r) => r.slice(0, 50).map((o) => o.bg).join()).join();
+    const sunny = scene();
+    assert.notEqual(bgs(sunny, 0), bgs(sunny, 40), 'clouds move over time');
+    const rainy = scene({ weather: 'Rain' });
+    const indoor = scene({ indoor: true });
+    assert.equal(bgs(indoor, 0), bgs(indoor, 40));
+    assert.ok(rainy);
   });
 
   test('hash is deterministic and in range', () => {

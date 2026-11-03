@@ -16,6 +16,8 @@ export type OutCell = {
   bold: boolean;
   glow?: string;
   glowR?: number;
+  /** Horizontal offset in cells, used to centre a glyph in a 2-cell tile. */
+  dx?: number;
 };
 
 // ---------------------------------------------------------------- colour math
@@ -70,6 +72,10 @@ type Theme = {
   waterFg: string;
   leaves?: string[];
   snow?: boolean;
+  blossom?: string[];
+  fruit?: string;
+  wildflowers?: string[];
+  lilies?: boolean;
 };
 
 export const THEMES: Theme[] = [
@@ -79,6 +85,7 @@ export const THEMES: Theme[] = [
     trees: ['#3fe01a', '#2fb814', '#24910f'], treeBg: '#071606', treeGlyphs: ['♣', '♠'],
     soilBg: '#1d150e', soilDot: '#4a3826', weed: '#3fa52a',
     waterBg: '#03204e', waterBg2: '#062c66', waterFg: '#3d8cff',
+    blossom: ['#ffa8d8', '#ffd0ec', '#ff80c0'], wildflowers: ['#ffe27a', '#ff9ad0', '#ffffff', '#b8a0ff'],
   },
   {
     // Summer
@@ -86,6 +93,7 @@ export const THEMES: Theme[] = [
     trees: ['#2fd010', '#22aa0c', '#188a08'], treeBg: '#041404', treeGlyphs: ['♣', '♠'],
     soilBg: '#22180e', soilDot: '#55402a', weed: '#48b82a',
     waterBg: '#022456', waterBg2: '#053272', waterFg: '#45a0ff',
+    fruit: '#ff4a3a', wildflowers: ['#ffe27a', '#ff6a6a', '#ffffff'], lilies: true,
   },
   {
     // Fall
@@ -202,50 +210,75 @@ function groundBg(F: Frame, tag: CellTag): string {
   }
 }
 
-function isRoofTag(tag: CellTag | null): boolean {
-  return !!tag && tag.t === 'roof' && (!tag.dch || tag.dch === '^');
+/** Smooth 2D value noise in [0, 1). */
+export function valueNoise(x: number, y: number, s = 0): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const a = hash(x0, y0, s);
+  const b = hash(x0 + 1, y0, s);
+  const c = hash(x0, y0 + 1, s);
+  const d = hash(x0 + 1, y0 + 1, s);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
 }
+
+const SHADOW_CASTERS = new Set(['wall', 'door', 'roof', 'tree', 'cliff', 'bookcase', 'shelf', 'counter', 'mwall', 'iwall']);
+const SHADOW_RECEIVERS = new Set(['grass', 'field', 'path', 'sand', 'flower', 'floor', 'mfloor', 'bridge']);
 
 /** Style one tagged map cell (terrain, objects, crops, structures). */
 export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Cell): OutCell {
   const th = F.theme;
   const wx = tag.wx ?? x;
   const wy = tag.wy ?? y;
+  const sub = tag.sub ?? 0;
+  const wide = (tag.zw ?? 1) > 1;
+  // In large-tile mode the engine writes the tile's glyph into sub-cell 0 only.
+  const lead = sub > 0 && x - sub >= 0 ? F.buf[y][x - sub] : cell;
+  const g = lead[0];
+  const fg = lead[1];
+  const bold = lead[3];
   const h = hash(wx, wy);
-  const [g, fg, , bold] = cell;
+  // per-sub-cell noise, so a 2-cell tile gets two independent texture samples
+  const hs = wide ? hash(wx * 2 + sub, wy, 17) : h;
   const k = tag.k || '';
+  /** A single glyph that should sit centred in its tile. */
+  const centre = (o: OutCell): OutCell => (!wide ? o : sub === 0 ? { ...o, dx: 0.5 } : { ...o, ch: ' ', glow: undefined });
 
   // ---- objects on the field
   if (k.startsWith('obj:')) {
     const soil = groundBg(F, tag);
     switch (k) {
       case 'obj:weed':
-        return { ch: 'ψ', fg: mix(th.weed, '#000000', hash(wx, wy, 8) * 0.35), bg: soil, bold: false };
+        return centre({ ch: 'ψ', fg: mix(th.weed, '#000000', hash(wx, wy, 8) * 0.35), bg: soil, bold: false });
       case 'obj:stone':
-        return { ch: '•', fg: '#a9a9b4', bg: soil, bold: true };
+        return centre({ ch: '•', fg: '#a9a9b4', bg: soil, bold: true });
       case 'obj:rock':
-        return { ch: '•', fg: '#78787f', bg: soil, bold: true };
+        return centre({ ch: '•', fg: '#78787f', bg: soil, bold: true });
       case 'obj:boulder':
+        if (wide) return { ch: sub === 0 ? '◖' : '◗', fg: '#8c8c98', bg: soil, bold: false };
         return { ch: '●', fg: '#8c8c98', bg: mix(soil, '#3a342e', 0.6), bold: false };
       case 'obj:stump':
-        return { ch: '◉', fg: '#b8702e', bg: soil, bold: false };
+        return centre({ ch: '◉', fg: '#b8702e', bg: soil, bold: false });
       case 'obj:branch':
-        return { ch: '╱', fg: '#c58a4a', bg: soil, bold: true };
+        return centre({ ch: '╱', fg: '#c58a4a', bg: soil, bold: true });
     }
   }
   if (k === 'forage') {
-    return { ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 3 };
+    return centre({ ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 3 });
   }
   // ---- tilled soil and crops
   if (k.startsWith('soil') || k.startsWith('crop:')) {
     const wet = k.endsWith(':wet');
     const bg = wet ? mix('#160e08', '#1a1209', hash(wx, wy, 5)) : mix('#2c1c0f', '#321f10', hash(wx, wy, 5));
     if (k.startsWith('soil')) return { ch: '≡', fg: wet ? '#3c2c1e' : '#5a3e24', bg, bold: false };
-    if (k.startsWith('crop:seed')) return { ch: '∴', fg: '#c89058', bg, bold: false };
-    if (k.startsWith('crop:sprout')) return { ch: ',', fg: '#7ad04a', bg, bold: true };
-    if (k.startsWith('crop:young')) return { ch: '"', fg: '#5ae02a', bg, bold: true };
+    if (k.startsWith('crop:seed')) return centre({ ch: '∴', fg: '#c89058', bg, bold: false });
+    if (k.startsWith('crop:sprout')) return centre({ ch: ',', fg: '#7ad04a', bg, bold: true });
+    if (k.startsWith('crop:young')) return centre({ ch: '"', fg: '#5ae02a', bg, bold: true });
     // ripe: the crop's own glyph and colour, with a gentle "ready" glow
-    return { ch: g, fg: pal(fg), bg, bold: true, glow: pal(fg), glowR: 6 };
+    return centre({ ch: g, fg: pal(fg), bg, bold: true, glow: pal(fg), glowR: 6 });
   }
 
   switch (tag.t) {
@@ -254,61 +287,84 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     case 'grass': {
       const gb = grassBg(F, wx, wy);
       if (th.snow) {
-        if (h < 0.18) return { ch: h < 0.08 ? '∙' : '·', fg: th.grassDetail, bg: gb, bold: false };
+        if (hs < 0.18) return { ch: hs < 0.08 ? '∙' : '·', fg: th.grassDetail, bg: gb, bold: false };
         return { ch: ' ', fg: th.grassDetail, bg: gb, bold: false };
       }
-      if (g === ',' || g === '"') return { ch: g === '"' ? 'ʷ' : ',', fg: th.tuft, bg: gb, bold: false };
-      if (th.leaves && h < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9)), fg: pick(th.leaves, hash(wx, wy, 4)), bg: gb, bold: false };
-      if (h < 0.1) return { ch: "'", fg: th.grassDetail, bg: gb, bold: false };
-      if (h < 0.15) return { ch: '`', fg: th.grassDetail, bg: gb, bold: false };
+      // the engine's own tufts (',' and '"') stay, centred in their tile
+      if (g === ',' || g === '"') return centre({ ch: g === '"' ? 'ʷ' : ',', fg: th.tuft, bg: gb, bold: false });
+      if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves, hash(wx, wy, 4 + sub)), bg: gb, bold: false };
+      if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31 + sub)), bg: gb, bold: true };
+      if (hs < 0.1) return { ch: "'", fg: th.grassDetail, bg: gb, bold: false };
+      if (hs < 0.15) return { ch: '`', fg: th.grassDetail, bg: gb, bold: false };
       return { ch: ' ', fg: th.grassDetail, bg: gb, bold: false };
     }
     case 'flower': {
       const gb = grassBg(F, wx, wy);
       if (th.snow || g === '.') return { ch: '·', fg: th.grassDetail, bg: gb, bold: false };
-      return { ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true };
+      if (wide && sub === 1) return { ch: hash(wx, wy, 33) < 0.5 ? ',' : ' ', fg: th.tuft, bg: gb, bold: false };
+      return centre({ ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true });
     }
     case 'tree': {
-      const ch = h < 0.72 ? th.treeGlyphs[0] : th.treeGlyphs[1];
-      return { ch, fg: pick(th.trees, hash(wx, wy, 1)), bg: mix(th.treeBg, '#000000', hash(wx, wy, 2) * 0.5), bold: true };
+      const ch = hs < 0.72 ? th.treeGlyphs[0] : th.treeGlyphs[1];
+      const bg = mix(th.treeBg, '#000000', hash(wx, wy, 2) * 0.5);
+      let fgc = pick(th.trees, hash(wx * 2 + sub, wy, 1));
+      // seasonal accents: spring blossom, summer fruit, winter snow on the tips
+      const acc = hash(wx * 2 + sub, wy, 41);
+      if (th.blossom && acc < 0.12) return { ch: '❀', fg: pick(th.blossom, hash(wx, wy, 42 + sub)), bg, bold: true };
+      if (th.fruit && acc < 0.05) return { ch: '•', fg: th.fruit, bg, bold: true };
+      if (th.snow && acc < 0.3) fgc = '#eef4fc';
+      return { ch, fg: fgc, bg, bold: true };
     }
     case 'field': {
       const soil = groundBg(F, tag);
-      if (th.snow) return { ch: h < 0.35 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
-      return { ch: h < 0.45 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
+      if (th.snow) return { ch: hs < 0.35 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
+      return { ch: hs < 0.45 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
     }
     case 'path': {
       const pb = groundBg(F, tag);
-      return { ch: h < 0.25 ? '▪' : h < 0.55 ? '·' : ' ', fg: th.snow ? '#7a8494' : '#5a534b', bg: pb, bold: false };
+      return { ch: hs < 0.25 ? '▪' : hs < 0.55 ? '·' : ' ', fg: th.snow ? '#7a8494' : '#5a534b', bg: pb, bold: false };
     }
     case 'sand':
-      return { ch: h < 0.4 ? '·' : h < 0.5 ? '∙' : ' ', fg: '#a08a5a', bg: groundBg(F, tag), bold: false };
+      return { ch: hs < 0.4 ? '·' : hs < 0.5 ? '∙' : ' ', fg: '#a08a5a', bg: groundBg(F, tag), bold: false };
     case 'bridge':
       return { ch: '═', fg: '#c08a4a', bg: '#3a2614', bold: false };
     case 'ice':
-      return { ch: h < 0.3 ? '╱' : ' ', fg: '#d8f0ff', bg: mix('#5a8aa8', '#6a9ab8', hash(wx, wy, 7)), bold: false };
-    case 'cliff':
-      return { ch: '▲', fg: th.snow ? '#c8d0dc' : '#8a8070', bg: '#24201c', bold: false };
+      return { ch: hs < 0.3 ? '╱' : ' ', fg: '#d8f0ff', bg: mix('#5a8aa8', '#6a9ab8', hash(wx, wy, 7)), bold: false };
+    case 'cliff': {
+      const rock = th.snow ? '#c8d0dc' : '#8a8070';
+      if (wide) {
+        // a small peak per tile; snowy tips in winter
+        const cap = th.snow || hash(wx, wy, 44) < 0.15;
+        return { ch: sub === 0 ? '◢' : '◣', fg: cap && hash(wx, wy, 45) < 0.6 ? '#e8eef6' : rock, bg: '#24201c', bold: false };
+      }
+      return { ch: '▲', fg: rock, bg: '#24201c', bold: false };
+    }
     case 'cave':
+      if (wide) return { ch: '▄', fg: '#050505', bg: '#3a342c', bold: false };
       return { ch: '●', fg: '#050505', bg: '#3a342c', bold: false };
     case 'roof': {
       const rc = roofShades(tag.dfg || fg);
       const dch = tag.dch || '^';
       const outside = F.indoor ? '#2a2018' : grassBg(F, wx, wy);
-      if (dch === '/' || dch === '\\') return { ch: dch === '/' ? '◢' : '◣', fg: rc.mid, bg: outside, bold: false };
+      if (dch === '/' || dch === '\\') {
+        // in large-tile mode the slope takes one cell and the other is solid roof
+        if (wide && ((dch === '/' && sub === 1) || (dch === '\\' && sub === 0))) return { ch: ' ', fg: rc.mid, bg: rc.mid, bold: false };
+        return { ch: dch === '/' ? '◢' : '◣', fg: rc.mid, bg: outside, bold: false };
+      }
       const above = y > 0 ? F.tags[y - 1][x] : null;
-      if (!isRoofTag(above) && !(above && above.t === 'roof')) {
+      if (!(above && above.t === 'roof')) {
         return { ch: '▄', fg: rc.mid, bg: outside, bold: false };
       }
-      const snowCap = th.snow && hash(wx, wy, 12) < 0.5;
+      const snowCap = th.snow && hash(wx * 2 + sub, wy, 12) < 0.5;
       return { ch: wy % 2 ? '▒' : '░', fg: snowCap ? '#e8eef8' : rc.lit, bg: rc.mid, bold: false };
     }
     case 'wall': {
       if (tag.k === 'deco' && tag.dch === '=') {
+        if (wide) return { ch: sub === 0 ? '▐' : '▌', fg: '#7fe8ff', bg: '#3a2818', bold: false, glow: '#5fd8ff', glowR: 5 };
         return { ch: '▦', fg: '#7fe8ff', bg: '#3a2818', bold: true, glow: '#5fd8ff', glowR: 5 };
       }
       if (tag.k === 'deco' && tag.dch !== undefined) {
-        return { ch: tag.dch, fg: '#fff2d0', bg: '#6a4424', bold: true };
+        return centre({ ch: tag.dch, fg: '#fff2d0', bg: '#6a4424', bold: true });
       }
       const below = y + 1 < F.tags.length ? F.tags[y + 1][x] : null;
       const base = !below || (below.t !== 'wall' && below.t !== 'door');
@@ -317,40 +373,70 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
         : { ch: '═', fg: '#7c5634', bg: '#4a321e', bold: false };
     }
     case 'door':
+      if (wide) return sub === 0 ? { ch: '▕', fg: '#3a2010', bg: '#8a4e22', bold: false } : { ch: '·', fg: '#ffd24a', bg: '#8a4e22', bold: true };
       return { ch: '▮', fg: '#d08a3a', bg: '#3a2818', bold: true };
     case 'iwall':
       return { ch: '▒', fg: '#6a5844', bg: '#4a3c2e', bold: false };
     case 'mwall':
-      return { ch: h < 0.5 ? '▓' : '▒', fg: '#4a423a', bg: '#2e2924', bold: false };
+      return { ch: hs < 0.5 ? '▓' : '▒', fg: '#4a423a', bg: '#2e2924', bold: false };
     case 'floor':
       return { ch: wy % 2 ? '─' : ' ', fg: '#4a3622', bg: groundBg(F, tag), bold: false };
     case 'mfloor':
-      return { ch: h < 0.3 ? '·' : ' ', fg: '#4a4038', bg: groundBg(F, tag), bold: false };
+      return { ch: hs < 0.3 ? '·' : ' ', fg: '#4a4038', bg: groundBg(F, tag), bold: false };
     case 'fireplace':
-      return { ch: g, fg: '#ff7a30', bg: '#3a1a0a', bold: true, glow: '#ff7a30', glowR: 8 };
+      return centre({ ch: g, fg: '#ff7a30', bg: '#3a1a0a', bold: true, glow: '#ff7a30', glowR: 8 });
+    // ---- furniture
+    case 'bed': {
+      const left = F.tags[y][x - 1];
+      const head = !left || left.t !== 'bed';
+      if (head) return { ch: '▀', fg: '#f2efe8', bg: '#3a4f9a', bold: false };
+      return { ch: hs < 0.5 ? '░' : '▒', fg: '#6a82d0', bg: '#3a4f9a', bold: false };
+    }
+    case 'tv':
+      if (wide) return { ch: sub === 0 ? '▐' : '▌', fg: '#6ae0ff', bg: '#141418', bold: false, glow: '#4ac8ff', glowR: 6 };
+      return { ch: '▓', fg: '#6ae0ff', bg: '#141418', bold: false, glow: '#4ac8ff', glowR: 6 };
+    case 'cal':
+      return centre({ ch: '▤', fg: '#f4ead8', bg: '#3a2818', bold: false });
+    case 'table':
+      return { ch: '▀', fg: '#b07840', bg: groundBg(F, { ...tag, t: 'floor' }), bold: false };
+    case 'counter':
+      return { ch: '▀', fg: '#d0a070', bg: '#5a3a20', bold: false };
+    case 'kitchen':
+      return centre({ ch: '◉', fg: '#ff7040', bg: '#2a2a2e', bold: true, glow: '#ff5020', glowR: 5 });
+    case 'shelf':
+      return { ch: '▤', fg: '#b07a48', bg: '#3a2414', bold: false };
+    case 'bookcase':
+      return { ch: hs < 0.5 ? '▌' : '▐', fg: pick(['#c04848', '#4868c8', '#48a868', '#c8a848', '#9858c0'], hash(wx * 2 + sub, wy, 60)), bg: '#2a1a0e', bold: false };
+    case 'bath':
+      return { ch: hs < 0.5 ? '≈' : '∼', fg: '#3a90d8', bg: '#d8e6ee', bold: false };
+    case 'up':
+    case 'down':
+    case 'exit':
+      return centre({ ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 5 });
     case 'pond':
     case 'spring':
     case 'fountain':
     case 'water': {
-      if (tag.k === 'deco' && tag.dch) return { ch: tag.dch, fg: '#e0f4ff', bg: groundBg(F, tag), bold: true };
+      if (tag.k === 'deco' && tag.dch) return centre({ ch: tag.dch, fg: '#e0f4ff', bg: groundBg(F, tag), bold: true });
       const wb = groundBg(F, tag);
       const tint = tag.t === 'pond' ? '#0a3a2a' : tag.t === 'spring' ? '#0a3a4a' : tag.t === 'fountain' ? '#0a3a6a' : '';
       const bg = tint ? mix(wb, tint, 0.6) : wb;
       const fgc = tag.t === 'spring' ? '#9ae8ff' : tag.t === 'fountain' ? '#7fe8ff' : tag.t === 'pond' ? '#5ae0a0' : th.waterFg;
-      if (g === '-') return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
+      if (g === '-' && sub === 0) return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
       const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
         const n = F.tags[y + dy]?.[x + dx];
         return !!n && !WATERY.has(n.t) && n.t !== 'bridge';
       });
-      if (edge) return { ch: h < 0.5 ? '∼' : ' ', fg: mix(fgc, '#ffffff', 0.25), bg: mix(bg, '#2a5aa0', 0.4), bold: false };
+      if (edge) return { ch: hs < 0.5 ? '∼' : ' ', fg: mix(fgc, '#ffffff', 0.25), bg: mix(bg, '#2a5aa0', 0.4), bold: false };
+      if (th.lilies && tag.t === 'water' && hash(wx, wy, 46) < 0.03) return centre({ ch: '◒', fg: '#3aa040', bg, bold: false });
       const f = Math.floor(F.t * 1.2);
-      const hw = hash(wx, wy, 20 + (f % 64));
+      const hw = hash(wx * 2 + sub, wy, 20 + (f % 64));
       if (tag.t === 'spring' && hw < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
       return { ch: hw < 0.3 ? '≈' : hw < 0.55 ? '∼' : ' ', fg: fgc, bg, bold: false };
     }
   }
   // Generic: furniture, signs, bins, doghouse... keep the readable glyph on a grounded background.
-  return { ch: g, fg: pal(fg), bg: F.indoor || cell[2] === '01' ? '#3a2818' : groundBg(F, tag), bold };
+  return centre({ ch: g, fg: pal(fg), bg: F.indoor || lead[2] === '01' ? '#3a2818' : groundBg(F, tag), bold });
 }
 
 // ---------------------------------------------------------------- frame
@@ -394,6 +480,7 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
       const tag = tags[y][x];
       let o: OutCell;
       if (tag && tag.t !== 'ui') {
+        const leadEnt = (tag.sub ?? 0) > 0 ? tags[y][x - (tag.sub ?? 0)]?.ent : undefined;
         if (tag.ent) {
           const under = styleTile(F, x, y, { ...tag, ent: undefined, k: tag.k?.startsWith('obj:') ? undefined : tag.k }, cell);
           const isPlayer = tag.ent === 'player';
@@ -402,9 +489,14 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
             fg: pal(cell[1]),
             bg: under.bg,
             bold: true,
-            glow: isPlayer ? pal(cell[1]) : undefined,
-            glowR: isPlayer ? 5 : undefined,
+            glow: isPlayer ? pal(cell[1]) : tag.ent === 'npc' ? mix(pal(cell[1]), '#000000', 0.4) : undefined,
+            glowR: isPlayer ? 5 : tag.ent === 'npc' ? 3 : undefined,
+            dx: (tag.zw ?? 1) > 1 ? 0.5 : undefined,
           };
+        } else if (leadEnt) {
+          // second cell of a large tile that holds an entity: ground only, the sprite is centred over both
+          const under = styleTile(F, x, y, { ...tag, k: tag.k?.startsWith('obj:') ? undefined : tag.k }, cell);
+          o = { ...under, ch: ' ', glow: undefined };
         } else {
           o = styleTile(F, x, y, tag, cell);
         }
@@ -442,6 +534,7 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
   if (ctx.divY < H) {
     for (let x = 0; x < W; x++) if (buf[ctx.divY][x][0] === '-' && !tags[ctx.divY][x]) out[ctx.divY][x] = { ch: '─', fg: '#3a3a48', bg: '#000000', bold: false };
   }
+  const v = ctx.view;
   const sky = skyFor(ctx);
   for (const ic of ctx.icons) {
     if (ic.y < 0 || ic.y >= H || ic.x < 0 || ic.x >= W) continue;
@@ -452,8 +545,46 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
     out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: true };
   }
 
+  // ---- contact shadows: ground just below/right of buildings, trees and cliffs is darker
+  for (let y = v.y; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tag = tags[y][x];
+      if (!tag || tag.t === 'ui' || !SHADOW_RECEIVERS.has(tag.t) || (tag.k || '').startsWith('obj:boulder')) continue;
+      const up = y > 0 ? tags[y - 1][x] : null;
+      const left = x > 0 ? tags[y][x - 1] : null;
+      let k = 0;
+      if (up && up.t !== 'ui' && SHADOW_CASTERS.has(up.t)) k = up.t === 'tree' ? 0.22 : 0.34;
+      else if (left && left.t !== 'ui' && (left.t === 'wall' || left.t === 'door')) k = 0.16;
+      if (k) {
+        const o = out[y][x];
+        o.bg = mix(o.bg, '#000000', k);
+        o.fg = mix(o.fg, '#000000', k * 0.6);
+      }
+    }
+  }
+
+  // ---- drifting cloud shadows on fair days
+  const outdoor = !ctx.indoor && ctx.mapName !== 'mine';
+  if (outdoor && ctx.weather === 'Sunny' && sky.amb > 0.85) {
+    const tc = Math.floor(t * 2) / 2; // step twice a second so a static scene doesn't repaint every frame
+    for (let y = v.y; y < v.y + v.h && y < H; y++) {
+      for (let x = v.x; x < v.x + v.w && x < W; x++) {
+        const tag = tags[y][x];
+        if (!tag || tag.t === 'ui') continue;
+        const zw = tag.zw ?? 1;
+        const px = (tag.wx ?? x) + (tag.sub ?? 0) / zw;
+        const n = valueNoise(px / 9 + tc * 0.06, (tag.wy ?? y) / 5 + tc * 0.02, 51);
+        if (n > 0.64) {
+          const k = Math.min(1, (n - 0.64) / 0.2) * 0.2;
+          const o = out[y][x];
+          o.bg = mix(o.bg, '#0a1020', k);
+          o.fg = mix(o.fg, '#0a1020', k * 0.7);
+        }
+      }
+    }
+  }
+
   // ---- weather (outdoor only)
-  const v = ctx.view;
   const outdoorFx = !ctx.indoor && ctx.mapName !== 'mine';
   const w = ctx.weather;
   if (outdoorFx && w !== 'Sunny') {
@@ -466,9 +597,11 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
         if (!tag || tag.t === 'ui' || tag.ent) continue;
         const open = WALKABLE_OPEN.has(tag.t) || WATERY.has(tag.t) || (tag.k || '').startsWith('soil') || (tag.k || '').startsWith('crop:');
         if (!open) continue;
-        const wx = tag.wx ?? x;
+        const zw = tag.zw ?? 1;
+        const wx = (tag.wx ?? x) * zw + (tag.sub ?? 0);
         const wy = tag.wy ?? y;
         const o = out[y][x];
+        if (o.dx) continue; // don't paint over a centred sprite
         if (rain) {
           const drift = w === 'Typhoon' ? 2 : 1;
           if (hash(wx - f * drift, wy - f, 11) < dens) {
@@ -495,10 +628,14 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
-        if (tag.ent === 'player' && sky.lanterns) lights.push({ x, y, r: ctx.mapName === 'mine' ? 8 : 10, col: hexToRgb('#ffd890'), k: 1.15 });
-        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') lights.push({ x, y, r: 3.4, col: hexToRgb('#ffb050'), k: 0.75 });
-        if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x, y, r: 4, col: hexToRgb('#ffa040'), k: 0.8 });
-        if (tag.t === 'fireplace') lights.push({ x, y, r: 5, col: hexToRgb('#ff8a40'), k: 0.8 });
+        // one light per tile, centred on it
+        if ((tag.sub ?? 0) !== 0) continue;
+        const lx = x + ((tag.zw ?? 1) - 1) / 2;
+        const zr = tag.zw ?? 1;
+        if (tag.ent === 'player' && sky.lanterns) lights.push({ x: lx, y, r: (ctx.mapName === 'mine' ? 8 : 10) * (zr > 1 ? 1.3 : 1), col: hexToRgb('#ffd890'), k: 1.15 });
+        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') lights.push({ x: lx, y, r: 3.4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffb050'), k: 0.75 });
+        if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x: lx, y, r: 4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffa040'), k: 0.8 });
+        if (tag.t === 'fireplace') lights.push({ x: lx, y, r: 5 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ff8a40'), k: 0.8 });
       }
     }
     const tintRgb = hexToRgb(sky.tint);
@@ -549,8 +686,8 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
           o.glow = '#ffb040';
           o.glowR = 10;
         }
-        if (fireflies && tag.t === 'grass' && !tag.ent) {
-          const wx = tag.wx ?? x;
+        if (fireflies && tag.t === 'grass' && !tag.ent && !o.dx) {
+          const wx = (tag.wx ?? x) * (tag.zw ?? 1) + (tag.sub ?? 0);
           const wy = tag.wy ?? y;
           if (hash(wx, wy, 77) < 0.03 && hash(wx, wy, 78 + (Math.floor(t * 1.5) % 40)) > 0.35) {
             o.ch = '·';
@@ -591,7 +728,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
     for (let x = 0; x < row.length; x++) {
       const o = row[x];
       if (o.ch === ' ') continue;
-      const px = x * cw;
+      const px = (x + (o.dx ?? 0)) * cw;
       const py = y * ch;
       if (o.ch === '▄' || o.ch === '▀' || o.ch === '█') {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }

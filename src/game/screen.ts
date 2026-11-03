@@ -2,8 +2,14 @@
 
 export type Cell = [char: string, fg: string, bg: string, bold: boolean];
 
-/** Visual style used by the canvas renderer. */
-export type VisualStyle = 'classic' | 'enhanced';
+/** Visual style used by the canvas renderer. 'large' is Enhanced with 2-cell (square) map tiles. */
+export type VisualStyle = 'large' | 'enhanced' | 'classic';
+export const STYLE_CYCLE: VisualStyle[] = ['large', 'enhanced', 'classic'];
+export const STYLE_LABEL: Record<VisualStyle, string> = {
+  large: 'Enhanced (large tiles)',
+  enhanced: 'Enhanced',
+  classic: 'Classic ASCII',
+};
 
 /**
  * Semantic info about a screen cell, written by the engine so the enhanced
@@ -24,6 +30,9 @@ export type CellTag = {
   wy?: number;
   /** Tool-target highlight. */
   hl?: boolean;
+  /** For zoomed tiles: which sub-cell of the tile this is, and the tile width in cells. */
+  sub?: number;
+  zw?: number;
   /** Entity standing on this cell: 'player', 'npc', 'animal', 'pet'. */
   ent?: string;
 };
@@ -39,6 +48,8 @@ export type RenderCtx = {
   /** 0 Spring, 1 Summer, 2 Fall, 3 Winter. */
   season: number;
   weather: string;
+  /** Screen cells per map tile horizontally (1 normal, 2 large tiles). */
+  zoom: number;
   /** Screen rectangle occupied by the map viewport. */
   view: { x: number; y: number; w: number; h: number };
   /** Column of the vertical divider and row of the horizontal divider. */
@@ -53,7 +64,7 @@ export class Screen {
   buf: Cell[][] = [];
   tags: (CellTag | null)[][] = [];
   ctx: RenderCtx | null = null;
-  style: VisualStyle = 'enhanced';
+  style: VisualStyle = 'large';
   onStyleChange?: (style: VisualStyle) => void;
   keyQueue: string[] = [];
   private keyWaiters: Array<{
@@ -93,9 +104,16 @@ export class Screen {
     this.onStyleChange?.(style);
   }
 
+  /** Cycle Large -> Enhanced -> Classic -> Large. */
   toggleStyle(): VisualStyle {
-    this.setStyle(this.style === 'enhanced' ? 'classic' : 'enhanced');
+    const i = STYLE_CYCLE.indexOf(this.style);
+    this.setStyle(STYLE_CYCLE[(i + 1) % STYLE_CYCLE.length]);
     return this.style;
+  }
+
+  /** Map tile width in screen cells for the current style. */
+  get zoom(): number {
+    return this.style === 'large' ? 2 : 1;
   }
 
   put(x: number, y: number, text: string, fg: string = '05', bg: string = '00', bold: boolean = false) {
