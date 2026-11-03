@@ -4399,8 +4399,10 @@ export class Game {
     const lw = LOGO[0].length;
     const x0 = Math.max(0, Math.floor((W - lw) / 2));
     const cols = ['0A', '0E', '0D', '0C', '0B'];
+    s.scene = 'title';
     for (let i = 0; i < LOGO.length; i++) {
       s.put(x0, 2 + i, LOGO[i], cols[i], '00', true);
+      for (let j = 0; j < LOGO[i].length; j++) if (LOGO[i][j] !== ' ') s.tag(x0 + j, 2 + i, { t: 'ui', k: 'logo' });
     }
     const sub = '~ Harvest Moon: Friends of Mineral Town (Complete ASCII Edition) ~';
     s.put(Math.max(0, Math.floor((W - sub.length) / 2)), 8, sub, '04');

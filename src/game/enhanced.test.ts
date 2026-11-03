@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { computeFrame, skyFor, mix, hexToRgb, hash } from './enhanced';
+import { computeFrame, skyFor, mix, hexToRgb, hash, lightning } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -225,6 +225,80 @@ describe('computeFrame', () => {
     const indoor = scene({ indoor: true });
     assert.equal(bgs(indoor, 0), bgs(indoor, 40));
     assert.ok(rainy);
+  });
+
+  test('animals become pictograms on a round token', () => {
+    const s = scene();
+    s.put(10, 10, 'C', '07', '00', true);
+    s.tag(10, 10, { t: 'grass', wx: 10, wy: 10, ent: 'animal' });
+    s.put(12, 10, 'H', '04', '00', true);
+    s.tag(12, 10, { t: 'grass', wx: 12, wy: 10, ent: 'pet' });
+    const out = computeFrame(s, 0);
+    assert.equal(out[10][10].ch, '♉');
+    assert.equal(out[10][12].ch, '♞');
+    assert.ok(out[10][10].token && out[10][10].rim);
+  });
+
+  test('large roofs get a chimney with smoke above it', () => {
+    const s = scene();
+    for (let x = 10; x < 20; x++) {
+      for (const y of [6, 7]) {
+        s.put(x, y, '^', '08', '00');
+        s.tag(x, y, { t: 'roof', wx: x, wy: y, k: 'deco', dch: '^', dfg: '08' });
+      }
+    }
+    const frames = [0, 0.3, 0.6, 0.9].map((tt) => computeFrame(s, tt));
+    assert.ok(frames.some((f) => f[6].some((o) => o.ch === '▐')), 'chimney drawn on the roof top');
+    assert.ok(frames.some((f) => f.slice(3, 6).some((r) => r.some((o) => '°∘·'.includes(o.ch) && o.ch !== ' '))), 'smoke above');
+  });
+
+  test('butterflies on sunny spring days, falling leaves in autumn, none indoors', () => {
+    const count = (s: Screen, ch: string) => [0, 1, 2, 3].reduce((n, tt) => n + computeFrame(s, tt).flat().filter((o) => ch.includes(o.ch)).length, 0);
+    assert.ok(count(scene({ season: 0 }), 'ж×') > 0);
+    assert.ok(count(scene({ season: 2 }), '❦') > 0);
+    assert.equal(count(scene({ season: 0, indoor: true }), 'ж×'), 0);
+  });
+
+  test('rain leaves puddles on paths', () => {
+    const s = scene({ weather: 'Rain' });
+    for (let y = 1; y < 20; y++) for (let x = 0; x < 50; x++) s.tag(x, y, { t: 'path', wx: x, wy: y });
+    const dry = computeFrame(scene(), 0);
+    const wet = computeFrame(s, 0);
+    assert.ok(wet.flat().some((o) => o.bg !== dry[1][1].bg && hexToRgb(o.bg)[2] > hexToRgb(o.bg)[0] + 10), 'bluish puddle cells');
+  });
+
+  test('typhoons flash with lightning now and then', () => {
+    let flashes = 0;
+    for (let tt = 0; tt < 140; tt += 0.05) if (lightning(tt)) flashes++;
+    assert.ok(flashes > 0 && flashes < 2800 * 0.1);
+  });
+
+  test('dialog boxes cast a drop shadow and get a raised panel', () => {
+    const s = scene();
+    s.box(5, 3, 12, 5);
+    const out = computeFrame(s, 0);
+    const plain = computeFrame(scene(), 0);
+    assert.equal(out[4][8].bg, '#0e0e16');
+    assert.ok(lum(out[8][10].bg) < lum(plain[8][10].bg), 'shadow under the box');
+  });
+
+  test('title screen gets a night sky, stars and a gradient logo', () => {
+    const s = new Screen(100, 30);
+    s.scene = 'title';
+    s.put(10, 2, 'HRVSTMN', '0A', '00', true);
+    for (let i = 0; i < 7; i++) s.tag(10 + i, 2, { t: 'ui', k: 'logo' });
+    const out = computeFrame(s, 0);
+    assert.notEqual(out[10][50].bg, '#000000');
+    assert.ok(out.flat().some((o) => o.ch === '·' || o.ch === '✦'));
+    assert.notEqual(out[2][10].fg, out[2][16].fg);
+  });
+
+  test('borders between grass and field are softened', () => {
+    const s = scene();
+    for (let y = 1; y < 20; y++) for (let x = 25; x < 50; x++) s.tag(x, y, { t: 'field', wx: x, wy: y });
+    const out = computeFrame(s, 0);
+    const deep = computeFrame(scene(), 0)[10][24].bg;
+    assert.notEqual(out[10][24].bg, deep);
   });
 
   test('hash is deterministic and in range', () => {

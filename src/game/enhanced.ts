@@ -18,6 +18,9 @@ export type OutCell = {
   glowR?: number;
   /** Horizontal offset in cells, used to centre a glyph in a 2-cell tile. */
   dx?: number;
+  /** Soft round backing disc behind a creature: fill and rim colours. */
+  token?: string;
+  rim?: string;
 };
 
 // ---------------------------------------------------------------- colour math
@@ -178,6 +181,9 @@ type Frame = {
   theme: Theme;
   t: number;
   indoor: boolean;
+  weather: string;
+  /** Ambient light (1 = full day). */
+  amb: number;
 };
 
 const roofShades = (fgCode: string) => {
@@ -227,6 +233,14 @@ export function valueNoise(x: number, y: number, s = 0): number {
 
 const SHADOW_CASTERS = new Set(['wall', 'door', 'roof', 'tree', 'cliff', 'bookcase', 'shelf', 'counter', 'mwall', 'iwall']);
 const SHADOW_RECEIVERS = new Set(['grass', 'field', 'path', 'sand', 'flower', 'floor', 'mfloor', 'bridge']);
+
+const isRainy = (F: Frame) => !F.indoor && (F.weather === 'Rain' || F.weather === 'Typhoon');
+
+function puddle(F: Frame, wx: number, wy: number, sub: number, ground: string): OutCell {
+  const bg = mix(ground, '#1a3456', 0.55);
+  const ripple = hash(wx * 2 + sub, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3;
+  return { ch: ripple ? '◦' : ' ', fg: '#8ab8e8', bg, bold: false };
+}
 
 /** Style one tagged map cell (terrain, objects, crops, structures). */
 export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Cell): OutCell {
@@ -305,7 +319,9 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return centre({ ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true });
     }
     case 'tree': {
-      const ch = hs < 0.72 ? th.treeGlyphs[0] : th.treeGlyphs[1];
+      const windy = !F.indoor && (F.weather === 'Typhoon' || F.weather === 'Blizzard');
+      const sway = windy ? hash(wx * 2 + sub, wy, 90 + (Math.floor(F.t * 3) % 2)) < 0.5 : false;
+      const ch = (hs < 0.72) !== sway ? th.treeGlyphs[0] : th.treeGlyphs[1];
       const bg = mix(th.treeBg, '#000000', hash(wx, wy, 2) * 0.5);
       let fgc = pick(th.trees, hash(wx * 2 + sub, wy, 1));
       // seasonal accents: spring blossom, summer fruit, winter snow on the tips
@@ -317,11 +333,13 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     }
     case 'field': {
       const soil = groundBg(F, tag);
+      if (isRainy(F) && hash(wx, wy, 70) < 0.06) return puddle(F, wx, wy, sub, soil);
       if (th.snow) return { ch: hs < 0.35 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
       return { ch: hs < 0.45 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
     }
     case 'path': {
       const pb = groundBg(F, tag);
+      if (isRainy(F) && hash(wx, wy, 70) < 0.16) return puddle(F, wx, wy, sub, pb);
       return { ch: hs < 0.25 ? '▪' : hs < 0.55 ? '·' : ' ', fg: th.snow ? '#7a8494' : '#5a534b', bg: pb, bold: false };
     }
     case 'sand':
@@ -429,6 +447,9 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       });
       if (edge) return { ch: hs < 0.5 ? '∼' : ' ', fg: mix(fgc, '#ffffff', 0.25), bg: mix(bg, '#2a5aa0', 0.4), bold: false };
       if (th.lilies && tag.t === 'water' && hash(wx, wy, 46) < 0.03) return centre({ ch: '◒', fg: '#3aa040', bg, bold: false });
+      const glint = hash(wx * 2 + sub, wy, 80 + (Math.floor(F.t * 3) % 97));
+      if (!F.indoor && F.weather === 'Sunny' && F.amb > 0.85 && glint < 0.014) return { ch: '✦', fg: '#ffffff', bg, bold: true, glow: '#cfe8ff', glowR: 5 };
+      if (!F.indoor && F.weather === 'Sunny' && F.amb < 0.5 && hash(wx * 2 + sub, wy, 85 + (Math.floor(F.t * 1.5) % 61)) < 0.012) return { ch: '·', fg: '#e8eeff', bg, bold: true };
       const f = Math.floor(F.t * 1.2);
       const hw = hash(wx * 2 + sub, wy, 20 + (f % 64));
       if (tag.t === 'spring' && hw < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
@@ -455,18 +476,25 @@ const WEATHER_ICON: Record<string, [string, string]> = {
   Typhoon: ['☂', '#ff6a6a'],
   Blizzard: ['❄', '#9ae8ff'],
 };
+/** Creature glyphs for animals and pets (engine letters -> pictograms). */
+const CREATURE_GLYPH: Record<string, string> = { H: '♞', C: '♉', S: '☁' };
 const BOX: Record<string, string> = { 'box:h': '─', 'box:v': '│', 'box:tl': '╭', 'box:tr': '╮', 'box:bl': '╰', 'box:br': '╯' };
 
 /**
  * Build the styled frame for the current screen contents.
  * @param t seconds, used for animation (water, rain, snow, fireflies)
  */
-export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'>, t: number): OutCell[][] {
+export function computeFrame(
+  scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'> & Partial<Pick<Screen, 'scene' | 'boxes'>>,
+  t: number,
+): OutCell[][] {
   const { buf, tags, ctx } = scr;
+  const boxes = scr.boxes ?? [];
   const H = buf.length;
   const W = H ? buf[0].length : 0;
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
-  const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor };
+  const skyNow = ctx ? skyFor(ctx) : null;
+  const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1 };
   const out: OutCell[][] = new Array(H);
   const isMapCell = (x: number, y: number) => {
     const tag = tags[y][x];
@@ -484,14 +512,18 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
         if (tag.ent) {
           const under = styleTile(F, x, y, { ...tag, ent: undefined, k: tag.k?.startsWith('obj:') ? undefined : tag.k }, cell);
           const isPlayer = tag.ent === 'player';
+          const creature = tag.ent === 'animal' || tag.ent === 'pet';
+          const sprite = isPlayer ? '☻' : creature ? CREATURE_GLYPH[cell[0]] ?? cell[0] : cell[0];
           o = {
-            ch: isPlayer ? '☻' : cell[0],
+            ch: sprite,
             fg: pal(cell[1]),
             bg: under.bg,
             bold: true,
             glow: isPlayer ? pal(cell[1]) : tag.ent === 'npc' ? mix(pal(cell[1]), '#000000', 0.4) : undefined,
             glowR: isPlayer ? 5 : tag.ent === 'npc' ? 3 : undefined,
             dx: (tag.zw ?? 1) > 1 ? 0.5 : undefined,
+            token: mix(under.bg, '#000000', 0.45),
+            rim: mix(under.bg, pal(cell[1]), isPlayer ? 0.55 : 0.4),
           };
         } else if (leadEnt) {
           // second cell of a large tile that holds an entity: ground only, the sprite is centred over both
@@ -515,7 +547,14 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
     out[y] = row;
   }
 
-  if (!ctx) return out;
+  // ---- ground edges: soften borders between different ground types
+  if (ctx) blendGroundEdges(out, tags, ctx.view, W, H);
+
+  if (!ctx) {
+    if (scr.scene === 'title') titleScene(out, buf, tags, boxes, t, W, H);
+    decorateBoxes(out, boxes, W, H);
+    return out;
+  }
 
   // ---- HUD chrome
   for (let x = 0; x < W; x++) {
@@ -584,6 +623,21 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
     }
   }
 
+  // ---- chimney smoke, butterflies, falling leaves
+  if (outdoor) {
+    chimneys(out, tags, v, t, W, H, ctx.weather);
+    critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
+  }
+  if (outdoor && (ctx.weather === 'Rain' || ctx.weather === 'Typhoon')) {
+    // everything looks wet and a touch darker in the rain
+    for (let y = v.y; y < v.y + v.h && y < H; y++) {
+      for (let x = v.x; x < v.x + v.w && x < W; x++) {
+        const tag = tags[y][x];
+        if (tag && tag.t !== 'ui' && SHADOW_RECEIVERS.has(tag.t)) out[y][x].bg = mix(out[y][x].bg, '#000000', 0.12);
+      }
+    }
+  }
+
   // ---- weather (outdoor only)
   const outdoorFx = !ctx.indoor && ctx.mapName !== 'mine';
   const w = ctx.weather;
@@ -619,10 +673,16 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
     }
   }
 
-  // ---- lighting
+  // ---- lighting (with lightning flashes in a typhoon)
+  const flash = outdoor && ctx.weather === 'Typhoon' && lightning(t);
+  if (flash) {
+    sky.amb = Math.min(1.1, sky.amb + 0.65);
+    sky.tint = '#c8d8ff';
+    sky.tintAmt = 0.25;
+  }
   const fireflies = outdoorFx && sky.amb < 0.62 && (season === 0 || season === 1) && w === 'Sunny';
   const FIREFLY = '#fff27a';
-  if (sky.amb < 0.999) {
+  if (sky.amb < 0.999 || flash) {
     const lights: Light[] = [];
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
@@ -639,6 +699,7 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
       }
     }
     const tintRgb = hexToRgb(sky.tint);
+    const vignette = flash ? 0 : Math.max(0, 0.8 - sky.amb) * 0.6;
     const shade = (col: string, lr: number, lg: number, lb: number, ls: number) => {
       const c = hexToRgb(col);
       const n0 = (c[0] + (tintRgb[0] - c[0]) * sky.tintAmt) * sky.amb;
@@ -680,6 +741,18 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
         const entBoost = tag.ent ? 0.35 : 0;
         o.bg = shade(o.bg, lr, lg, lb, ls);
         o.fg = entBoost && ls < entBoost ? shade(o.fg, 255 * entBoost, 240 * entBoost, 210 * entBoost, entBoost) : shade(o.fg, lr, lg, lb, ls);
+        if (o.token) o.token = shade(o.token, lr, lg, lb, ls);
+        if (o.rim) o.rim = shade(o.rim, lr, lg, lb, ls);
+        if (vignette > 0) {
+          const nx = (x - (v.x + v.w / 2)) / (v.w / 2);
+          const ny = (y - (v.y + v.h / 2)) / (v.h / 2);
+          const d = Math.sqrt(nx * nx + ny * ny) / 1.25;
+          const k = Math.max(0, Math.min(1, (d - 0.5) / 0.5)) * vignette;
+          if (k > 0) {
+            o.bg = mix(o.bg, '#000000', k);
+            o.fg = mix(o.fg, '#000000', k * 0.8);
+          }
+        }
         if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') {
           o.fg = '#ffd27a';
           o.bg = '#5a3410';
@@ -700,7 +773,184 @@ export function computeFrame(scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h
       }
     }
   }
+  decorateBoxes(out, boxes, W, H);
   return out;
+}
+
+// ---------------------------------------------------------------- scene extras
+
+/** Lightning pattern for typhoons: a double flash every few seconds. */
+export function lightning(t: number): boolean {
+  const period = 7;
+  const n = Math.floor(t / period);
+  if (hash(n, 0, 90) > 0.7) return false;
+  const p = t - n * period;
+  return p < 0.12 || (p > 0.24 && p < 0.32);
+}
+
+const GROUND = new Set(['grass', 'field', 'path', 'sand', 'flower']);
+
+function blendGroundEdges(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number) {
+  const base = out.map((r) => r.map((o) => o.bg));
+  for (let y = v.y; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tag = tags[y][x];
+      if (!tag || tag.t === 'ui' || !GROUND.has(tag.t) || tag.k) continue;
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        const n = tags[y + dy]?.[x + dx];
+        if (n && n.t !== 'ui' && GROUND.has(n.t) && n.t !== tag.t && !n.k) {
+          out[y][x].bg = mix(base[y][x], base[y + dy][x + dx], 0.22);
+          break;
+        }
+      }
+    }
+  }
+}
+
+/** Chimneys on the larger roofs, with smoke curling up from them. */
+function chimneys(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], t: number, W: number, H: number, weather: string) {
+  if (weather === 'Typhoon') return;
+  for (let y = v.y + 1; y < v.y + v.h && y < H; y++) {
+    let x = v.x;
+    while (x < v.x + v.w && x < W) {
+      const top = (xx: number) => {
+        const tg = tags[y][xx];
+        const up = tags[y - 1]?.[xx];
+        return !!tg && tg.t === 'roof' && (!tg.dch || tg.dch === '^') && !(up && up.t === 'roof');
+      };
+      if (!top(x)) {
+        x++;
+        continue;
+      }
+      const start = x;
+      while (x < v.x + v.w && x < W && top(x)) x++;
+      const len = x - start;
+      if (len < 5) continue;
+      const cx = start + Math.floor(len * 0.72);
+      const c = out[y][cx];
+      out[y][cx] = { ...c, ch: '▐', fg: '#7a4a38', glow: undefined };
+      const seed = hash(start, y, 33);
+      for (let k = 1; k <= 3; k++) {
+        const yy = y - k;
+        if (yy < v.y) break;
+        const drift = Math.round(Math.sin(t * 0.8 + k + seed * 6) * (k - 1) * 0.7);
+        const xx = cx + drift;
+        const tg = tags[yy]?.[xx];
+        if (!tg || tg.t === 'ui' || tg.ent || tg.t === 'roof') continue; // smoke may drift over treetops
+        const phase = (t * 0.9 + seed + k * 0.37) % 1;
+        if (phase < 0.25 * k - 0.2) continue;
+        const o = out[yy][xx];
+        if (o.dx) continue;
+        out[yy][xx] = { ...o, ch: k === 1 ? '°' : k === 2 ? '∘' : '·', fg: mix('#eeeef4', o.bg, 0.05 + k * 0.15), bold: k === 1, glow: undefined };
+      }
+    }
+  }
+}
+
+/** Butterflies on fair spring/summer days, falling leaves in autumn. */
+function critters(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], t: number, W: number, H: number, season: number, weather: string, amb: number) {
+  const day = amb > 0.85;
+  const butterflies = day && weather === 'Sunny' && (season === 0 || season === 1);
+  const leaves = season === 2 && weather !== 'Typhoon';
+  if (!butterflies && !leaves) return;
+  const n = butterflies ? Math.max(3, Math.round((v.w * v.h) / 500)) : Math.max(6, Math.round((v.w * v.h) / 160));
+  const cols = butterflies ? ['#ffe27a', '#ffffff', '#ff9ad0', '#9ad0ff'] : ['#ff9900', '#ff5a1a', '#e8b400'];
+  for (let i = 0; i < n; i++) {
+    const a = hash(i, 1, 101);
+    const b = hash(i, 2, 102);
+    let fx: number;
+    let fy: number;
+    if (butterflies) {
+      fx = a * v.w + Math.sin(t * 0.45 + i * 1.7) * 9 + Math.sin(t * 1.9 + i) * 1.5;
+      fy = b * v.h + Math.sin(t * 0.6 + i * 2.3) * 3 + Math.cos(t * 2.3 + i) * 0.6;
+    } else {
+      fx = a * v.w + Math.sin(t * 0.7 + i) * 3 + t * 1.2;
+      fy = b * v.h + t * (0.9 + b * 0.6);
+    }
+    const x = v.x + (((Math.round(fx) % v.w) + v.w) % v.w);
+    const y = v.y + (((Math.round(fy) % v.h) + v.h) % v.h);
+    if (y >= H || x >= W) continue;
+    const tg = tags[y][x];
+    if (!tg || tg.t === 'ui' || tg.ent) continue;
+    if (butterflies && !(GROUND.has(tg.t) || (tg.k || '').startsWith('soil') || (tg.k || '').startsWith('crop:'))) continue;
+    if (leaves && !(GROUND.has(tg.t) || WATERY.has(tg.t) || (tg.k || '').startsWith('soil'))) continue;
+    const o = out[y][x];
+    if (o.dx) continue;
+    const flap = Math.floor(t * 6 + i) % 2 === 0;
+    out[y][x] = {
+      ...o,
+      ch: butterflies ? (flap ? 'ж' : '×') : '❦',
+      fg: cols[i % cols.length],
+      bold: true,
+      glow: undefined,
+    };
+  }
+}
+
+/** Night-sky backdrop, hills and a gradient logo for the title screen. */
+function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][], boxes: Screen['boxes'], t: number, W: number, H: number) {
+  const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
+  const ft = Math.floor(t * 2);
+  const near = (x: number) => 3.2 + 1.6 * Math.sin(x * 0.07 + 0.5) + 1.1 * Math.sin(x * 0.19 + 2);
+  const far = (x: number) => 5.8 + 2.2 * Math.sin(x * 0.045 + 1.3) + 0.9 * Math.sin(x * 0.13);
+  let lx0 = W;
+  let lx1 = 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (tags[y][x]?.k === 'logo') { lx0 = Math.min(lx0, x); lx1 = Math.max(lx1, x); }
+  const moonX = Math.floor(W * 0.82);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (inBox(x, y)) continue;
+      const cell = buf[y][x];
+      const o = out[y][x];
+      const fromBottom = H - 1 - y;
+      const skyBg = mix(mix('#04051a', '#1c1240', Math.min(1, y / (H * 0.6))), '#3a1838', Math.max(0, (y - H * 0.55) / (H * 0.45)));
+      const hillNear = fromBottom < near(x);
+      const hillFar = !hillNear && fromBottom < far(x);
+      const bg = hillNear ? '#071208' : hillFar ? '#0c1a22' : skyBg;
+      if (cell[2] === '00') o.bg = bg;
+      if (tags[y][x]?.k === 'logo') {
+        const k = lx1 > lx0 ? (x - lx0) / (lx1 - lx0) : 0;
+        o.fg = mix('#ff4fa8', '#ffb347', k);
+        o.glow = mix(o.fg, '#000000', 0.4);
+        o.glowR = 6;
+        continue;
+      }
+      if (cell[0] !== ' ') continue;
+      if (x === moonX && y === 2) {
+        out[y][x] = { ch: '☾', fg: '#fff4d0', bg, bold: true, glow: '#fff4d0', glowR: 12 };
+        continue;
+      }
+      if (!hillNear && !hillFar && y < H * 0.7) {
+        const h = hash(x, y, 5);
+        if (h < 0.035) {
+          const tw = hash(x, y, 6 + (ft % 9));
+          out[y][x] = { ch: tw > 0.85 ? '✦' : '·', fg: mix('#8890b8', '#ffffff', tw), bg, bold: tw > 0.85 };
+        }
+      } else if (hillNear && fromBottom === Math.floor(near(x)) - 1 && hash(x, 0, 8) < 0.05) {
+        out[y][x] = { ch: '▪', fg: '#ffd27a', bg, bold: true, glow: '#ffb040', glowR: 6 };
+      }
+    }
+  }
+}
+
+/** Dialogs and menus: a raised panel and a soft drop shadow. */
+function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: number) {
+  for (const b of boxes) {
+    for (let y = b.y; y < b.y + b.h && y < H; y++) {
+      for (let x = b.x; x < b.x + b.w && x < W; x++) {
+        if (y < 0 || x < 0) continue;
+        if (out[y][x].bg === '#000000') out[y][x].bg = '#0e0e16';
+      }
+    }
+    const shadow = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
+      if (boxes.some((o) => o !== b && x >= o.x && x < o.x + o.w && y >= o.y && y < o.y + o.h)) return;
+      out[y][x].bg = mix(out[y][x].bg, '#000000', 0.45);
+      out[y][x].fg = mix(out[y][x].fg, '#000000', 0.4);
+    };
+    for (let y = b.y + 1; y <= b.y + b.h; y++) shadow(b.x + b.w, y);
+    for (let x = b.x + 1; x < b.x + b.w; x++) shadow(x, b.y + b.h);
+  }
 }
 
 // ---------------------------------------------------------------- drawing
@@ -754,6 +1004,19 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.closePath();
         g.fill();
         continue;
+      }
+      if (o.token) {
+        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
+        const wide = !!o.dx;
+        g.beginPath();
+        g.ellipse(px + cw / 2, py + ch / 2, wide ? ch * 0.48 : cw * 0.62, ch * 0.46, 0, 0, Math.PI * 2);
+        g.fillStyle = o.token;
+        g.fill();
+        if (o.rim) {
+          g.strokeStyle = o.rim;
+          g.lineWidth = 1;
+          g.stroke();
+        }
       }
       const f = `${o.bold ? 'bold ' : ''}${fontPx}px ${font}`;
       if (f !== curFont) {

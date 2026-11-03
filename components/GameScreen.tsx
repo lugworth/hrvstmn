@@ -276,6 +276,12 @@ export default function GameScreen() {
     };
     window.addEventListener('resize', onResize);
 
+    // Keep Enhanced animations (water, weather, smoke, title sky) moving even while the engine
+    // is waiting in a menu or dialog. Cheap: the renderer skips the paint when nothing changed.
+    const animTimer = setInterval(() => {
+      if (screen.style !== 'classic' && screen.onRender) screen.onRender();
+    }, 100);
+
     // Check for ?autostart=1 query param
     const params = new URLSearchParams(window.location.search);
     const autostart = params.get('autostart') === '1';
@@ -303,6 +309,7 @@ export default function GameScreen() {
       game.running = false;
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', onResize);
+      clearInterval(animTimer);
     };
   }, [sendKey]);
 
