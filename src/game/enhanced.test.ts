@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -538,6 +538,31 @@ describe('computeFrame', () => {
     assert.ok(blanks / (200 * 9) > 0.3);
     assert.equal(subPattern(cell, 16, 2)!.length, 4, '2x2 unchanged');
     assert.ok(rowAlpha('♣', 0, 0, 3) > rowAlpha('♣', 0, 2, 3), 'top row brightest');
+  });
+
+  test('small objects become clusters across their tile, denser in the middle', () => {
+    const weed = { ch: '✿', fg: '#0f0', bg: '#000', bold: false, dx: 0.5, seed: 0.21 };
+    const rows = spritePattern(weed, 16, 3)!;
+    assert.equal(rows.length, 3);
+    assert.ok(rows.every((r) => [...r].length === 6), 'spans the 2-cell tile');
+    let mid = 0;
+    let edge = 0;
+    for (let i = 0; i < 300; i++) {
+      const rr = spritePattern({ ...weed, seed: i / 300 }, 16, 3)!;
+      mid += rr[1].slice(2, 4).replace(/ /g, '').length;
+      edge += (rr[0][0] + rr[2][5]).replace(/ /g, '').length;
+    }
+    assert.ok(mid > edge * 1.5);
+    assert.equal(spritePattern({ ...weed, glow: '#fff' }, 16, 3), null, 'glowing ripe crops stay single');
+    assert.equal(spritePattern({ ch: '☻', fg: '#fff', bg: '#000', bold: true }, 16, 3), null, 'player stays single');
+    assert.equal(spritePattern(weed, 16, 1), null, 'off on small screens');
+    assert.ok(SPRITE_KEEP.has('ψ') && SPRITE_KEEP.has('•'), 'weeds and stones keep a full-size glyph');
+    const w3 = spritePattern({ ...weed, ch: 'ψ' }, 16, 3)!;
+    assert.equal(w3[1].slice(2, 4), '  ', 'centre left clear for the full-size weed');
+  });
+
+  test('meadows carry a faint stipple between the tufts', () => {
+    assert.ok(computeFrame(scene(), 0).flat().filter((o) => o.ch === '˙').length > 50);
   });
 
   test('hash is deterministic and in range', () => {
