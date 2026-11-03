@@ -48,6 +48,88 @@ export function mix(a: string, b: string, t: number): string {
   const B = hexToRgb(b);
   return rgbToHex([A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t]);
 }
+// ---------------------------------------------------------------- Isotope ramps
+//
+// Every colour the Enhanced renderer outputs is snapped to a ramp built only from the
+// 16 base16 Isotope Dark colours. Each chromatic hue (08-0F) gets a value ramp with
+// hue shifting: shadows lean toward the palette's indigo (0F), highlights toward its
+// orange (09) and white. Greys come from 00-07. Darks get extra steps so night scenes
+// keep their shape instead of crushing to black.
+
+const RAMP_STEPS = 24;
+let rampSet: RGB[] | null = null;
+const lerp3 = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+export function isotopeRamps(): RGB[] {
+  if (rampSet) return rampSet;
+  const p = (c: string) => hexToRgb(`#${PALETTE[c]}`);
+  const black = p('00');
+  const white = p('07');
+  const cool = p('0F');
+  const warm = p('09');
+  const set: RGB[] = Object.keys(PALETTE).map(p);
+  for (const code of ['08', '09', '0A', '0B', '0C', '0D', '0E', '0F']) {
+    const hue = p(code);
+    for (let i = 1; i <= RAMP_STEPS; i++) {
+      const v = (i / (RAMP_STEPS + 1)) ** 1.7; // denser in the darks
+      if (v <= 0.5) {
+        const t = v / 0.5;
+        set.push(lerp3(black, lerp3(hue, cool, 0.3 * (1 - t)), t));
+      } else {
+        const t = (v - 0.5) / 0.5;
+        set.push(lerp3(hue, lerp3(white, warm, 0.2), t * 0.75));
+      }
+    }
+  }
+  // neutral ramp between the palette greys, with slightly cool darks
+  for (let i = 1; i < 24; i++) {
+    const g = (i / 24) ** 1.4 * 255;
+    set.push(lerp3([g, g, g], cool, 0.05 * (1 - g / 255)));
+  }
+  rampSet = set.map((c) => c.map(Math.round) as RGB);
+  return rampSet;
+}
+
+const quantCache = new Map<string, string>();
+/** Snap a colour to the nearest Isotope ramp colour (perceptually weighted RGB). */
+export function toIsotope(hex: string): string {
+  let q = quantCache.get(hex);
+  if (q) return q;
+  const [r, g, b] = hexToRgb(hex);
+  let best = 0;
+  let bestD = Infinity;
+  const set = isotopeRamps();
+  for (let i = 0; i < set.length; i++) {
+    const c = set[i];
+    const dr = r - c[0];
+    const dg = g - c[1];
+    const db = b - c[2];
+    const rm = (r + c[0]) / 2;
+    const d = (2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  q = rgbToHex(set[best]);
+  if (quantCache.size > 8192) quantCache.clear();
+  quantCache.set(hex, q);
+  return q;
+}
+
+/** Snap every colour in a frame to the Isotope ramps. */
+function snapFrame(frame: OutCell[][]) {
+  for (const row of frame) {
+    for (const o of row) {
+      o.fg = toIsotope(o.fg);
+      o.bg = toIsotope(o.bg);
+      if (o.glow) o.glow = toIsotope(o.glow);
+      if (o.token) o.token = toIsotope(o.token);
+      if (o.rim) o.rim = toIsotope(o.rim);
+    }
+  }
+}
+
 const pal = (code: string, fallback = '#ffffff') => (PALETTE[code] ? `#${PALETTE[code]}` : fallback);
 
 /** Stable per-cell noise in [0, 1). Seeded by world coordinates so textures don't shimmer when the camera scrolls. */
@@ -496,10 +578,6 @@ export function computeFrame(
   const skyNow = ctx ? skyFor(ctx) : null;
   const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1 };
   const out: OutCell[][] = new Array(H);
-  const isMapCell = (x: number, y: number) => {
-    const tag = tags[y][x];
-    return !!tag && tag.t !== 'ui';
-  };
 
   for (let y = 0; y < H; y++) {
     const row: OutCell[] = new Array(W);
@@ -553,6 +631,7 @@ export function computeFrame(
   if (!ctx) {
     if (scr.scene === 'title') titleScene(out, buf, tags, boxes, t, W, H);
     decorateBoxes(out, boxes, W, H);
+    snapFrame(out);
     return out;
   }
 
@@ -614,10 +693,11 @@ export function computeFrame(
         const px = (tag.wx ?? x) + (tag.sub ?? 0) / zw;
         const n = valueNoise(px / 9 + tc * 0.06, (tag.wy ?? y) / 5 + tc * 0.02, 51);
         if (n > 0.64) {
-          const k = Math.min(1, (n - 0.64) / 0.2) * 0.2;
+          const k = Math.min(1, (n - 0.64) / 0.2) * 0.3;
           const o = out[y][x];
-          o.bg = mix(o.bg, '#0a1020', k);
-          o.fg = mix(o.fg, '#0a1020', k * 0.7);
+          // value-only shade so the colour stays on its own Isotope ramp
+          o.bg = mix(o.bg, '#000000', k);
+          o.fg = mix(o.fg, '#000000', k * 0.7);
         }
       }
     }
@@ -774,6 +854,7 @@ export function computeFrame(
     }
   }
   decorateBoxes(out, boxes, W, H);
+  snapFrame(out);
   return out;
 }
 
@@ -791,15 +872,21 @@ export function lightning(t: number): boolean {
 const GROUND = new Set(['grass', 'field', 'path', 'sand', 'flower']);
 
 function blendGroundEdges(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number) {
+  // A 16-colour palette has no in-between hues, so borders are dithered (the classic
+  // limited-palette technique): the softer ground (grass over soil, soil over path)
+  // creeps into its neighbour as a light shade pattern in its own colour.
+  const rank: Record<string, number> = { grass: 3, flower: 3, field: 2, sand: 1, path: 0 };
   const base = out.map((r) => r.map((o) => o.bg));
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
-      if (!tag || tag.t === 'ui' || !GROUND.has(tag.t) || tag.k) continue;
+      if (!tag || tag.t === 'ui' || !GROUND.has(tag.t) || tag.k || out[y][x].ch !== ' ') continue;
+      if (out[y][x - 1]?.dx) continue; // under a centred sprite
+      if (hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 61) > 0.55) continue; // ragged, not a solid band
       for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
         const n = tags[y + dy]?.[x + dx];
-        if (n && n.t !== 'ui' && GROUND.has(n.t) && n.t !== tag.t && !n.k) {
-          out[y][x].bg = mix(base[y][x], base[y + dy][x + dx], 0.22);
+        if (n && n.t !== 'ui' && GROUND.has(n.t) && !n.k && rank[n.t] > rank[tag.t]) {
+          out[y][x] = { ...out[y][x], ch: '░', fg: base[y + dy][x + dx] };
           break;
         }
       }

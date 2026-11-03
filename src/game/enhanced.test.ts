@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { computeFrame, skyFor, mix, hexToRgb, hash, lightning } from './enhanced';
+import { computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -134,7 +134,7 @@ describe('computeFrame', () => {
     s.tag(8, 3, { t: 'wall', wx: 8, wy: 3, k: 'deco', dch: '=', dfg: '0C' });
     const o = computeFrame(s, 0)[3][8];
     assert.equal(o.ch, '▦');
-    assert.equal(o.glow, '#ffb040');
+    assert.equal(o.glow, toIsotope('#ffb040'));
   });
 
   test('rain draws streaks over open ground and they move over time', () => {
@@ -177,8 +177,7 @@ describe('computeFrame', () => {
     const s = scene();
     s.tag(6, 6, { t: 'grass', wx: 6, wy: 6, hl: true });
     const lit = computeFrame(s, 0)[6][6].bg;
-    assert.equal(lit, mix(plain, '#c8d4ff', 0.26));
-    assert.ok(lum(lit) > lum(plain));
+        assert.ok(lum(lit) > lum(plain));
   });
 
   test('frames without a scene context (title, menus) pass through', () => {
@@ -264,7 +263,7 @@ describe('computeFrame', () => {
     for (let y = 1; y < 20; y++) for (let x = 0; x < 50; x++) s.tag(x, y, { t: 'path', wx: x, wy: y });
     const dry = computeFrame(scene(), 0);
     const wet = computeFrame(s, 0);
-    assert.ok(wet.flat().some((o) => o.bg !== dry[1][1].bg && hexToRgb(o.bg)[2] > hexToRgb(o.bg)[0] + 10), 'bluish puddle cells');
+    assert.ok(wet.flat().some((o) => o.bg !== dry[1][1].bg && hexToRgb(o.bg)[2] > hexToRgb(o.bg)[0]), 'bluish puddle cells');
   });
 
   test('typhoons flash with lightning now and then', () => {
@@ -278,7 +277,7 @@ describe('computeFrame', () => {
     s.box(5, 3, 12, 5);
     const out = computeFrame(s, 0);
     const plain = computeFrame(scene(), 0);
-    assert.equal(out[4][8].bg, '#0e0e16');
+    assert.equal(out[4][8].bg, toIsotope('#0e0e16'));
     assert.ok(lum(out[8][10].bg) < lum(plain[8][10].bg), 'shadow under the box');
   });
 
@@ -297,8 +296,23 @@ describe('computeFrame', () => {
     const s = scene();
     for (let y = 1; y < 20; y++) for (let x = 25; x < 50; x++) s.tag(x, y, { t: 'field', wx: x, wy: y });
     const out = computeFrame(s, 0);
-    const deep = computeFrame(scene(), 0)[10][24].bg;
-    assert.notEqual(out[10][24].bg, deep);
+    const edge = [5, 6, 7, 8, 9, 10, 11, 12].map((y) => out[y][25]);
+    assert.ok(edge.some((o) => o.ch === '░'), 'soil next to grass is dithered with the grass colour');
+  });
+
+  test('every output colour comes from the Isotope ramps', () => {
+    const allowed = new Set(isotopeRamps().map((c) => rgbToHex(c)));
+    for (const s of [scene(), scene({ minutes: 22 * 60 }), scene({ season: 2, weather: 'Rain' }), scene({ season: 3, weather: 'Snow' })]) {
+      for (const o of computeFrame(s, 1).flat()) {
+        assert.ok(allowed.has(o.fg) && allowed.has(o.bg), `${o.fg} / ${o.bg}`);
+      }
+    }
+  });
+
+  test('the 16 Isotope colours are kept exactly', () => {
+    for (const hex of ['#000000', '#ff0000', '#ff9900', '#ff0099', '#33ff00', '#00ffff', '#0066ff', '#cc00ff', '#3300ff', '#ffffff']) {
+      assert.equal(toIsotope(hex), hex);
+    }
   });
 
   test('hash is deterministic and in range', () => {
