@@ -363,10 +363,10 @@ export default function GameScreen() {
           </button>
           <button
             type="button"
-            onClick={() => sendKey('h')}
+            onClick={() => sendKey('H')}
             className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff9900] cursor-pointer"
           >
-            [H] Horse
+            [Shift+H] Horse
           </button>
           <button
             type="button"
@@ -489,7 +489,7 @@ export default function GameScreen() {
             BAG
           </button>
           <button
-            onPointerDown={(e) => handleButtonDown('h', e)}
+            onPointerDown={(e) => handleButtonDown('H', e)}
             onPointerUp={handleButtonUp}
             className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#ff9900] shadow"
           >
