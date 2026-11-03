@@ -4373,7 +4373,7 @@ export class Game {
       ['X', 'act / talk'],
       ['TAB', 'next tool'],
       ['I/M', 'bag / memo'],
-      ['⇧H/B', 'horse / bell'],
+      ['⇧H', 'horse  B bell'],
       ['V', 'visual style'],
       ['ESC', 'diary/save'],
       ['?', 'help'],

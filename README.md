@@ -45,6 +45,11 @@ instead of blended. Map backgrounds sink toward Isotope's pure black, and glyph 
 pulled toward the nearest pure Isotope hue while keeping their brightness, for the theme's
 neon-on-black contrast.
 
+Enhanced and Large are drawn **black and white**: every map cell is converted to grey by brightness,
+keeping its light and shade. Only things of interest keep their colour as accents: the player,
+villagers and animals, ripe crops, forage and flowers, doors, lit windows, bins, signs, fixtures,
+stairs, fires, torches and ore, and a few seasonal touches.
+
 ### How the Enhanced renderer works
 
 The engine still writes plain `(glyph, fg, bg)` cells, and also tags each map cell with what it is
