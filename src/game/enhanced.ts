@@ -263,8 +263,9 @@ const SKY_KEYS: SkyKey[] = [
 
 /** Ambient light for a scene, from the in-game clock, location and weather. */
 export function skyFor(ctx: Pick<RenderCtx, 'minutes' | 'indoor' | 'mapName' | 'weather'>): Sky {
-  if (ctx.indoor) return { amb: 1, tint: '#000000', tintAmt: 0, lanterns: false, windowsLit: false };
+  // the mine counts as indoors in the engine, but it's dark down there
   if (ctx.mapName === 'mine') return { amb: 0.24, tint: '#1a1208', tintAmt: 0.35, lanterns: true, windowsLit: false };
+  if (ctx.indoor) return { amb: 1, tint: '#000000', tintAmt: 0, lanterns: false, windowsLit: false };
   const h = (((ctx.minutes / 60) % 24) + 24) % 24;
   let i = 0;
   while (i < SKY_KEYS.length - 2 && SKY_KEYS[i + 1].h <= h) i++;
@@ -354,6 +355,13 @@ export function valueNoise(x: number, y: number, s = 0): number {
 const SHADOW_CASTERS = new Set(['wall', 'door', 'roof', 'tree', 'cliff', 'bookcase', 'shelf', 'counter', 'mwall', 'iwall']);
 const SHADOW_RECEIVERS = new Set(['grass', 'field', 'path', 'sand', 'flower', 'floor', 'mfloor', 'bridge']);
 
+/** A mine wall facing open floor gets a torch every so often. */
+function isTorch(F: Frame, x: number, y: number, tag: CellTag): boolean {
+  if ((tag.sub ?? 0) !== 0 || hash(tag.wx ?? x, tag.wy ?? y, 68) > 0.07) return false;
+  const below = F.tags[y + 1]?.[x];
+  return !!below && below.t === 'mfloor';
+}
+
 const isRainy = (F: Frame) => !F.indoor && (F.weather === 'Rain' || F.weather === 'Typhoon');
 
 function puddle(F: Frame, wx: number, wy: number, sub: number, ground: string): OutCell {
@@ -430,7 +438,11 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
         return { ch: ' ', fg: th.grassDetail, bg: gb, bold: false };
       }
       // the engine's own tufts (',' and '"') stay, centred in their tile
-      if (g === ',' || g === '"') return centre({ ch: g === '"' ? 'ʷ' : ',', fg: th.tuft, bg: gb, bold: false });
+      if (g === ',' || g === '"') {
+        // tufts sway in a slow breeze
+        const sway = Math.floor(F.t * 0.8 + hash(wx, wy, 66) * 4) % 4 === 0;
+        return centre({ ch: g === '"' ? (sway ? '"' : 'ʷ') : sway ? '`' : ',', fg: th.tuft, bg: gb, bold: false });
+      }
       if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves, hash(wx, wy, 4 + sub)), bg: gb, bold: false };
       if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31 + sub)), bg: gb, bold: true };
       if (th.fruit && hs > 0.93) return { ch: 'ʷ', fg: th.tuft, bg: gb, bold: false }; // tall summer grass
@@ -531,10 +543,15 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     case 'iwall':
       return { ch: '▒', fg: '#6a5844', bg: '#4a3c2e', bold: false };
     case 'mwall':
+      if (isTorch(F, x, y, tag)) return centre({ ch: '†', fg: '#ff9900', bg: '#2e2924', bold: true, glow: '#ff9900', glowR: 9 });
       return { ch: hs < 0.5 ? '▓' : '▒', fg: '#4a423a', bg: '#2e2924', bold: false };
-    case 'floor':
+    case 'floor': {
+      const nearTable = [[-2, 0], [2, 0], [0, -1], [0, 1], [-2, 1], [2, 1], [-2, -1], [2, -1]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.t === 'table');
+      if (nearTable) return { ch: '░', fg: mix('#ff0099', '#000000', 0.45), bg: mix(groundBg(F, tag), '#ff0099', 0.1), bold: false }; // rug
       return { ch: wy % 2 ? '─' : ' ', fg: '#4a3622', bg: groundBg(F, tag), bold: false };
+    }
     case 'mfloor':
+      if (hash(wx * 2 + sub, wy, 67) < 0.012) return { ch: '✦', fg: '#00ffff', bg: groundBg(F, tag), bold: false, glow: '#00ffff', glowR: 4 }; // ore glint
       return { ch: hs < 0.3 ? '·' : ' ', fg: '#4a4038', bg: groundBg(F, tag), bold: false };
     case 'fireplace':
       return centre({ ch: g, fg: '#ff7a30', bg: '#3a1a0a', bold: true, glow: '#ff7a30', glowR: 8 });
@@ -852,6 +869,7 @@ export function computeFrame(
         if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') lights.push({ x: lx, y, r: 3.4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffb050'), k: 0.75 });
         if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x: lx, y, r: 4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffa040'), k: 0.8 });
         if (tag.t === 'fireplace') lights.push({ x: lx, y, r: 5 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ff8a40'), k: 0.8 });
+        if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x: lx, y: y + 1, r: 5 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ff9900'), k: 0.85 });
       }
     }
     const tintRgb = hexToRgb(sky.tint);
@@ -886,7 +904,9 @@ export function computeFrame(
           const dy = y - L.y;
           const d = Math.sqrt(dx * dx + dy * dy);
           if (d < L.r) {
-            const k = (1 - d / L.r) ** 1.1 * L.k;
+            // flames flicker a little; each light has its own rhythm
+            const flick = 0.9 + 0.1 * Math.sin(Math.floor(t * 8) * 0.9 + L.x * 1.7 + L.y * 2.3);
+            const k = (1 - d / L.r) ** 1.1 * L.k * flick;
             lr += L.col[0] * k;
             lg += L.col[1] * k;
             lb += L.col[2] * k;

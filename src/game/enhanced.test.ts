@@ -351,6 +351,27 @@ describe('computeFrame', () => {
     assert.equal(neon('#808080'), '#808080', 'greys untouched');
   });
 
+  test('mine walls carry torches that light the floor', () => {
+    const s = scene({ mapName: 'mine', indoor: true });
+    for (let x = 0; x < 50; x++) {
+      s.tag(3, 0, null);
+      s.tag(x, 3, { t: 'mwall', wx: x, wy: 3 });
+      for (let y = 4; y < 19; y++) s.tag(x, y, { t: 'mfloor', wx: x, wy: y });
+    }
+    const out = computeFrame(s, 0);
+    const torches = out[3].map((o, x) => (o.ch === '†' ? x : -1)).filter((x) => x >= 0);
+    assert.ok(torches.length > 0);
+    const tx = torches[0];
+    assert.ok(lum(out[4][tx].bg) > lum(out[15][tx].bg), 'floor near a torch is lit');
+  });
+
+  test('a rug lies under the table', () => {
+    const s = scene({ indoor: true, mapName: 'house' });
+    for (let y = 1; y < 20; y++) for (let x = 0; x < 50; x++) s.tag(x, y, { t: 'floor', wx: x, wy: y });
+    s.tag(10, 10, { t: 'table', wx: 10, wy: 10 });
+    assert.equal(computeFrame(s, 0)[11][10].ch, '░');
+  });
+
   test('hash is deterministic and in range', () => {
     for (let i = 0; i < 50; i++) {
       const v = hash(i, i * 3, 2);
