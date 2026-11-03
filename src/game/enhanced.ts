@@ -130,6 +130,44 @@ function snapFrame(frame: OutCell[][]) {
   }
 }
 
+// Isotope Dark is pure black with saturated neon glyphs. These push map cells that way:
+// backgrounds sink toward black, chromatic glyph colours move toward the nearest pure hue.
+const NEON_HUES = ['08', '09', '0A', '0B', '0C', '0D', '0E', '0F'].map((c) => {
+  const rgb = hexToRgb(`#${PALETTE[c]}`);
+  return { hex: `#${PALETTE[c]}`, h: hsv(rgb)[0] };
+});
+
+export function hsv([r, g, b]: RGB): [number, number, number] {
+  const mx = Math.max(r, g, b);
+  const mn = Math.min(r, g, b);
+  const d = mx - mn;
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = (h * 60 + 360) % 360;
+  }
+  return [h, mx ? d / mx : 0, mx / 255];
+}
+
+/** Pull a glyph colour toward the nearest pure Isotope hue (greys are left alone). */
+export function neon(hex: string, k = 0.5): string {
+  const [h, sat, v] = hsv(hexToRgb(hex));
+  if (sat < 0.25 || v < 0.06) return hex;
+  let best = NEON_HUES[0];
+  let bd = 999;
+  for (const n of NEON_HUES) {
+    const d = Math.min(Math.abs(n.h - h), 360 - Math.abs(n.h - h));
+    if (d < bd) { bd = d; best = n; }
+  }
+  // keep roughly the original brightness (dim details stay dim), but in the pure hue
+  const pure = hexToRgb(best.hex);
+  const pv = Math.max(pure[0], pure[1], pure[2]) / 255;
+  const scale = Math.min(1, v * 1.25 + 0.04) / pv;
+  return mix(hex, rgbToHex([pure[0] * scale, pure[1] * scale, pure[2] * scale]), k + 0.15);
+}
+
 const pal = (code: string, fallback = '#ffffff') => (PALETTE[code] ? `#${PALETTE[code]}` : fallback);
 
 /** Stable per-cell noise in [0, 1). Seeded by world coordinates so textures don't shimmer when the camera scrolls. */
@@ -371,7 +409,10 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
   if (k.startsWith('soil') || k.startsWith('crop:')) {
     const wet = k.endsWith(':wet');
     const bg = wet ? mix('#160e08', '#1a1209', hash(wx, wy, 5)) : mix('#2c1c0f', '#321f10', hash(wx, wy, 5));
-    if (k.startsWith('soil')) return { ch: '≡', fg: wet ? '#3c2c1e' : '#5a3e24', bg, bold: false };
+    if (k.startsWith('soil')) {
+      if (wet && hash(wx * 2 + sub, wy, 64) < 0.12) return { ch: '·', fg: '#4a8ad8', bg, bold: true }; // a glint of water
+      return { ch: wy % 2 ? '≡' : '═', fg: wet ? '#4a3424' : '#7a5230', bg, bold: false };
+    }
     if (k.startsWith('crop:seed')) return centre({ ch: '∴', fg: '#c89058', bg, bold: false });
     if (k.startsWith('crop:sprout')) return centre({ ch: ',', fg: '#7ad04a', bg, bold: true });
     if (k.startsWith('crop:young')) return centre({ ch: '"', fg: '#5ae02a', bg, bold: true });
@@ -644,6 +685,20 @@ export function computeFrame(
       row[x] = o;
     }
     out[y] = row;
+  }
+
+  // ---- Isotope Dark look: black-leaning grounds, neon glyphs (before lighting)
+  if (ctx) {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const tag = tags[y][x];
+        if (!tag || tag.t === 'ui') continue;
+        const o = out[y][x];
+        o.bg = mix(o.bg, '#000000', 0.42);
+        o.fg = neon(o.fg);
+        if (o.token) o.token = mix(o.token, '#000000', 0.42);
+      }
+    }
   }
 
   // ---- ground edges: soften borders between different ground types

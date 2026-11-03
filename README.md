@@ -41,7 +41,9 @@ Every colour the Enhanced renderer draws is snapped to ramps built only from the
 Isotope Dark colours (`toIsotope` in `src/game/enhanced.ts`). Each hue gets a value ramp with hue
 shifting: shadows lean toward the palette's indigo, highlights toward its orange and white. Where
 two grounds meet, there's no in-between hue in the palette, so the border is dithered with `░`
-instead of blended.
+instead of blended. Map backgrounds sink toward Isotope's pure black, and glyph colours are
+pulled toward the nearest pure Isotope hue while keeping their brightness, for the theme's
+neon-on-black contrast.
 
 ### How the Enhanced renderer works
 
