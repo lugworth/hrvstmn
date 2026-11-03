@@ -479,6 +479,8 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
         const sway = Math.floor(F.t * 0.8 + hash(wx, wy, 66) * 4) % 4 === 0;
         return centre({ ch: g === '"' ? (sway ? '"' : 'ʷ') : sway ? '`' : ',', fg: th.tuft, bg: gb, bold: false });
       }
+      const nearTree = th.leaves && [[-1, 0], [1, 0], [0, 1], [0, -1], [-1, 1], [1, 1]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.t === 'tree');
+      if (nearTree && hs < 0.32) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves!, hash(wx, wy, 4 + sub)), bg: gb, bold: false, accent: true }; // leaf litter
       if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves, hash(wx, wy, 4 + sub)), bg: gb, bold: false };
       if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31 + sub)), bg: gb, bold: true };
       if (th.fruit && hs > 0.93) return { ch: 'ʷ', fg: th.tuft, bg: gb, bold: false }; // tall summer grass
@@ -576,7 +578,10 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       // corner posts frame each building; the row under the eaves sits in shadow
       if (!base && !walled(F.tags[y][x - 1])) o = { ...o, ch: wide ? '▐' : '║', fg: '#2a1a0e' };
       else if (!base && !walled(F.tags[y][x + 1])) o = { ...o, ch: wide ? '▌' : '║', fg: '#2a1a0e' };
-      if (above && above.t === 'roof') o = { ...o, bg: mix(o.bg, '#000000', 0.38), fg: mix(o.fg, '#000000', 0.3) };
+      if (above && above.t === 'roof') {
+        o = { ...o, bg: mix(o.bg, '#000000', 0.38), fg: mix(o.fg, '#000000', 0.3) };
+        if (th.snow && hash(wx * 2 + sub, wy, 74) < 0.55) o = { ...o, ch: '╷', fg: '#e8f0ff' }; // icicles on the eaves
+      }
       return o;
     }
     case 'door':
@@ -896,6 +901,10 @@ export function computeFrame(
     }
   }
 
+  // ---- footprints in snow and sand, birds on fine days
+  if (outdoorFx) footprints(out, tags, v, ctx, season);
+  if (outdoorFx && w === 'Sunny' && sky.amb > 0.85) birds(out, tags, v, t);
+
   // ---- lighting (with lightning flashes in a typhoon)
   const flash = outdoor && ctx.weather === 'Typhoon' && lightning(t);
   if (flash) {
@@ -1014,6 +1023,66 @@ export function computeFrame(
   decorateBoxes(out, boxes, W, H);
   snapFrame(out);
   return out;
+}
+
+// A short trail of where the player has been, per map (the renderer's only state).
+const trail: { map: string; wx: number; wy: number }[] = [];
+export function resetTrail() {
+  trail.length = 0;
+}
+
+function footprints(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], ctx: RenderCtx, season: number) {
+  let p: [number, number, number, number] | null = null;
+  for (let y = v.y; y < v.y + v.h && !p && y < tags.length; y++) {
+    for (let x = v.x; x < v.x + v.w && x < tags[y].length; x++) {
+      const tg = tags[y][x];
+      if (tg?.ent === 'player') { p = [x, y, tg.wx ?? x, tg.wy ?? y]; break; }
+    }
+  }
+  if (!p) return;
+  const [px, py, pwx, pwy] = p;
+  const last = trail[trail.length - 1];
+  if (last && last.map !== ctx.mapName) trail.length = 0;
+  if (!last || last.map !== ctx.mapName || last.wx !== pwx || last.wy !== pwy) {
+    trail.push({ map: ctx.mapName, wx: pwx, wy: pwy });
+    if (trail.length > 16) trail.shift();
+  }
+  const zw = ctx.zoom || 1;
+  for (let i = 0; i < trail.length - 1; i++) {
+    const s = trail[i];
+    const x = px + (s.wx - pwx) * zw;
+    const y = py + (s.wy - pwy);
+    if (y < v.y || y >= v.y + v.h || x < v.x || x >= v.x + v.w) continue;
+    const tg = tags[y][x];
+    if (!tg || tg.wx !== s.wx || tg.wy !== s.wy || tg.ent || tg.k) continue;
+    if (!((season === 3 && GROUND.has(tg.t)) || tg.t === 'sand')) continue;
+    const o = out[y][x];
+    if (o.dx) continue;
+    const fresh = (i + 1) / trail.length; // older prints fade
+    out[y][x] = { ...o, ch: ':', fg: mix(o.bg, '#b4bccc', 0.3 + 0.55 * fresh), bold: true, glow: undefined, dx: zw > 1 ? 0.5 : undefined };
+    if (zw > 1 && out[y][x + 1]) out[y][x + 1] = { ...out[y][x + 1], ch: ' ' };
+  }
+}
+
+/** Now and then a small flock crosses the map in a V. */
+function birds(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], t: number) {
+  const period = 40;
+  const n = Math.floor(t / period);
+  const p = (t - n * period) / 16; // a crossing takes 16 s
+  if (p > 1 || hash(n, 3, 130) > 0.65) return;
+  const count = 3 + Math.floor(hash(n, 4, 131) * 3);
+  const y0 = v.y + 1 + Math.floor(hash(n, 5, 132) * v.h * 0.5);
+  const dir = hash(n, 6, 133) < 0.5 ? 1 : -1;
+  const lead = dir > 0 ? v.x - 8 + p * (v.w + 16) : v.x + v.w + 8 - p * (v.w + 16);
+  for (let i = 0; i < count; i++) {
+    const rank = Math.ceil(i / 2);
+    const x = Math.round(lead - dir * rank * 2);
+    const y = y0 + Math.round(p * 3) + (i === 0 ? 0 : i % 2 ? -rank : rank);
+    const tg = tags[y]?.[x];
+    if (!tg || tg.t === 'ui' || tg.ent || out[y][x].dx) continue;
+    const flap = Math.floor(t * 5 + i) % 2 === 0;
+    out[y][x] = { ...out[y][x], ch: flap ? 'v' : 'ˇ', fg: '#d8d8d8', bold: true, glow: undefined };
+  }
 }
 
 const MIRROR: Record<string, string> = { '▄': '▀', '▀': '▄', '◢': '◥', '◣': '◤', '▲': '▼' };

@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -428,6 +428,55 @@ describe('computeFrame', () => {
     night.tag(25, 10, { t: 'grass', wx: 25, wy: 10, ent: 'player' });
     assert.ok(ring(night) > 5);
     assert.equal(ring(scene()), 0);
+  });
+
+  test('icicles hang from the eaves in winter only', () => {
+    const icicles = (season: number) => {
+      const s = scene({ season });
+      for (let x = 10; x < 20; x++) {
+        s.tag(x, 4, { t: 'roof', wx: x, wy: 4, k: 'deco', dch: '^', dfg: '08' });
+        for (const y of [5, 6]) s.tag(x, y, { t: 'wall', wx: x, wy: y });
+      }
+      return computeFrame(s, 0)[5].filter((o) => o.ch === '╷').length;
+    };
+    assert.ok(icicles(3) > 0);
+    assert.equal(icicles(0), 0);
+  });
+
+  test('the player leaves footprints in the snow', () => {
+    resetTrail();
+    const step = (x: number, season: number) => {
+      const s = scene({ season });
+      s.put(x, 10, '@', '07', '00', true);
+      s.tag(x, 10, { t: 'grass', wx: x, wy: 10, ent: 'player' });
+      return computeFrame(s, 0);
+    };
+    step(20, 3);
+    step(21, 3);
+    assert.equal(step(22, 3)[10][20].ch, ':', 'prints behind the player');
+    resetTrail();
+    step(20, 0);
+    assert.notEqual(step(21, 0)[10][20].ch, ':', 'no prints on spring grass');
+    resetTrail();
+  });
+
+  test('birds cross the sky on fine days, not at night', () => {
+    const flock = (minutes: number) => {
+      let n = 0;
+      for (let tt = 0; tt < 400; tt += 2) n += computeFrame(scene({ minutes }), tt).flat().filter((o) => o.ch === 'v' || o.ch === 'ˇ').length;
+      return n;
+    };
+    assert.ok(flock(12 * 60) > 0);
+    assert.equal(flock(23 * 60), 0);
+  });
+
+  test('autumn leaves pile up around trees', () => {
+    const s = scene({ season: 2 });
+    for (let x = 0; x < 50; x++) { s.put(x, 5, 'T', '0B', '00', true); s.tag(x, 5, { t: 'tree', wx: x, wy: 5 }); }
+    const out = computeFrame(s, 0);
+    const near = out[6].filter((o) => o.accent && '•❦,'.includes(o.ch)).length + out[4].filter((o) => o.accent && '•❦,'.includes(o.ch)).length;
+    const far = out[15].filter((o) => o.accent && '•❦,'.includes(o.ch)).length + out[16].filter((o) => o.accent && '•❦,'.includes(o.ch)).length;
+    assert.ok(near > far);
   });
 
   test('hash is deterministic and in range', () => {
