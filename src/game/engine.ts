@@ -240,6 +240,9 @@ export class Game {
     'shipped_total', 'steps', 'fish_caught', 'goddess_gifts', 'kappa_gifts',
     'goddess_jewels', 'kappa_jewels', 'truth_jewels', 'vase_flower', 'makers',
     'fest_wins', 'house_flags', 'project', 'max_spring_floor', 'max_lake_floor',
+    // barn animals, and today's once-per-day flags (a mid-day save/load must not reset them)
+    'animals', 'talked', 'gifted', 'honey_picked', 'prayed', 'bathed', 'fireplace_lit',
+    'tv_watched_saturday', 'zack_paid_today', 'fest_attended', 'fest_declined',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -667,7 +670,8 @@ export class Game {
       await this.rucksack();
     } else if (k === 'm') {
       await this.ranch_summary();
-    } else if (k === 'h') {
+    } else if (k === 'H') {
+      // Shift+H: plain 'h' is vim-style movement (hjkl) and is handled above
       this.whistle_horse();
     } else if (k === 'b') {
       this.ring_grazing_bell();
@@ -691,13 +695,13 @@ export class Game {
 
   whistle_horse(): void {
     if (this.mapname !== 'farm') {
-      this.msg('Your horse stays on your farm. Whistle (H) while outdoors on your farm!');
+      this.msg('Your horse stays on your farm. Whistle (Shift+H) while outdoors on your farm!');
       return;
     }
     this.riding_horse = !this.riding_horse;
     this.horse_aff = Math.min(100, this.horse_aff + 1);
     if (this.riding_horse) {
-      this.msg('Wheeeet! Your horse gallops to your side! Riding at 2x speed! (Press H to dismount)', '09');
+      this.msg('Wheeeet! Your horse gallops to your side! Riding at 2x speed! (Press Shift+H to dismount)', '09');
     } else {
       this.msg('You dismount and pat your horse.', '0B');
     }
@@ -4369,7 +4373,7 @@ export class Game {
       ['X', 'act / talk'],
       ['TAB', 'next tool'],
       ['I/M', 'bag / memo'],
-      ['H/B', 'horse / bell'],
+      ['⇧H/B', 'horse / bell'],
       ['V', 'visual style'],
       ['ESC', 'diary/save'],
       ['?', 'help'],
