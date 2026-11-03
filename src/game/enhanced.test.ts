@@ -263,7 +263,7 @@ describe('computeFrame', () => {
     for (let y = 1; y < 20; y++) for (let x = 0; x < 50; x++) s.tag(x, y, { t: 'path', wx: x, wy: y });
     const dry = computeFrame(scene(), 0);
     const wet = computeFrame(s, 0);
-    assert.ok(wet.flat().some((o) => o.bg !== dry[1][1].bg && hexToRgb(o.bg)[2] > hexToRgb(o.bg)[0]), 'bluish puddle cells');
+    assert.ok(wet.flat().some((o) => o.bg !== dry[1][1].bg), 'puddle cells differ from dry path');
   });
 
   test('typhoons flash with lightning now and then', () => {
@@ -370,6 +370,33 @@ describe('computeFrame', () => {
     for (let y = 1; y < 20; y++) for (let x = 0; x < 50; x++) s.tag(x, y, { t: 'floor', wx: x, wy: y });
     s.tag(10, 10, { t: 'table', wx: 10, wy: 10 });
     assert.equal(computeFrame(s, 0)[11][10].ch, '░');
+  });
+
+  test('monochrome world: plain terrain is pure grey', () => {
+    const isGrey = (h: string) => { const [r, g, b] = hexToRgb(h); return r === g && g === b; };
+    for (const s of [scene(), scene({ season: 2 }), scene({ minutes: 22 * 60 })]) {
+      for (const o of computeFrame(s, 0).slice(1, 20).flatMap((r) => r.slice(0, 50))) {
+        if (!o.accent) assert.ok(isGrey(o.fg) && isGrey(o.bg), `${o.ch} ${o.fg}/${o.bg}`);
+      }
+    }
+  });
+
+  test('things of interest keep their colour as accents', () => {
+    const s = scene();
+    s.put(10, 10, '@', '07', '00', true);
+    s.tag(10, 10, { t: 'grass', wx: 10, wy: 10, ent: 'player' });
+    s.put(12, 10, 'K', '0A', '00', true);
+    s.tag(12, 10, { t: 'grass', wx: 12, wy: 10, ent: 'npc' });
+    s.put(14, 10, 'T', '08', '00', true);
+    s.tag(14, 10, { t: 'field', wx: 14, wy: 10, k: 'crop:ripe' });
+    s.put(16, 10, '+', '09', '01');
+    s.tag(16, 10, { t: 'door', wx: 16, wy: 10 });
+    const out = computeFrame(s, 0);
+    for (const x of [12, 14, 16]) {
+      const [r, g, b] = hexToRgb(out[10][x].fg);
+      assert.ok(!(r === g && g === b), `accent at ${x} keeps colour (${out[10][x].fg})`);
+      assert.ok(out[10][x].accent);
+    }
   });
 
   test('hash is deterministic and in range', () => {
