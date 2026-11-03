@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -499,6 +499,24 @@ describe('computeFrame', () => {
     a.tag(3, 4, { t: 'grass', wx: 3, wy: 4 });
     b.tag(7, 9, { t: 'grass', wx: 3, wy: 4 });
     assert.equal(computeFrame(a, 0)[4][3].seed, computeFrame(b, 0)[9][7].seed);
+  });
+
+  test('high-res foliage is lit from the top-left; textures jitter gently', () => {
+    assert.ok(subAlpha('♣', 0.3, 0) > subAlpha('♣', 0.3, 3));
+    for (let k = 0; k < 4; k++) {
+      const a = subAlpha("'", 0.42, k);
+      assert.ok(a >= 0.6 && a <= 1);
+      assert.equal(a, subAlpha("'", 0.42, k), 'deterministic');
+    }
+  });
+
+  test('water that meets land gets a shoreline foam edge on that side', () => {
+    const s = scene();
+    for (let x = 0; x < 50; x++) for (let y = 8; y < 14; y++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
+    const out = computeFrame(s, 0);
+    assert.ok((out[8][20].foam ?? 0) & 1, 'top shore');
+    assert.ok((out[13][20].foam ?? 0) & 4, 'bottom shore');
+    assert.equal(out[10][20].foam, undefined, 'open water has none');
   });
 
   test('hash is deterministic and in range', () => {

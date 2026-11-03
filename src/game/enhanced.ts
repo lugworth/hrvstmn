@@ -27,6 +27,9 @@ export type OutCell = {
   ui?: boolean;
   /** Per-world-cell noise for the high-resolution texture pass. */
   seed?: number;
+  /** Shoreline foam on these sides (bitmask: 1 top, 2 right, 4 bottom, 8 left). */
+  foam?: number;
+  foamCol?: string;
 };
 
 // ---------------------------------------------------------------- colour math
@@ -126,6 +129,7 @@ function snapFrame(frame: OutCell[][]) {
       if (o.glow) o.glow = toIsotope(o.glow);
       if (o.token) o.token = toIsotope(o.token);
       if (o.rim) o.rim = toIsotope(o.rim);
+      if (o.foamCol) o.foamCol = toIsotope(o.foamCol);
     }
   }
 }
@@ -171,6 +175,7 @@ function monochrome(out: OutCell[][], boxes: Screen['boxes']) {
       if (o.ui || inBox(x, y)) continue;
       o.bg = grey(o.bg);
       if (o.token) o.token = grey(o.token);
+      if (o.foamCol) o.foamCol = grey(o.foamCol);
       if (o.accent) {
         o.fg = neon(o.fg, 0.35);
         continue;
@@ -1021,6 +1026,7 @@ export function computeFrame(
   }
   // ---- reflections in calm water (after lighting, so lit windows reflect too)
   if (outdoor && ctx.weather === 'Sunny') reflections(out, tags, v, t, W, H);
+  shoreFoam(out, tags, v, W, H);
 
   monochrome(out, boxes);
   decorateBoxes(out, boxes, W, H);
@@ -1085,6 +1091,26 @@ function birds(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'
     if (!tg || tg.t === 'ui' || tg.ent || out[y][x].dx) continue;
     const flap = Math.floor(t * 5 + i) % 2 === 0;
     out[y][x] = { ...out[y][x], ch: flap ? 'v' : 'ˇ', fg: '#d8d8d8', bold: true, glow: undefined };
+  }
+}
+
+/** Mark water cells that touch land so the painter can draw a thin foam line on that side. */
+function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number) {
+  const land = (n: CellTag | null | undefined) => !!n && n.t !== 'ui' && !WATERY.has(n.t) && n.t !== 'bridge' && n.t !== 'void';
+  for (let y = v.y; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tg = tags[y][x];
+      if (!tg || !WATERY.has(tg.t)) continue;
+      let m = 0;
+      if (land(tags[y - 1]?.[x])) m |= 1;
+      if (land(tags[y][x + 1])) m |= 2;
+      if (land(tags[y + 1]?.[x])) m |= 4;
+      if (land(tags[y][x - 1])) m |= 8;
+      if (!m) continue;
+      const o = out[y][x];
+      o.foam = m;
+      o.foamCol = mix(o.bg, '#ffffff', 0.42);
+    }
   }
 }
 
@@ -1357,6 +1383,17 @@ export function subPattern(o: OutCell, fontPx: number): string | null {
   return v[Math.floor((o.seed ?? 0) * v.length) % v.length];
 }
 
+/** Textures with form are lit from the top-left; the rest get a gentle per-glyph jitter. */
+const LIT_SUB = new Set(['♣', '♠', '░', '▒', '▓', '═', '≡', '─']);
+const LIT_ALPHA = [1, 0.84, 0.8, 0.62];
+
+/** Brightness (as alpha over the cell background) for mini-glyph k (0..3) of a high-res cell. */
+export function subAlpha(ch: string, seed: number, k: number): number {
+  if (LIT_SUB.has(ch)) return LIT_ALPHA[k];
+  const j = Math.sin(seed * 9301 + k * 49.3) * 43758.5453;
+  return 0.6 + 0.4 * (j - Math.floor(j));
+}
+
 export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics) {
   const { cw, ch, fontPx, font } = m;
   g.save();
@@ -1415,8 +1452,11 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fillStyle = o.fg;
         for (let k = 0; k < 4; k++) {
           const c = pat[k];
-          if (c !== ' ') g.fillText(c, px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5);
+          if (c === ' ') continue;
+          g.globalAlpha = subAlpha(o.ch, o.seed ?? 0, k);
+          g.fillText(c, px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5);
         }
+        g.globalAlpha = 1;
         continue;
       }
       if (o.token) {
@@ -1449,6 +1489,24 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       g.fillText(o.ch, px, py + ch / 2 + 1);
     }
   }
+  // shoreline foam: a thin light line where water meets land
+  const fw = Math.max(1, Math.round(ch / 12));
+  for (let y = 0; y < frame.length; y++) {
+    const row = frame[y];
+    for (let x = 0; x < row.length; x++) {
+      const o = row[x];
+      if (!o.foam) continue;
+      g.fillStyle = o.foamCol ?? '#c0c0c0';
+      const X = Math.floor(x * cw);
+      const Y = Math.floor(y * ch);
+      const Wc = Math.ceil(cw);
+      const Hc = Math.ceil(ch);
+      if (o.foam & 1) g.fillRect(X, Y, Wc, fw);
+      if (o.foam & 4) g.fillRect(X, Y + Hc - fw, Wc, fw);
+      if (o.foam & 8) g.fillRect(X, Y, fw, Hc);
+      if (o.foam & 2) g.fillRect(X + Wc - fw, Y, fw, Hc);
+    }
+  }
   g.restore();
 }
 
@@ -1456,6 +1514,6 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
   // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '');
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '');
   return s;
 }
