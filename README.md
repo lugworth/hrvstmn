@@ -52,7 +52,9 @@ stairs, fires, torches and ore, and a few seasonal touches.
 
 **High-resolution textures:** where the font is large enough (12px or more), map texture cells
 (grass, specks, cobbles, water, foliage, shingles, planks, furrows, rock, floorboards) are drawn as a
-2×2 grid of half-size glyphs, four times the detail per cell. Sprites, text and the HUD stay full
+2×2 grid of half-size glyphs, four times the detail per cell. On sharp screens (font size × device
+pixel ratio ≥ 28, e.g. retina laptops, phones, 4K) they go to a 3×3 grid, nine glyphs per cell, drawn one row per
+call so it stays fast. Sprites, text and the HUD stay full
 size. The patterns are seeded by world position, so they don't shimmer when the view scrolls.
 
 ### How the Enhanced renderer works
