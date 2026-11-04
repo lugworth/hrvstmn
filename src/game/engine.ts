@@ -223,6 +223,7 @@ export class Game {
   museum_rewards: number[] = [];
   requests: VillagerRequest[] = [];
   next_request_id: number = 1;
+  requests_done: number = 0;
 
   prayed: boolean = false;
   fest_wins: string[] = [];
@@ -257,7 +258,7 @@ export class Game {
     'shipped_total', 'steps', 'fish_caught', 'goddess_gifts', 'kappa_gifts',
     'goddess_jewels', 'kappa_jewels', 'truth_jewels', 'vase_flower', 'makers',
     'museum', 'museum_rewards',
-    'requests', 'next_request_id',
+    'requests', 'next_request_id', 'requests_done',
     'fest_wins', 'house_flags', 'project', 'max_spring_floor', 'max_lake_floor',
     // barn animals, and today's once-per-day flags (a mid-day save/load must not reset them)
     'animals', 'talked', 'gifted', 'honey_picked', 'prayed', 'bathed', 'fireplace_lit',
@@ -371,6 +372,7 @@ export class Game {
     this.museum_rewards = [];
     this.requests = [];
     this.next_request_id = 1;
+    this.requests_done = 0;
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -827,6 +829,7 @@ export class Game {
       'Villager Notes (r)',
       'Rucksack (i)',
       'Ranch Summary & Memo (m)',
+      'Achievements & Journal',
       'Save Diary — Slot 1',
       'Save Diary — Slot 2',
       'Load Diary — Slot 1',
@@ -852,6 +855,8 @@ export class Game {
       await this.relationships();
     } else if (choice === 'Ranch Summary & Memo (m)') {
       await this.ranch_summary();
+    } else if (choice === 'Achievements & Journal') {
+      await this.achievements_page();
     } else if (choice === 'Save Diary — Slot 1') {
       this.save(1);
       this.msg('Saved game in Diary Slot 1.', '0B');
@@ -3485,6 +3490,7 @@ export class Game {
     this.take(request.item, request.qty);
     this.gold += request.reward;
     this.friend[request.npc] = clamp((this.friend[request.npc] || 0) + 5, 0, 100);
+    this.requests_done += 1;
     this.requests.splice(index, 1);
     return `${request.npc} got ${request.qty} × ${request.item}! You earned ${request.reward}G and +5 friendship.`;
   }
@@ -3509,6 +3515,44 @@ export class Game {
       return;
     }
     await this.say(result, request.npc);
+  }
+
+  achievement_list(): { name: string; desc: string; done: boolean; progress: string }[] {
+    const fish = py_sum(Object.values(this.fish_caught));
+    const maxFriend = Math.max(0, ...Object.values(this.friend));
+    const gems = this.goddess_jewels + this.kappa_jewels + this.truth_jewels;
+    return [
+      { name: 'First Shipment', desc: 'Ship your first item to Zack', done: this.shipped_total > 0, progress: `${this.shipped_total}G shipped` },
+      { name: 'Market Regular', desc: 'Ship 10,000G worth of goods', done: this.shipped_total >= 10000, progress: `${Math.min(10000, this.shipped_total)}/10000G` },
+      { name: 'Angler', desc: 'Catch 10 fish', done: fish >= 10, progress: `${Math.min(10, fish)}/10 fish` },
+      { name: 'Mine Explorer', desc: 'Reach floor 25 of the Spring Mine', done: this.max_spring_floor >= 25, progress: `floor ${Math.min(25, this.max_spring_floor)}/25` },
+      { name: 'Deep Earth', desc: 'Reach floor 100 of the Spring Mine', done: this.max_spring_floor >= 100, progress: `floor ${Math.min(100, this.max_spring_floor)}/100` },
+      { name: 'Museum Patron', desc: 'Donate 10 items to the museum', done: this.museum.length >= 10, progress: `${Math.min(10, this.museum.length)}/10 donated` },
+      { name: 'Complete Collection', desc: 'Complete the museum collection', done: this.museum.length >= this.museum_total(), progress: `${this.museum.length}/${this.museum_total()} donated` },
+      { name: 'Good Neighbor', desc: 'Complete 5 Rose Square requests', done: this.requests_done >= 5, progress: `${Math.min(5, this.requests_done)}/5 requests` },
+      { name: 'Beloved', desc: 'Reach 80 friendship with a villager', done: maxFriend >= 80, progress: `${maxFriend}/80 hearts` },
+      { name: 'Festival Star', desc: 'Win 3 festivals', done: this.fest_wins.length >= 3, progress: `${Math.min(3, this.fest_wins.length)}/3 wins` },
+      { name: 'Homestead', desc: 'Complete 3 house or farm upgrades', done: this.house_flags.length >= 3, progress: `${Math.min(3, this.house_flags.length)}/3 upgrades` },
+      { name: 'Family', desc: 'Marry and welcome a child', done: !!this.married && !!this.child_name, progress: this.child_name ? 'family complete' : this.married ? 'married' : 'not yet' },
+      { name: 'Rancher', desc: 'Own 8 animals', done: this.animals.length >= 8, progress: `${Math.min(8, this.animals.length)}/8 animals` },
+      { name: 'Gem Hunter', desc: 'Collect 9 gems across the mines', done: gems >= 9, progress: `${Math.min(9, gems)}/9 gems` },
+    ];
+  }
+
+  async achievements_page(): Promise<void> {
+    const list = this.achievement_list();
+    const done = list.filter((a) => a.done).length;
+    const pages: string[][] = [];
+    let page = [`  ${done}/${list.length} unlocked`];
+    for (const a of list) {
+      if (page.length >= 18) {
+        pages.push(page);
+        page = ['  Achievements (continued)'];
+      }
+      page.push(`  ${a.done ? '[x]' : '[ ]'} ${a.name} — ${a.desc}  (${a.progress})`);
+    }
+    pages.push(page);
+    await this.show_pages('Achievements & Journal', pages);
   }
 
   async ranch_summary(): Promise<void> {
