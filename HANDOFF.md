@@ -50,7 +50,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 - **Villager Notes (`R`)**: every NPC's hearts, favourite gifts, and usual whereabouts, paginated safely without splitting a villager across pages.
 - **Tool previews:** the HUD shows the current tool's stamina cost (`-2st`, etc.) and a faint warning `!`; the map highlights the primary target and expanded area-of-effect cells.
 - **Context-sensitive touch action:** one large button becomes `USE HOE`, `TALK`, `ENTER`, `HARVEST`, `SHIP`, `SLEEP`, etc. It becomes `OK` while a modal/menu is open.
-- **Visual polish:** eased camera follow, longer dawn/dusk shadows, directional terrain-edge glyphs, a quieter HUD, interaction pulse, and `prefers-reduced-motion` support with a desktop Motion toggle.
+- **Visual polish:** eased camera follow, longer dawn/dusk shadows, directional terrain-edge glyphs, a quieter HUD, interaction pulse, and `prefers-reduced-motion` support with a desktop Motion toggle. A Detail button (also in the Diary menu) switches the half-size ground textures between High and Plain; the choice is saved in `hrvstmn-hires`.
 - Three styles are no longer a user-facing feature. Do not reintroduce a style switch without asking.
 
 ## Architecture map
@@ -131,6 +131,7 @@ git switch main && git pull --ff-only
 Newest first.
 
 - #19 `cbfdf1f`: touch action shows `OK` inside menus/dialogs; clearer Today readiness wording.
+- #20: high-res ground detail toggle in the desktop toolbar and Diary menu (`hrvstmn-hires`).
 - #18 `181eb96`: Today's Plan, Villager Notes, JSON save export/import, tool cost/footprint previews, context touch action, eased camera, longer shadows, directional terrain edges, quieter HUD, reduced motion.
 - #16 `dad620f`: dappled sunlight under trees, path kerbs, morning dew.
 - #15 `225a9a3`: small objects as tile-wide clusters, meadow stipple, batched small glyphs.
@@ -145,8 +146,7 @@ Newest first.
 
 ## Open work / known gotchas
 
-- Optional high-res-detail toggle (user idea, not started).
-- Wider map view on large monitors (user idea, not started).
+- Wider map view on large monitors (user idea, not started; decide whether that means more tiles or a larger font).
 - Lint is not configured; don't run `npm run lint` unless you intend to set it up.
 - `npm run build` says "Skipping validation of types / Skipping linting" by design; `npx tsc --noEmit` is the real type gate.
 - Test server is for local verification only; stop it when done. If you rebuild while `next start` is running, restart the server so the HTML and chunk files match.
