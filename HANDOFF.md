@@ -130,7 +130,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
-- #20: graded water depth, drifting ripples, lapping foam, summer lily pads, soft ground mottling, map edges fading into the margin, sign apostrophes kept, background runs batched, dead Large-tile code removed.
+- #22: graded water depth, drifting ripples, lapping foam, summer lily pads, soft ground mottling, map edges fading into the margin, sign apostrophes kept, background runs batched, dead Large-tile code removed.
 - #19 `cbfdf1f`: touch action shows `OK` inside menus/dialogs; clearer Today readiness wording.
 - #18 `181eb96`: Today's Plan, Villager Notes, JSON save export/import, tool cost/footprint previews, context touch action, eased camera, longer shadows, directional terrain edges, quieter HUD, reduced motion.
 - #16 `dad620f`: dappled sunlight under trees, path kerbs, morning dew.
