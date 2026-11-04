@@ -68,6 +68,9 @@ export class Screen {
   boxes: { x: number; y: number; w: number; h: number }[] = [];
   style: VisualStyle = 'enhanced';
   reducedMotion: boolean = false;
+  /** Whether texture cells may use half-size 2x2/3x3 detail glyphs. */
+  hires: boolean = true;
+  onHiresChange?: (hires: boolean) => void;
   keyQueue: string[] = [];
   private keyWaiters: Array<{
     resolve: (key: string | null) => void;
@@ -105,6 +108,12 @@ export class Screen {
   /** Choose a renderer programmatically. The UI never exposes a style switch. */
   setStyle(style: VisualStyle) {
     this.style = style;
+  }
+
+  setHires(hires: boolean) {
+    if (this.hires === hires) return;
+    this.hires = hires;
+    this.onHiresChange?.(hires);
   }
 
   put(x: number, y: number, text: string, fg: string = '05', bg: string = '00', bold: boolean = false) {

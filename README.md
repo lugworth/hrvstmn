@@ -19,7 +19,7 @@ An ASCII tribute to *Harvest Moon: Friends of Mineral Town*, rendered in the bas
   - Touch: Full on-screen D-Pad (with tap-or-hold repeat) and a context-sensitive action button that becomes Use, Talk, Enter, Harvest, Ship or Sleep based on the tile you face.
 - **Auto-Save**: Farm progress, crops, animals, and relationships persist in your browser's local storage.
 - **Today's Plan & Villager Notes**: press **Y** for a daily checklist (weather, shipping cutoff, thirsty crops, hungry animals, ready milk/wool/eggs, birthdays and festivals) and **R** for every villager's hearts, favourite gifts and usual whereabouts. The Diary menu also includes these notes plus JSON save export/import for moving a farm between browsers.
-- **Comfort options**: ambient animation honors `prefers-reduced-motion`, and the Motion button in the desktop toolbar can freeze clouds, smoke, weather particles, fireflies and camera easing.
+- **Comfort options**: ambient animation honors `prefers-reduced-motion`, and the Motion button in the desktop toolbar can freeze clouds, smoke, weather particles, fireflies and camera easing. The Detail button (or the Diary menu) switches the half-size ground textures between High and Plain.
 
 ## Development
 
