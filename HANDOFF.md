@@ -1,5 +1,30 @@
 # Handoff: HRVSTMN
 
+## Experimental UI branch, 2026-11-04
+
+`expirimental-ui` starts from `2d8f67f`. The user requested this separate branch for
+the selected Contour Farm mockup with its refined **right-side** HUD. Keep this work
+on the experimental branch; the current request does not include merging into `main`.
+
+- `src/game/contour.ts` supplies cached, world-anchored contour glyph patterns. The
+  existing Enhanced renderer consumes them; sprites, crop stages, weather, lighting,
+  seasonal accents, menus, saves and gameplay still use the existing pipeline.
+- `draw_contour_side()` lays out the right panel with bounded text and larger date/brand
+  labels. `CellTag.label` / `OutCell.label` reserve heading rectangles; dialog overlap
+  suppresses those headings. Labels and texture coordinates participate in frame signatures.
+- Enhanced uses one current status-message row and moves date/weather/gold into the panel.
+  Classic retains its old top bar and side panel as a code-only reference.
+- The footer has a cyan primary action and the existing core keyboard shortcuts. Touch
+  controls have square, 44px-minimum buttons; no style switch was introduced.
+- Added regressions cover camera-stable textures, sprites/dialogs/weather avoiding texture
+  inheritance, large-label cache invalidation, panel bounds at 80x24 through 160x50, and
+  empty-stamina/fainting warnings.
+- A warmed 132x30 farm measured 7.45ms median / 9.36ms p95 for `computeFrame()` plus
+  `frameSignature()` in Node (50 samples). This excludes Canvas painting and is not a
+  full browser frame-time measurement.
+
+The earlier `main` handoff follows below for gameplay architecture and history.
+
 > Snapshot of `main` @ `cbfdf1f` (PR #19) plus this refreshed HANDOFF.md, 2026-11-04.
 > Read this file before changing anything. If it contradicts the code, trust the code and update this file.
 

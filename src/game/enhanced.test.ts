@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameSignature, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -569,4 +569,65 @@ describe('computeFrame', () => {
       assert.equal(v, hash(i, i * 3, 2));
     }
   });
+});
+
+describe('Contour Farm presentation', () => {
+  test('world-anchored contour detail follows a tile when the camera shifts', () => {
+    const a = scene({ reducedMotion: true });
+    const b = scene({ reducedMotion: true });
+    const first = computeFrame(a, 0);
+    const sourceX = first[10].findIndex((o) => o.texture?.kind === 'ground');
+    assert.ok(sourceX >= 0);
+    b.tag(21, 12, { ...a.tags[10][sourceX]! });
+    const oa = first[10][sourceX];
+    const ob = computeFrame(b, 0)[12][21];
+    assert.equal(oa.texture?.kind, 'ground');
+    assert.equal(subPattern(oa, 16, 3), subPattern(ob, 16, 3));
+    assert.equal(subPattern(oa, 16, 2)?.length, 4);
+    assert.equal(subPattern(oa, 16, 3)?.length, 9);
+  });
+
+  test('contours leave indoor floors, obstacles, crops, and the player untouched', () => {
+    const s = scene({ reducedMotion: true });
+    s.tag(10, 10, { t: 'field', wx: 10, wy: 10, k: 'obj:weed' });
+    s.tag(12, 10, { t: 'field', wx: 12, wy: 10, k: 'crop:ripe' });
+    s.put(14, 10, '@', '07');
+    s.tag(14, 10, { t: 'grass', wx: 14, wy: 10, ent: 'player' });
+    const out = computeFrame(s, 0);
+    for (const x of [10, 12, 14]) assert.equal(out[10][x].texture, undefined);
+    assert.equal(out[10][10].ch, 'ψ');
+    assert.equal(out[10][14].ch, '☻');
+    assert.equal(computeFrame(scene({ indoor: true }), 0)[10][10].texture, undefined);
+  });
+
+  test('later rain and dialog glyphs cannot inherit scenery patterns', () => {
+    const s = scene({ weather: 'Rain' });
+    const rain = computeFrame(s, 1).flat().filter((o) => o.ch === '╲');
+    assert.ok(rain.length > 0);
+    for (const o of rain) assert.equal(subPattern(o, 16, 3), null);
+    s.put(5, 5, 'DIALOG', '07');
+    assert.equal(computeFrame(s, 0)[5][5].texture, undefined);
+  });
+
+  test('HUD headings do not paint over a dialog that overlaps their reserved area', () => {
+    const s = scene();
+    s.put(55, 4, '0', '07');
+    s.tag(55, 4, { t: 'ui', k: 'hud:label', label: { text: '01', scale: 2.6, w: 7, h: 3 } });
+    assert.equal(computeFrame(s, 0)[4][55].label?.text, '01');
+    s.box(60, 5, 15, 5);
+    const o = computeFrame(s, 0)[4][55];
+    assert.equal(o.label, undefined);
+    assert.equal(o.ch, ' ');
+  });
+});
+
+
+test('large HUD label changes invalidate the frame cache even with the same first glyph', () => {
+  const s = new Screen();
+  s.put(55, 4, '1', '07');
+  const label = { text: '10', scale: 2.6, w: 7, h: 3 };
+  s.tag(55, 4, { t: 'ui', k: 'hud:label', label });
+  const before = frameSignature(computeFrame(s, 0));
+  s.tag(55, 4, { t: 'ui', k: 'hud:label', label: { ...label, text: '11' } });
+  assert.notEqual(frameSignature(computeFrame(s, 0)), before);
 });

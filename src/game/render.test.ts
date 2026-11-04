@@ -128,3 +128,50 @@ describe('engine + renderer', () => {
     assert.ok(area >= 1);
   });
 });
+
+describe('right-side Contour Farm HUD', () => {
+  test('date and status remain inside the right panel at every supported size', () => {
+    for (const [width, height] of [[80, 24], [100, 28], [132, 30], [160, 50]]) {
+      const s = new Screen(width, height);
+      const g = new Game(s, true) as any;
+      g.new_game('A very long player name', 'A very long farm name');
+      g.warp('farm', 23, 9);
+      g.tool = 'Watering Can';
+      g.gold = 987654321;
+      g.render();
+      const labels: string[] = [];
+      for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
+        const label = s.tags[y][x]?.label;
+        if (!label) continue;
+        assert.ok(x > s.ctx!.divX);
+        assert.ok(x + label.w <= s.w);
+        assert.ok(y + label.h <= s.ctx!.divY);
+        labels.push(label.text);
+      }
+      assert.deepEqual(labels, ['HRVSTMN', '01']);
+      const panel = s.buf.slice(0, s.ctx!.divY).map((row) => row.slice(s.ctx!.divX + 1).map((c) => c[0]).join('')).join('\n');
+      for (const text of ['EQUIPPED', 'STAMINA', 'FATIGUE', 'GOLD', 'BIN', 'HELD', '987654321G']) assert.ok(panel.includes(text), `${width}x${height}: ${text}`);
+      assert.ok(computeFrame(s, 0).flat().some((o) => o.meter));
+    }
+  });
+
+  test('the compact status line always shows the newest game message', () => {
+    const { s, g } = farm();
+    g.msgs = [['older message', '05'], ['middle message', '05'], ['Latest tool result', '0B']];
+    g.render();
+    assert.match(s.buf[s.h - 1].map((c) => c[0]).join(''), /Latest tool result/);
+  });
+});
+
+
+test('empty stamina keeps the HUD meter empty and the tool fainting warning visible', () => {
+  const { s, g } = farm();
+  g.stamina = 0;
+  g.fatigue = 99;
+  g.render();
+  const meters = s.tags.flat().filter((t) => t?.k?.startsWith('hud:meter'));
+  assert.ok(meters.length > 0);
+  assert.ok(meters.every((t) => t?.k === 'hud:meter:empty'));
+  const panel = s.buf.map((r) => r.slice(s.ctx!.divX + 1).map((c) => c[0]).join('')).join('\n');
+  assert.match(panel, /-2st!/);
+});

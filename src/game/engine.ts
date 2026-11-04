@@ -4290,8 +4290,12 @@ export class Game {
       s.put(0, 0, `Terminal too small: need 80x24, have ${W}x${H}`, '08');
       return;
     }
-    const side = 29;
-    const [vw, vh] = [W - side - 1, H - 5];
+    const enhanced = s.style === 'enhanced';
+    const side = enhanced ? clamp(Math.round(W * 0.23), 24, 36) : 29;
+    const mapY = enhanced ? 0 : 1;
+    const messageRows = enhanced ? 1 : 3;
+    const dividerY = H - messageRows - 1;
+    const [vw, vh] = [W - side - 1, dividerY - mapY];
     s.ctx = {
       mapName: this.mapname,
       indoor: !!this.map.indoor,
@@ -4300,19 +4304,108 @@ export class Game {
       weather: this.map.indoor ? 'Sunny' : this.weather,
       zoom: 1,
       reducedMotion: s.reducedMotion,
-      view: { x: 0, y: 1, w: vw, h: vh },
+      view: { x: 0, y: mapY, w: vw, h: vh },
       divX: vw,
-      divY: H - 4,
+      divY: dividerY,
       icons: [],
     };
-    this.draw_topbar(W);
-    this.draw_map(0, 1, vw, vh);
-    for (let y = 1; y < H - 4; y++) {
+    if (!enhanced) this.draw_topbar(W);
+    this.draw_map(0, mapY, vw, vh);
+    for (let y = 0; y < dividerY; y++) {
       s.put(vw, y, '|', '01');
     }
-    s.put(0, H - 4, '-'.repeat(W), '01');
-    this.draw_side(vw + 2, 2, side - 2);
-    this.draw_msgs(H - 3);
+    s.put(0, dividerY, '-'.repeat(W), '01');
+    if (enhanced) this.draw_contour_side(vw + 3, 1, side - 5);
+    else this.draw_side(vw + 2, 2, side - 2);
+    this.draw_msgs(dividerY + 1);
+  }
+
+  /** The right-side Contour Farm HUD. Grid bounds also cover short/touch viewports. */
+  draw_contour_side(x: number, y: number, w: number): void {
+    const s = this.scr;
+    const end = s.ctx?.divY ?? s.h - 2;
+    const compact = s.h < 30;
+    const gap = s.h >= 38 ? 2 : 1;
+    const clip = (text: string, width = w) => text.length > width ? text.slice(0, Math.max(0, width - 1)) + '…' : text;
+    const line = (row: number, text: string, col = '05', bold = false) => {
+      if (row < end) s.put(x, row, clip(text), col, '00', bold);
+    };
+    const pair = (row: number, name: string, value: string, col = '05') => {
+      if (row >= end) return;
+      const val = clip(value, Math.max(1, w - name.length - 1));
+      line(row, name, '04');
+      s.put(x + w - val.length, row, val, col);
+    };
+    const label = (row: number, text: string, scale: number, width: number, h: number) => {
+      s.put(x, row, text[0], '07', '00', true);
+      s.tag(x, row, { t: 'ui', k: 'hud:label', label: { text, scale, w: width, h } });
+    };
+
+    const titleH = compact ? 1 : 2;
+    label(y, 'HRVSTMN', compact ? 1 : 1.45, w, titleH);
+    line(y + titleH, `${this.name} of ${this.farm} Farm`, '04');
+    y += titleH + 1 + gap;
+    line(y++, `${this.season_name.toUpperCase()} / YEAR ${this.year}`, '0C', true);
+    const dayH = compact ? 2 : 3;
+    label(y, String(this.day).padStart(2, '0'), compact ? 1.8 : 2.6, 7, dayH);
+    s.put(x + 8, y, WEEKDAYS[this.weekday].toUpperCase(), '07', '00', true);
+    s.put(x + 8, y + 1, fmt_time(this.minutes).replace(/(AM|PM)$/, ' $1'), '05');
+    y += dayH;
+    line(y, `  ${this.weather.toUpperCase()}`, WEATHER_COL[this.weather] || '09');
+    s.ctx?.icons.push({ x, y, icon: 'weather' });
+    y += 1 + gap;
+
+    const tool = this.tool;
+    const preview = this.action_preview();
+    const cost = preview.cost > 0 ? `-${preview.cost}st${preview.faint ? '!' : ''}` : '';
+    pair(y++, 'EQUIPPED', cost, preview.faint ? '08' : '04');
+    const idx = TOOLS.includes(tool) ? `[${TOOLS.indexOf(tool) + 1}] ` : '';
+    line(y, idx + tool.toUpperCase(), '07', true);
+    if (idx) s.put(x, y, idx, '0C', '00', true);
+    y++;
+    if (UPGRADABLE.includes(tool)) {
+      const level = this.levels[tool] || 0;
+      const detail = `${LEVELS[level]} / ${this.tool_exp[tool] || 0}%`;
+      if (tool === 'Watering Can') pair(y, detail, `${this.water}/${CAN_CAP[level]}`, '0C');
+      else line(y, detail, '04');
+    } else if (tool.endsWith(' Seeds')) {
+      const crop = tool.slice(0, -6);
+      const inSeason = crop === 'Grass' || CROPS[crop]?.[0] === this.season_name;
+      pair(y, `${this.inv[tool] || 0} bags`, inSeason ? 'IN SEASON' : 'OFF-SEASON', inSeason ? '0B' : '08');
+    }
+    y++;
+    line(y++, '─'.repeat(Math.min(w, 18)), '0C');
+    y += gap - 1;
+
+    const fraction = clamp(this.stamina / this.max_stamina, 0, 1);
+    const staminaCol = fraction > 0.5 ? '0B' : fraction > 0.2 ? '09' : '08';
+    pair(y++, 'STAMINA', `${this.stamina}/${this.max_stamina}`, staminaCol);
+    const filled = Math.round(fraction * w);
+    for (let i = 0; i < w; i++) {
+      s.put(x + i, y, '─', i < filled ? staminaCol : '01');
+      s.tag(x + i, y, { t: 'ui', k: i < filled ? 'hud:meter' : 'hud:meter:empty' });
+    }
+    y++;
+    pair(y++, 'FATIGUE', `${this.fatigue}/100`, this.fatigue < 50 ? '04' : this.fatigue < 80 ? '09' : '08');
+    y += gap;
+    pair(y++, 'GOLD', `${this.gold}G`, '09');
+    const binValue = py_sum(Object.entries(this.bin).map(([item, qty]) => (ITEMS[item] ? ITEMS[item][0] : 0) * qty));
+    pair(y++, 'BIN', `${binValue}G`, binValue ? '09' : '04');
+    const basket = getBasketTotal(this.basket);
+    const held = this.held === 'Basket' ? `Basket ${basket}/${BASKET_CAPACITY}`
+      : this.held ? `${this.held} x${this.inv[this.held] || 0}`
+      : basket ? `Basket ${basket}/${BASKET_CAPACITY}` : '—';
+    pair(y++, 'HELD', held, this.held ? '0A' : basket ? '09' : '04');
+    y += gap;
+    if (this.upgrading) line(y++, `FORGE  ${this.upgrading[0]}`, '09');
+    if (this.riding_horse) line(y++, 'RIDING HORSE / 2x', '09');
+    if (this.chickens) pair(y++, 'COOP', `${this.chickens} hens / ${this.eggs} eggs`);
+    if (this.animals.length) {
+      const hungry = this.animals.filter((animal) => !animal.fed).length;
+      pair(y++, 'BARN', hungry ? `${hungry} hungry` : `${this.animals.length} fed`, hungry ? '08' : '04');
+    }
+    if (this.power_berries || this.has_mystic_berry) pair(y++, 'BERRIES', `${this.power_berries}${this.has_mystic_berry ? ' + Mystic' : ''}`);
+    if (y + 2 < end) line(end - 1, this.map.title + (this.map.indoor ? ' / INDOORS' : ''), '04');
   }
 
   draw_topbar(W: number): void {
@@ -4619,7 +4712,7 @@ export class Game {
 
   draw_msgs(y0: number): void {
     const cols = ['02', '03', null];
-    const recent = this.msgs.slice(-3);
+    const recent = this.msgs.slice(-Math.min(3, this.scr.h - y0));
     for (let i = 0; i < recent.length; i++) {
       const [text, col] = recent[i];
       const age = recent.length - 1 - i;

@@ -12,6 +12,11 @@ const MIN_ROWS = 24;
 const MAX_COLS = 160;
 const MAX_ROWS = 50;
 
+const QUICK_ACTIONS = [
+  ['space', 'SPACE', 'USE TOOL'], ['x', 'X', 'ACT'], ['tab', 'TAB', 'TOOL'],
+  ['i', 'I', 'BAG'], ['y', 'Y', 'TODAY'], ['r', 'R', 'NOTES'], ['esc', 'ESC', 'DIARY'],
+] as const;
+
 const KEYMAP: Record<string, string> = {
   ArrowUp: 'up',
   ArrowDown: 'down',
@@ -126,7 +131,8 @@ export default function GameScreen() {
       if (!stage) return;
       const W = stage.clientWidth || 800;
       const H = stage.clientHeight || 500;
-      let px = 16;
+      // Fit a readable farm-sized grid before adding extra columns on large screens.
+      let px = Math.max(16, Math.min(26, Math.floor(H / (31 * 1.25)), Math.floor(W / (96 * 0.61))));
       let m = measure(px);
       if (W / m.cw < MIN_COLS || H / m.ch < MIN_ROWS) {
         px = Math.max(5, Math.floor(px * Math.min(W / (MIN_COLS * m.cw), H / (MIN_ROWS * m.ch))));
@@ -319,111 +325,41 @@ export default function GameScreen() {
   }, [sendKey]);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#000000] text-[#d0d0d0] overflow-hidden select-none">
+    <div className="flex flex-col h-dvh w-screen bg-[#000000] text-[#d0d0d0] overflow-hidden select-none">
       {/* Canvas Area */}
       <div ref={stageRef} id="stage" className="flex-1 min-h-0 flex items-center justify-center p-1 overflow-hidden">
         <canvas
           ref={canvasRef}
           id="term"
           aria-label="HRVSTMN game screen"
+          aria-description="Move with WASD or arrow keys. Space uses the tool. X interacts. Question mark opens keyboard help."
+          aria-busy={!ready}
+          tabIndex={0}
           className="block"
           style={{ imageRendering: 'pixelated' }}
         />
       </div>
 
-      {/* Interactive Quick-Action Toolbar for Desktop Users */}
+      {/* One clear tool action and the existing keyboard shortcuts. */}
       {!isTouch && (
-        <div
-          id="hint"
-          className="flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 border-t border-[#404040]/50 bg-[#080808] text-xs font-mono"
-        >
-          <span className="text-[#808080] mr-2 hidden sm:inline">WASD/Arrows: Move</span>
-          <button
-            type="button"
-            onClick={() => sendKey('space')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
-          >
-            [SPC] Use Tool
+        <nav id="hint" className="game-toolbar" aria-label="Game controls">
+          {QUICK_ACTIONS.map(([key, shortcut, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => sendKey(key)}
+              className={`game-control${key === 'space' ? ' game-control-primary' : ''}`}
+              aria-keyshortcuts={key === 'space' ? 'Space' : key === 'esc' ? 'Escape' : shortcut}
+            >
+              <span className="game-shortcut">[{shortcut}]</span> {label}
+            </button>
+          ))}
+          <button type="button" onClick={toggleMotion} className="game-control game-motion" aria-pressed={!reducedMotion}
+            title="Toggle ambient animation (also honors prefers-reduced-motion)">
+            MOTION: {reducedMotion ? 'OFF' : 'ON'}
           </button>
-          <button
-            type="button"
-            onClick={() => sendKey('x')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff0099] cursor-pointer"
-          >
-            [X] Act/Talk
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('tab')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#d0d0d0] cursor-pointer"
-          >
-            [TAB] Next Tool
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('i')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#d0d0d0] cursor-pointer"
-          >
-            [I] Rucksack
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('H')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff9900] cursor-pointer"
-          >
-            [Shift+H] Horse
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('b')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
-          >
-            [B] Bell
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('m')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
-          >
-            [M] Memo
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('y')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
-          >
-            [Y] Today
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('r')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff0099] cursor-pointer"
-          >
-            [R] Villagers
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('esc')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#c0c0c0] cursor-pointer"
-          >
-            [ESC] Diary
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('?')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
-          >
-            [?] Help
-          </button>
-          <button
-            type="button"
-            onClick={toggleMotion}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#cc00ff] cursor-pointer"
-            title="Toggle ambient animation (also honors prefers-reduced-motion)"
-          >
-            Motion: {reducedMotion ? 'Off' : 'On'}
-          </button>
-        </div>
+          <button type="button" onClick={() => sendKey('?')} className="game-control" aria-label="Keyboard help">[?]</button>
+        </nav>
       )}
 
       {/* Touch Pad / On-Screen Controls */}
@@ -431,16 +367,16 @@ export default function GameScreen() {
         id="pad"
         className={`${
           isTouch ? 'flex' : 'hidden'
-        } justify-between items-center px-4 py-2 border-t border-[#404040]/40 bg-[#000000]/90 z-20 gap-3`}
+        } justify-between items-center px-3 py-2 border-t border-[#404040] bg-black z-20 gap-3`}
       >
         {/* D-Pad */}
-        <div className="grid grid-cols-3 grid-rows-3 gap-1 w-[156px] h-[156px]">
+        <div className="grid grid-cols-3 grid-rows-3 gap-0.5 w-[144px] h-[144px] shrink-0">
           <button
             onPointerDown={(e) => handleButtonDown('up', e)}
             onPointerUp={handleButtonUp}
             onPointerLeave={handleButtonUp}
             onPointerCancel={handleButtonUp}
-            className="col-start-2 row-start-1 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
+            className="col-start-2 row-start-1 touch-key text-xl flex items-center justify-center"
             aria-label="up"
           >
             &#9650;
@@ -450,7 +386,7 @@ export default function GameScreen() {
             onPointerUp={handleButtonUp}
             onPointerLeave={handleButtonUp}
             onPointerCancel={handleButtonUp}
-            className="col-start-1 row-start-2 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
+            className="col-start-1 row-start-2 touch-key text-xl flex items-center justify-center"
             aria-label="left"
           >
             &#9664;
@@ -460,7 +396,7 @@ export default function GameScreen() {
             onPointerUp={handleButtonUp}
             onPointerLeave={handleButtonUp}
             onPointerCancel={handleButtonUp}
-            className="col-start-3 row-start-2 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
+            className="col-start-3 row-start-2 touch-key text-xl flex items-center justify-center"
             aria-label="right"
           >
             &#9654;
@@ -470,7 +406,7 @@ export default function GameScreen() {
             onPointerUp={handleButtonUp}
             onPointerLeave={handleButtonUp}
             onPointerCancel={handleButtonUp}
-            className="col-start-2 row-start-3 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
+            className="col-start-2 row-start-3 touch-key text-xl flex items-center justify-center"
             aria-label="down"
           >
             &#9660;
@@ -478,53 +414,53 @@ export default function GameScreen() {
         </div>
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-4 gap-1.5">
+        <div className="grid grid-cols-3 gap-1.5 min-w-0 flex-1">
           <button
             onPointerDown={(e) => handleButtonDown(gameRef.current?.context_action().key || 'space', e)}
             onPointerUp={handleButtonUp}
-            className="col-span-2 bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-2.5 text-xs font-bold text-[#33ff00] shadow"
+            className="col-span-2 touch-key touch-key-primary px-2 text-xs font-bold"
           >
             {contextLabel}
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('tab', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
+            className="touch-key px-1 text-xs font-medium"
           >
             TOOL
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('i', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
+            className="touch-key px-1 text-xs font-medium"
           >
             BAG
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('H', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#ff9900] shadow"
+            className="touch-key px-1 text-xs font-medium"
           >
             HORSE
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('m', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#00ffff] shadow"
+            className="touch-key px-1 text-xs font-medium"
           >
             MEMO
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('esc', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
+            className="touch-key px-1 text-xs font-medium"
           >
             DIARY
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('?', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#00ffff] shadow"
+            className="touch-key px-1 text-xs font-medium"
           >
             HELP
           </button>

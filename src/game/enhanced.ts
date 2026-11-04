@@ -6,8 +6,9 @@
 // lighting with lanterns and lit windows, and animated weather. It never
 // changes game state, so 'classic' and 'enhanced' are pure presentation.
 
-import type { Cell, CellTag, RenderCtx, Screen } from './screen';
+import type { Cell, CellTag, HudLabel, RenderCtx, Screen } from './screen';
 import { PALETTE } from './constants';
+import { contourPattern, type ContourTexture } from './contour';
 
 export type OutCell = {
   ch: string;
@@ -30,6 +31,11 @@ export type OutCell = {
   /** Shoreline foam on these sides (bitmask: 1 top, 2 right, 4 bottom, 8 left). */
   foam?: number;
   foamCol?: string;
+  texture?: ContourTexture;
+  /** Later weather/particle passes can replace the glyph without inheriting its texture. */
+  textureGlyph?: string;
+  label?: HudLabel;
+  meter?: boolean;
 };
 
 // ---------------------------------------------------------------- colour math
@@ -677,6 +683,26 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
   return centre({ ch: g, fg: pal(fg), bg: F.indoor || lead[2] === '01' ? '#3a2818' : groundBg(F, tag), bold, accent: INTEREST.has(tag.t) });
 }
 
+/** Contour Farm treatment: only scenery changes; sprites, crops and cues stay full size. */
+function contourTile(F: Frame, tag: CellTag, o: OutCell): OutCell {
+  if (F.indoor || tag.ent || o.accent || o.glow || o.ch === '˙' || o.ch === '✧' || tag.k?.startsWith('obj:') || tag.k?.startsWith('crop:') || tag.k?.startsWith('soil')) return o;
+  const x = tag.wx ?? 0;
+  const y = tag.wy ?? 0;
+  if (['grass', 'field', 'sand'].includes(tag.t) && o.ch !== '╿' && o.ch !== '◦' && !F.theme.snow) {
+    const texture: ContourTexture = { x, y, kind: 'ground' };
+    return { ...o, ch: contourPattern(texture, 1), fg: '#808080', bold: false, texture };
+  }
+  if (tag.t === 'roof') {
+    const texture: ContourTexture = { x, y, kind: 'roof' };
+    if ('▄◢◣'.includes(o.ch)) return { ...o, ch: o.ch === '◢' ? '╱' : o.ch === '◣' ? '╲' : '─', fg: '#d0d0d0' };
+    return { ...o, ch: contourPattern(texture, 1), fg: '#d0d0d0', bg: mix(o.bg, '#000000', 0.6), texture };
+  }
+  if (tag.t === 'tree') return { ...o, fg: mix(o.fg, '#ffffff', 0.4), texture: { x, y, kind: 'tree' } };
+  if (tag.t === 'wall' && tag.k !== 'deco') return { ...o, ch: o.ch === '▀' ? '─' : o.ch, fg: mix(o.fg, '#ffffff', 0.55) };
+  if (WATERY.has(tag.t)) return { ...o, fg: '#808080', texture: { x: x + (Math.floor(F.t * 1.5) % 8) * 0.15, y, kind: 'water' } };
+  return o;
+}
+
 // ---------------------------------------------------------------- frame
 
 const ICONS: Record<string, [string, string]> = {
@@ -712,7 +738,7 @@ export function computeFrame(
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
   const motion = !ctx?.reducedMotion;
   const skyNow = ctx ? skyFor(ctx) : null;
-  const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720 };
+  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720 };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -740,7 +766,8 @@ export function computeFrame(
             accent: true,
           };
         } else {
-          o = styleTile(F, x, y, tag, cell);
+          o = contourTile(F, tag, styleTile(F, x, y, tag, cell));
+          if (o.texture) o.textureGlyph = o.ch;
         }
         if (tag.hl) {
           const pulse = 0.26 + 0.05 * Math.sin(F.t * 5);
@@ -757,6 +784,13 @@ export function computeFrame(
         else if (k === 'bar') o = { ch: '█', fg: pal(cell[1]), bg: '#0c0c11', bold: false };
         else if (k === 'bar:empty') o = { ch: '░', fg: '#2c2c36', bg: '#0c0c11', bold: false };
         else o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
+        if (tag.label) {
+          const label = tag.label;
+          const covered = boxes.some((b) => x < b.x + b.w && x + label.w > b.x && y < b.y + b.h && y + label.h > b.y);
+          if (covered) o.ch = ' ';
+          else o.label = label;
+        }
+        if (k.startsWith('hud:meter')) o = { ...o, ch: '━', meter: true };
       } else {
         o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
       }
@@ -797,12 +831,12 @@ export function computeFrame(
 
   // ---- HUD chrome
   for (let x = 0; x < W; x++) {
-    if (buf[0][x][2] === '01') out[0][x].bg = '#1a1a22';
+    if (buf[0][x][2] === '01') out[0][x].bg = '#000000';
   }
-  for (let y = 1; y < Math.min(ctx.divY, H); y++) {
-    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: '#3a3a48', bg: '#0c0c11', bold: false };
+  for (let y = 0; y < Math.min(ctx.divY, H); y++) {
+    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: '#404040', bg: '#000000', bold: false, ui: true };
     for (let x = ctx.divX + 1; x < W; x++) {
-      if (!tags[y][x] && buf[y][x][2] === '00') out[y][x].bg = '#0c0c11';
+      if (!tags[y][x] && buf[y][x][2] === '00') out[y][x].bg = '#000000';
       else if (tags[y][x]?.t === 'ui' && (tags[y][x]?.k || '').startsWith('bar')) {
         // fade the bar slightly toward its tip
         if (tags[y][x]?.k === 'bar') out[y][x].fg = mix(out[y][x].fg, '#ffffff', ((x - ctx.divX) / Math.max(1, W - ctx.divX)) * 0.35);
@@ -1472,6 +1506,7 @@ export function hiresLevel(fontPx: number, dpr = 1): number {
 /** The n x n high-resolution pattern for a cell (n*n glyphs, row by row), or null for a plain glyph. */
 export function subPattern(o: OutCell, fontPx: number, n = 2): string | null {
   if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.dx || o.token || o.glow) return null;
+  if (o.texture && o.ch === o.textureGlyph) return contourPattern(o.texture, n);
   const v = SUBPIX[o.ch];
   if (!v) return null;
   const seed = o.seed ?? 0;
@@ -1531,9 +1566,24 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
     const row = frame[y];
     for (let x = 0; x < row.length; x++) {
       const o = row[x];
-      if (o.ch === ' ') continue;
+      if (o.ch === ' ' && !(o.texture && o.ch === o.textureGlyph)) continue;
       const px = (x + (o.dx ?? 0)) * cw;
       const py = y * ch;
+      if (o.label) {
+        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
+        const label = o.label;
+        g.font = `${o.bold ? 'bold ' : ''}${fontPx * label.scale}px ${font}`;
+        curFont = '';
+        g.fillStyle = o.fg;
+        g.fillText(label.text, px, py + label.h * ch / 2, label.w * cw);
+        continue;
+      }
+      if (o.meter) {
+        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
+        g.fillStyle = o.fg;
+        g.fillRect(Math.floor(px), Math.floor(py + ch * 0.4), Math.ceil(cw) + 1, Math.max(2, Math.round(ch * 0.2)));
+        continue;
+      }
       if (o.ch === '▄' || o.ch === '▀' || o.ch === '█') {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
         g.fillStyle = o.fg;
@@ -1573,7 +1623,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       if (pat) {
         if (level === 2) {
           for (let k = 0; k < 4; k++) {
-            if (pat[k] !== ' ') mini(px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5, pat[k], o.fg, subAlpha(o.ch, o.seed ?? 0, k), o.bold);
+            if (pat[k] !== ' ') mini(px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5, pat[k], o.fg, o.texture ? 1 : subAlpha(o.ch, o.seed ?? 0, k), o.bold);
           }
         } else {
           // one call per row: a monospace font at size fontPx/n advances exactly cw/n per glyph
@@ -1654,6 +1704,6 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
   // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '');
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.texture ? `${o.texture.kind}:${o.texture.x}:${o.texture.y}` : '') + (o.label ? `${o.label.text}:${o.label.scale}:${o.label.w}:${o.label.h}` : '');
   return s;
 }

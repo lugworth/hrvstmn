@@ -45,3 +45,42 @@ html, body {
   -webkit-user-select: none;
   touch-action: manipulation;
 }
+
+.game-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--base01);
+  background: var(--base00);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.game-control {
+  padding: 8px 6px;
+  color: var(--base05);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.game-control:hover { color: var(--base0C); }
+.game-control-primary { padding-inline: 16px; background: var(--base0C); color: var(--base00); font-weight: 700; }
+.game-control-primary:hover { background: var(--base07); color: var(--base00); }
+.game-shortcut { color: var(--base07); }
+.game-control-primary .game-shortcut { color: inherit; }
+.game-motion { margin-left: auto; border-left: 1px solid var(--base01); padding-left: 16px; color: var(--base04); }
+.game-control:focus-visible, .touch-key:focus-visible, #term:focus-visible { outline: 2px solid var(--base0C); outline-offset: 2px; }
+.touch-key { min-height: 44px; border: 1px solid var(--base01); background: var(--base00); color: var(--base05); border-radius: 0; touch-action: none; }
+.touch-key:active { border-color: var(--base0C); background: var(--base01); }
+.touch-key-primary { background: var(--base0C); border-color: var(--base0C); color: var(--base00); }
+
+@media (min-width: 1450px) { .game-toolbar { font-size: 18px; } }
+@media (max-width: 700px) {
+  .game-toolbar { gap: 2px 6px; padding: 6px; font-size: 11px; }
+  .game-control { padding: 6px; }
+}
