@@ -150,3 +150,10 @@ Newest first.
 - Lint is not configured; don't run `npm run lint` unless you intend to set it up.
 - `npm run build` says "Skipping validation of types / Skipping linting" by design; `npx tsc --noEmit` is the real type gate.
 - Test server is for local verification only; stop it when done. If you rebuild while `next start` is running, restart the server so the HTML and chunk files match.
+
+## Where to look for more
+
+- `README.md`: feature list, controls, colour rules and renderer overview.
+- `docs/feature-research.md`: sourced backlog of gameplay/graphics ideas with implementation notes and a recommended order.
+- `src/game/enhanced.test.ts`: precise spec of the visual behaviour.
+- `git log`: commit bodies and merged PRs describe each player-visible change.
