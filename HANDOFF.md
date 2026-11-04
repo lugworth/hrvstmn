@@ -1,6 +1,6 @@
 # Handoff: HRVSTMN
 
-> Snapshot of `main` @ `ae42356` (PR #24), 2026-11-04.
+> Snapshot of `main` @ `98ee873` (PR #26) plus this HANDOFF refresh, 2026-11-04.
 > Read this file before changing anything. If it contradicts the code, trust the code and update this file.
 
 ## Kickoff prompt
@@ -10,7 +10,7 @@ You're picking up HRVSTMN, an ASCII farming sim (Next.js 15 + TypeScript, HTML c
 github.com/lugworth/hrvstmn, live at https://hrvstmn.vercel.app (Vercel deploys main).
 
 Read HANDOFF.md fully before changing anything. Enhanced is the only visible visual style;
-Classic remains as a code-only/test path. Large was removed in #18. All PRs through #24 are merged.
+Classic remains as a code-only/test path. Large was removed in #18. All PRs through #26 are merged.
 
 Rules most likely to be broken: every colour must come from base16 Isotope Dark (toIsotope());
 the world is black-and-white, colour only on things of interest; text/HUD/people/crops/obstacles
@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 86/86 tests pass, typecheck clean, production build passes.
+- **State:** working. 87/87 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** roadmap release 3 (offscreen/layered renderer), then composed character sprites and mastery perks. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 86 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 87 passed, 5 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -74,7 +74,7 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 86 tests: enhanced 64, render 12, rules 7, engine 3
+src/game/*.test.ts             node:test — 87 tests: enhanced 64, render 13, rules 7, engine 3
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -133,6 +133,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #26 `98ee873`: Achievements & Journal; 14 derived milestones with progress, Diary menu page, persisted request completion count.
 - #24 `ae42356`: Rose Square request board; timed villager requests, delivery rewards, overnight expiry, Today's Plan integration.
 - #23 `501b38e`: Mineral Town Museum; donate fish/ore/forage/crops, collection book, milestone rewards, Curator NPC.
 - #22: graded water depth, drifting ripples, lapping foam, summer lily pads, soft ground mottling, map edges fading into the margin, sign apostrophes kept, background runs batched, dead Large-tile code removed.
