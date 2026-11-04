@@ -36,6 +36,8 @@ export default function GameScreen() {
   const [contextLabel, setContextLabel] = useState('USE');
   const [reducedMotion, setReducedMotionState] = useState(false);
   const reducedMotionRef = useRef(false);
+  const [hires, setHiresState] = useState(true);
+  const hiresRef = useRef(true);
 
   // Send a key to the game engine
   const sendKey = useCallback((name: string) => {
@@ -82,6 +84,21 @@ export default function GameScreen() {
     }
   }, []);
 
+  const toggleHires = useCallback(() => {
+    const next = !hiresRef.current;
+    hiresRef.current = next;
+    if (screenRef.current) {
+      screenRef.current.setHires(next);
+      screenRef.current.onRender?.();
+    }
+    setHiresState(next);
+    try {
+      window.localStorage.setItem('hrvstmn-hires', next ? 'on' : 'off');
+    } catch {
+      // storage unavailable; the choice still applies this session
+    }
+  }, []);
+
   useEffect(() => {
     // Detect touch
     const hasTouch =
@@ -114,6 +131,24 @@ export default function GameScreen() {
     screen.reducedMotion = motionOff;
     reducedMotionRef.current = motionOff;
     setReducedMotionState(motionOff);
+    let hiresOn = true;
+    try {
+      hiresOn = window.localStorage.getItem('hrvstmn-hires') !== 'off';
+    } catch {
+      hiresOn = true;
+    }
+    screen.hires = hiresOn;
+    hiresRef.current = hiresOn;
+    setHiresState(hiresOn);
+    screen.onHiresChange = (next) => {
+      hiresRef.current = next;
+      setHiresState(next);
+      try {
+        window.localStorage.setItem('hrvstmn-hires', next ? 'on' : 'off');
+      } catch {
+        // storage unavailable; the choice still applies this session
+      }
+    };
     screenRef.current = screen;
 
     function measure(px: number) {
@@ -180,10 +215,10 @@ export default function GameScreen() {
         lastSig = '';
       }
       const frame = computeFrame(screen, screen.reducedMotion ? 0 : performance.now() / 1000);
-      const sig = frameSignature(frame);
+      const sig = `${screen.hires ? 'h' : 'p'}:${frameSignature(frame)}`;
       if (sig === lastSig) return;
       lastSig = sig;
-      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1 });
+      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1, hires: screen.hires });
     };
 
     screen.onRender = () => {
@@ -414,6 +449,14 @@ export default function GameScreen() {
             className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
           >
             [?] Help
+          </button>
+          <button
+            type="button"
+            onClick={toggleHires}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#cc00ff] cursor-pointer"
+            title="Toggle half-size high-resolution ground textures"
+          >
+            Detail: {hires ? 'High' : 'Plain'}
           </button>
           <button
             type="button"

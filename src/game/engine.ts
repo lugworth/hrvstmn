@@ -812,6 +812,7 @@ export class Game {
       'Save Diary — Slot 2',
       'Load Diary — Slot 1',
       'Load Diary — Slot 2',
+      `Graphics: High-res Detail ${this.scr.hires ? 'On' : 'Off'}`,
       'Export Save File',
       'Import Save File',
     ];
@@ -856,6 +857,9 @@ export class Game {
       this.export_save();
     } else if (choice === 'Import Save File') {
       await this.import_save();
+    } else if (choice.startsWith('Graphics: High-res Detail')) {
+      this.scr.setHires(!this.scr.hires);
+      this.msg(`High-res ground detail: ${this.scr.hires ? 'On' : 'Off'}.`, '0C');
     } else if (choice === 'Use Teleport Stone') {
       await this.use_teleport_stone();
     } else if (choice === 'Help (?)') {

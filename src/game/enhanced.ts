@@ -1387,7 +1387,7 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
 
 // ---------------------------------------------------------------- drawing
 
-export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number };
+export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number; hires?: boolean };
 
 /** Paint a computed frame. Block shapes are drawn as rects/paths so they tile without seams. */
 // ---------------------------------------------------------------- high-resolution textures
@@ -1469,6 +1469,11 @@ export function hiresLevel(fontPx: number, dpr = 1): number {
   return fontPx >= HIRES_MIN_FONT ? 2 : 1;
 }
 
+/** The texture detail level after applying the player's high-res-detail preference. */
+export function effectiveHiresLevel(fontPx: number, dpr = 1, hires = true): number {
+  return hires ? hiresLevel(fontPx, dpr) : 1;
+}
+
 /** The n x n high-resolution pattern for a cell (n*n glyphs, row by row), or null for a plain glyph. */
 export function subPattern(o: OutCell, fontPx: number, n = 2): string | null {
   if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.dx || o.token || o.glow) return null;
@@ -1504,7 +1509,7 @@ export function rowAlpha(ch: string, seed: number, r: number, n: number): number
 
 export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics) {
   const { cw, ch, fontPx, font } = m;
-  const level = hiresLevel(fontPx, m.dpr ?? 1);
+  const level = effectiveHiresLevel(fontPx, m.dpr ?? 1, m.hires ?? true);
   const mx: number[] = [];
   const my: number[] = [];
   const ms: string[] = [];
