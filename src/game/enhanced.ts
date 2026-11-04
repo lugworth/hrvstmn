@@ -16,8 +16,8 @@ export type OutCell = {
   bold: boolean;
   glow?: string;
   glowR?: number;
-  /** Horizontal offset in cells, used to centre a glyph in a 2-cell tile. */
-  dx?: number;
+  /** Lettering: always drawn as its own glyph, never swapped for a high-res texture. */
+  plain?: boolean;
   /** Soft round backing disc behind a creature: fill and rim colours. */
   token?: string;
   rim?: string;
@@ -330,6 +330,8 @@ type Light = { x: number; y: number; r: number; col: RGB; k: number };
 
 const WALKABLE_OPEN = new Set(['grass', 'field', 'path', 'sand', 'flower', 'bridge']);
 const WATERY = new Set(['water', 'fountain', 'spring', 'pond']);
+/** Water colour by distance to the shore: lighter shallows (> 0), darker deeps (< 0). */
+const WATER_DEPTH = [0, 0.18, 0.02, -0.3, -0.55];
 const FLOOR_INDOOR = new Set(['floor', 'mfloor', 'exit', 'up', 'down']);
 
 type Frame = {
@@ -343,6 +345,8 @@ type Frame = {
   amb: number;
   /** Minutes since midnight. */
   minutes: number;
+  /** The open sea, where nothing grows on the water. */
+  sea: boolean;
 };
 
 const roofShades = (fgCode: string) => {
@@ -350,8 +354,17 @@ const roofShades = (fgCode: string) => {
   return { lit: mix(base, '#ffffff', 0.25), mid: mix(base, '#000000', 0.35), dark: mix(base, '#000000', 0.65) };
 };
 
+/**
+ * Soft mottling for open ground: low-frequency noise (rows count double, cells are tall)
+ * with a little per-cell grain, stretched back to the full 0..1 range.
+ */
+function mottle(wx: number, wy: number, s: number): number {
+  const n = valueNoise(wx / 5, wy / 2.5, s) * 0.8 + hash(wx, wy, s) * 0.2;
+  return Math.max(0, Math.min(1, (n - 0.5) * 1.6 + 0.5));
+}
+
 function grassBg(F: Frame, wx: number, wy: number) {
-  return mix(F.theme.grassBg, F.theme.grassBg2, hash(wx, wy, 3));
+  return mix(F.theme.grassBg, F.theme.grassBg2, mottle(wx, wy, 3));
 }
 
 /** Background a cell's ground would have, used under entities, roof edges and generic objects. */
@@ -360,7 +373,7 @@ function groundBg(F: Frame, tag: CellTag): string {
   const wy = tag.wy ?? 0;
   switch (tag.t) {
     case 'field':
-      return mix(F.theme.soilBg, '#000000', hash(wx, wy, 5) * 0.35);
+      return mix(F.theme.soilBg, '#000000', mottle(wx, wy, 5) * 0.35);
     case 'path':
       return mix('#2a2622', '#34302a', hash(wx, wy, 6));
     case 'sand':
@@ -370,7 +383,7 @@ function groundBg(F: Frame, tag: CellTag): string {
     case 'mfloor':
       return mix('#1e1a17', '#24201c', hash(wx, wy, 6));
     default:
-      if (WATERY.has(tag.t)) return mix(F.theme.waterBg, F.theme.waterBg2, hash(wx, wy, 7));
+      if (WATERY.has(tag.t)) return mix(F.theme.waterBg, F.theme.waterBg2, mottle(wx, wy, 7));
       return F.indoor ? '#2a2018' : grassBg(F, wx, wy);
   }
 }
@@ -395,7 +408,7 @@ const SHADOW_RECEIVERS = new Set(['grass', 'field', 'path', 'sand', 'flower', 'f
 
 /** A mine wall facing open floor gets a torch every so often. */
 function isTorch(F: Frame, x: number, y: number, tag: CellTag): boolean {
-  if ((tag.sub ?? 0) !== 0 || hash(tag.wx ?? x, tag.wy ?? y, 68) > 0.07) return false;
+  if (hash(tag.wx ?? x, tag.wy ?? y, 68) > 0.07) return false;
   const below = F.tags[y + 1]?.[x];
   return !!below && below.t === 'mfloor';
 }
@@ -405,9 +418,9 @@ const INTEREST = new Set(['bin', 'sign', 'doghouse', 'stable', 'mill', 'maker', 
 
 const isRainy = (F: Frame) => !F.indoor && (F.weather === 'Rain' || F.weather === 'Typhoon');
 
-function puddle(F: Frame, wx: number, wy: number, sub: number, ground: string): OutCell {
+function puddle(F: Frame, wx: number, wy: number, ground: string): OutCell {
   const bg = mix(ground, '#1a3456', 0.55);
-  const ripple = hash(wx * 2 + sub, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3;
+  const ripple = hash(wx * 2, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3;
   return { ch: ripple ? '◦' : ' ', fg: '#8ab8e8', bg, bold: false };
 }
 
@@ -419,52 +432,43 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
   const g = cell[0];
   const fg = cell[1];
   const bold = cell[3];
-  const h = hash(wx, wy);
-  const hs = h;
+  const hs = hash(wx, wy);
   const k = tag.k || '';
-  // Large tiles are retired. These aliases keep the shared texture code simple:
-  // every cell is now its own tile, so no cell is a sub-cell or spans two cells.
-  const sub = 0;
-  const wide = false;
-  const lead = cell;
-  const centre = (o: OutCell): OutCell => o;
-  const lit = (o: OutCell): OutCell => o;
 
   // ---- objects on the field
   if (k.startsWith('obj:')) {
     const soil = groundBg(F, tag);
     switch (k) {
       case 'obj:weed':
-        return centre({ ch: 'ψ', fg: mix(th.weed, '#000000', hash(wx, wy, 8) * 0.35), bg: soil, bold: false });
+        return { ch: 'ψ', fg: mix(th.weed, '#000000', hash(wx, wy, 8) * 0.35), bg: soil, bold: false };
       case 'obj:stone':
-        return centre({ ch: '•', fg: '#a9a9b4', bg: soil, bold: true });
+        return { ch: '•', fg: '#a9a9b4', bg: soil, bold: true };
       case 'obj:rock':
-        return centre({ ch: '•', fg: '#78787f', bg: soil, bold: true });
+        return { ch: '•', fg: '#78787f', bg: soil, bold: true };
       case 'obj:boulder':
-        if (wide) return lit({ ch: sub === 0 ? '◖' : '◗', fg: '#8c8c98', bg: soil, bold: false });
         return { ch: '●', fg: '#8c8c98', bg: mix(soil, '#3a342e', 0.6), bold: false };
       case 'obj:stump':
-        return centre({ ch: '◉', fg: '#b8702e', bg: soil, bold: false });
+        return { ch: '◉', fg: '#b8702e', bg: soil, bold: false };
       case 'obj:branch':
-        return centre({ ch: '╱', fg: '#c58a4a', bg: soil, bold: true });
+        return { ch: '╱', fg: '#c58a4a', bg: soil, bold: true };
     }
   }
   if (k === 'forage') {
-    return centre({ ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 3, accent: true });
+    return { ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 3, accent: true };
   }
   // ---- tilled soil and crops
   if (k.startsWith('soil') || k.startsWith('crop:')) {
     const wet = k.endsWith(':wet');
     const bg = wet ? mix('#160e08', '#1a1209', hash(wx, wy, 5)) : mix('#2c1c0f', '#321f10', hash(wx, wy, 5));
     if (k.startsWith('soil')) {
-      if (wet && hash(wx * 2 + sub, wy, 64) < 0.12) return { ch: '·', fg: '#4a8ad8', bg, bold: true }; // a glint of water
+      if (wet && hash(wx * 2, wy, 64) < 0.12) return { ch: '·', fg: '#4a8ad8', bg, bold: true }; // a glint of water
       return { ch: wy % 2 ? '≡' : '═', fg: wet ? '#4a3424' : '#7a5230', bg, bold: false };
     }
-    if (k.startsWith('crop:seed')) return centre({ ch: '∴', fg: '#c89058', bg, bold: false });
-    if (k.startsWith('crop:sprout')) return centre({ ch: ',', fg: '#7ad04a', bg, bold: true });
-    if (k.startsWith('crop:young')) return centre({ ch: '"', fg: '#5ae02a', bg, bold: true });
+    if (k.startsWith('crop:seed')) return { ch: '∴', fg: '#c89058', bg, bold: false };
+    if (k.startsWith('crop:sprout')) return { ch: ',', fg: '#7ad04a', bg, bold: true };
+    if (k.startsWith('crop:young')) return { ch: '"', fg: '#5ae02a', bg, bold: true };
     // ripe: the crop's own glyph and colour, with a gentle "ready" glow
-    return centre({ ch: g, fg: pal(fg), bg, bold: true, glow: pal(fg), glowR: 6, accent: true });
+    return { ch: g, fg: pal(fg), bg, bold: true, glow: pal(fg), glowR: 6, accent: true };
   }
 
   switch (tag.t) {
@@ -474,7 +478,7 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       const gb = grassBg(F, wx, wy);
       const above = F.tags[y - 1]?.[x];
       if (above && above.t === 'tree' && hash(wx, wy, 72) < 0.6) {
-        return centre({ ch: '╿', fg: th.snow ? '#6a5a4a' : '#6a4a2c', bg: gb, bold: false }); // trunk under the canopy
+        return { ch: '╿', fg: th.snow ? '#6a5a4a' : '#6a4a2c', bg: gb, bold: false }; // trunk under the canopy
       }
       if (th.snow) {
         if (hs < 0.18) return { ch: hs < 0.08 ? '∙' : '·', fg: th.grassDetail, bg: gb, bold: false };
@@ -484,15 +488,15 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (g === ',' || g === '"') {
         // tufts sway in a slow breeze
         const sway = Math.floor(F.t * 0.8 + hash(wx, wy, 66) * 4) % 4 === 0;
-        return centre({ ch: g === '"' ? (sway ? '"' : 'ʷ') : sway ? '`' : ',', fg: th.tuft, bg: gb, bold: false });
+        return { ch: g === '"' ? (sway ? '"' : 'ʷ') : sway ? '`' : ',', fg: th.tuft, bg: gb, bold: false };
       }
       const nearTree = th.leaves && [[-1, 0], [1, 0], [0, 1], [0, -1], [-1, 1], [1, 1]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.t === 'tree');
-      if (nearTree && hs < 0.32) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves!, hash(wx, wy, 4 + sub)), bg: gb, bold: false, accent: true }; // leaf litter
-      if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves, hash(wx, wy, 4 + sub)), bg: gb, bold: false };
-      if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31 + sub)), bg: gb, bold: true };
+      if (nearTree && hs < 0.32) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9)), fg: pick(th.leaves!, hash(wx, wy, 4)), bg: gb, bold: false, accent: true }; // leaf litter
+      if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9)), fg: pick(th.leaves, hash(wx, wy, 4)), bg: gb, bold: false };
+      if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31)), bg: gb, bold: true };
       if (th.fruit && hs > 0.93) return { ch: 'ʷ', fg: th.tuft, bg: gb, bold: false }; // tall summer grass
       const dewy = !th.snow && !F.indoor && F.weather === 'Sunny' && F.minutes >= 360 && F.minutes < 480;
-      if (dewy && hs < 0.03 && hash(wx * 2 + sub, wy, 140 + (Math.floor(F.t * 2) % 20)) > 0.45) {
+      if (dewy && hs < 0.03 && hash(wx * 2, wy, 140 + (Math.floor(F.t * 2) % 20)) > 0.45) {
         return { ch: '✧', fg: '#ffffff', bg: gb, bold: true }; // morning dew twinkling
       }
       if (hs < 0.1) return { ch: "'", fg: th.grassDetail, bg: gb, bold: false };
@@ -503,38 +507,38 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     case 'flower': {
       const gb = grassBg(F, wx, wy);
       if (th.snow || g === '.') return { ch: '·', fg: th.grassDetail, bg: gb, bold: false };
-      return centre({ ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true, accent: true });
+      return { ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true, accent: true };
     }
     case 'tree': {
       const windy = !F.indoor && (F.weather === 'Typhoon' || F.weather === 'Blizzard');
-      const sway = windy ? hash(wx * 2 + sub, wy, 90 + (Math.floor(F.t * 3) % 2)) < 0.5 : false;
+      const sway = windy ? hash(wx * 2, wy, 90 + (Math.floor(F.t * 3) % 2)) < 0.5 : false;
       const ch = (hs < 0.72) !== sway ? th.treeGlyphs[0] : th.treeGlyphs[1];
       const bg = mix(th.treeBg, '#000000', hash(wx, wy, 2) * 0.5);
-      let fgc = pick(th.trees, hash(wx * 2 + sub, wy, 1));
+      let fgc = pick(th.trees, hash(wx * 2, wy, 1));
       // canopies are lit from above: bright crown, shaded underside
       const up = F.tags[y - 1]?.[x];
       const dn = F.tags[y + 1]?.[x];
       if (!up || up.t !== 'tree') fgc = mix(fgc, '#ffffff', 0.2);
       else if (!dn || dn.t !== 'tree') fgc = mix(fgc, '#000000', 0.32);
       // seasonal accents: spring blossom, summer fruit, winter snow on the tips
-      const acc = hash(wx * 2 + sub, wy, 41);
-      if (th.blossom && acc < 0.12) return { ch: '❀', fg: pick(th.blossom, hash(wx, wy, 42 + sub)), bg, bold: true, accent: true };
+      const acc = hash(wx * 2, wy, 41);
+      if (th.blossom && acc < 0.12) return { ch: '❀', fg: pick(th.blossom, hash(wx, wy, 42)), bg, bold: true, accent: true };
       if (th.fruit && acc < 0.05) return { ch: '•', fg: th.fruit, bg, bold: true, accent: true };
-      if (th.leaves && acc < 0.18) return lit({ ch, fg: fgc, bg, bold: true, accent: true }); // a few turning leaves
+      if (th.leaves && acc < 0.18) return { ch, fg: fgc, bg, bold: true, accent: true }; // a few turning leaves
       if (th.snow && acc < 0.3) fgc = '#eef4fc';
       // summer canopies are fuller: an extra leafy glyph now and then
-      const leafy = th.fruit && !wide && acc > 0.9 ? '♠' : ch;
-      return lit({ ch: leafy, fg: fgc, bg, bold: true });
+      const leafy = th.fruit && acc > 0.9 ? '♠' : ch;
+      return { ch: leafy, fg: fgc, bg, bold: true };
     }
     case 'field': {
       const soil = groundBg(F, tag);
-      if (isRainy(F) && hash(wx, wy, 70) < 0.06) return puddle(F, wx, wy, sub, soil);
+      if (isRainy(F) && hash(wx, wy, 70) < 0.06) return puddle(F, wx, wy, soil);
       if (th.snow) return { ch: hs < 0.35 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
       return { ch: hs < 0.45 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
     }
     case 'path': {
       const pb = groundBg(F, tag);
-      if (isRainy(F) && hash(wx, wy, 70) < 0.16) return puddle(F, wx, wy, sub, pb);
+      if (isRainy(F) && hash(wx, wy, 70) < 0.16) return puddle(F, wx, wy, pb);
       return { ch: hs < 0.25 ? '▪' : hs < 0.55 ? '·' : ' ', fg: th.snow ? '#7a8494' : '#5a534b', bg: pb, bold: false };
     }
     case 'sand':
@@ -545,15 +549,9 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return { ch: hs < 0.3 ? '╱' : ' ', fg: '#d8f0ff', bg: mix('#5a8aa8', '#6a9ab8', hash(wx, wy, 7)), bold: false };
     case 'cliff': {
       const rock = th.snow ? '#c8d0dc' : '#8a8070';
-      if (wide) {
-        // a small peak per tile; snowy tips in winter
-        const cap = th.snow || hash(wx, wy, 44) < 0.15;
-        return lit({ ch: sub === 0 ? '◢' : '◣', fg: cap && hash(wx, wy, 45) < 0.6 ? '#e8eef6' : rock, bg: '#24201c', bold: false });
-      }
       return { ch: '▲', fg: rock, bg: '#24201c', bold: false };
     }
     case 'cave':
-      if (wide) return { ch: '▄', fg: '#050505', bg: '#3a342c', bold: false };
       return { ch: '●', fg: '#050505', bg: '#3a342c', bold: false };
     case 'roof': {
       const rc = roofShades(tag.dfg || fg);
@@ -566,16 +564,15 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (!(above && above.t === 'roof')) {
         return { ch: '▄', fg: rc.mid, bg: outside, bold: false };
       }
-      const snowCap = th.snow && hash(wx * 2 + sub, wy, 12) < 0.5;
-      return lit({ ch: wy % 2 ? '▒' : '░', fg: snowCap ? '#e8eef8' : rc.lit, bg: rc.mid, bold: false });
+      const snowCap = th.snow && hash(wx * 2, wy, 12) < 0.5;
+      return { ch: wy % 2 ? '▒' : '░', fg: snowCap ? '#e8eef8' : rc.lit, bg: rc.mid, bold: false };
     }
     case 'wall': {
       if (tag.k === 'deco' && tag.dch === '=') {
-        if (wide) return { ch: sub === 0 ? '▐' : '▌', fg: '#7fe8ff', bg: '#3a2818', bold: false, glow: '#5fd8ff', glowR: 5, accent: true };
         return { ch: '▦', fg: '#7fe8ff', bg: '#3a2818', bold: true, glow: '#5fd8ff', glowR: 5, accent: true };
       }
       if (tag.k === 'deco' && tag.dch !== undefined) {
-        return centre({ ch: tag.dch, fg: '#fff2d0', bg: '#6a4424', bold: true });
+        return { ch: tag.dch, fg: '#fff2d0', bg: '#6a4424', bold: true, plain: true }; // sign lettering
       }
       const below = y + 1 < F.tags.length ? F.tags[y + 1][x] : null;
       const base = !below || (below.t !== 'wall' && below.t !== 'door');
@@ -585,21 +582,20 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
         ? { ch: '▀', fg: '#6a4a2c', bg: '#2a1c10', bold: false }
         : { ch: '═', fg: '#7c5634', bg: '#4a321e', bold: false };
       // corner posts frame each building; the row under the eaves sits in shadow
-      if (!base && !walled(F.tags[y][x - 1])) o = { ...o, ch: wide ? '▐' : '║', fg: '#2a1a0e' };
-      else if (!base && !walled(F.tags[y][x + 1])) o = { ...o, ch: wide ? '▌' : '║', fg: '#2a1a0e' };
+      if (!base && !walled(F.tags[y][x - 1])) o = { ...o, ch: '║', fg: '#2a1a0e' };
+      else if (!base && !walled(F.tags[y][x + 1])) o = { ...o, ch: '║', fg: '#2a1a0e' };
       if (above && above.t === 'roof') {
         o = { ...o, bg: mix(o.bg, '#000000', 0.38), fg: mix(o.fg, '#000000', 0.3) };
-        if (th.snow && hash(wx * 2 + sub, wy, 74) < 0.55) o = { ...o, ch: '╷', fg: '#e8f0ff' }; // icicles on the eaves
+        if (th.snow && hash(wx * 2, wy, 74) < 0.55) o = { ...o, ch: '╷', fg: '#e8f0ff' }; // icicles on the eaves
       }
       return o;
     }
     case 'door':
-      if (wide) return sub === 0 ? { ch: '▕', fg: '#3a2010', bg: '#8a4e22', bold: false } : { ch: '·', fg: '#ffd24a', bg: '#8a4e22', bold: true, accent: true };
       return { ch: '▮', fg: '#d08a3a', bg: '#3a2818', bold: true, accent: true };
     case 'iwall':
       return { ch: '▒', fg: '#6a5844', bg: '#4a3c2e', bold: false };
     case 'mwall':
-      if (isTorch(F, x, y, tag)) return centre({ ch: '†', fg: '#ff9900', bg: '#2e2924', bold: true, glow: '#ff9900', glowR: 9, accent: true });
+      if (isTorch(F, x, y, tag)) return { ch: '†', fg: '#ff9900', bg: '#2e2924', bold: true, glow: '#ff9900', glowR: 9, accent: true };
       return { ch: hs < 0.5 ? '▓' : '▒', fg: '#4a423a', bg: '#2e2924', bold: false };
     case 'floor': {
       const nearTable = [[-2, 0], [2, 0], [0, -1], [0, 1], [-2, 1], [2, 1], [-2, -1], [2, -1]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.t === 'table');
@@ -607,10 +603,10 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return { ch: wy % 2 ? '─' : ' ', fg: '#4a3622', bg: groundBg(F, tag), bold: false };
     }
     case 'mfloor':
-      if (hash(wx * 2 + sub, wy, 67) < 0.012) return { ch: '✦', fg: '#00ffff', bg: groundBg(F, tag), bold: false, glow: '#00ffff', glowR: 4, accent: true }; // ore glint
+      if (hash(wx * 2, wy, 67) < 0.012) return { ch: '✦', fg: '#00ffff', bg: groundBg(F, tag), bold: false, glow: '#00ffff', glowR: 4, accent: true }; // ore glint
       return { ch: hs < 0.3 ? '·' : ' ', fg: '#4a4038', bg: groundBg(F, tag), bold: false };
     case 'fireplace':
-      return centre({ ch: g, fg: '#ff7a30', bg: '#3a1a0a', bold: true, glow: '#ff7a30', glowR: 8, accent: true });
+      return { ch: g, fg: '#ff7a30', bg: '#3a1a0a', bold: true, glow: '#ff7a30', glowR: 8, accent: true };
     // ---- furniture
     case 'bed': {
       const left = F.tags[y][x - 1];
@@ -619,62 +615,62 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return { ch: hs < 0.5 ? '░' : '▒', fg: '#6a82d0', bg: '#3a4f9a', bold: false };
     }
     case 'tv':
-      if (wide) return { ch: sub === 0 ? '▐' : '▌', fg: '#6ae0ff', bg: '#141418', bold: false, glow: '#4ac8ff', glowR: 6, accent: true };
       return { ch: '▓', fg: '#6ae0ff', bg: '#141418', bold: false, glow: '#4ac8ff', glowR: 6, accent: true };
     case 'cal':
-      return centre({ ch: '▤', fg: '#f4ead8', bg: '#3a2818', bold: false });
+      return { ch: '▤', fg: '#f4ead8', bg: '#3a2818', bold: false };
     case 'table':
       return { ch: '▀', fg: '#b07840', bg: groundBg(F, { ...tag, t: 'floor' }), bold: false };
     case 'counter':
       return { ch: '▀', fg: '#d0a070', bg: '#5a3a20', bold: false };
     case 'kitchen':
-      return centre({ ch: '◉', fg: '#ff7040', bg: '#2a2a2e', bold: true, glow: '#ff5020', glowR: 5, accent: true });
+      return { ch: '◉', fg: '#ff7040', bg: '#2a2a2e', bold: true, glow: '#ff5020', glowR: 5, accent: true };
     case 'shelf':
       return { ch: '▤', fg: '#b07a48', bg: '#3a2414', bold: false };
     case 'bookcase':
-      return { ch: hs < 0.5 ? '▌' : '▐', fg: pick(['#c04848', '#4868c8', '#48a868', '#c8a848', '#9858c0'], hash(wx * 2 + sub, wy, 60)), bg: '#2a1a0e', bold: false };
+      return { ch: hs < 0.5 ? '▌' : '▐', fg: pick(['#c04848', '#4868c8', '#48a868', '#c8a848', '#9858c0'], hash(wx * 2, wy, 60)), bg: '#2a1a0e', bold: false };
     case 'bath':
       return { ch: hs < 0.5 ? '≈' : '∼', fg: '#3a90d8', bg: '#d8e6ee', bold: false };
     case 'up':
     case 'down':
     case 'exit':
-      return centre({ ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 5, accent: true });
+      return { ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 5, accent: true };
     case 'pond':
     case 'spring':
     case 'fountain':
     case 'water': {
-      if (tag.k === 'deco' && tag.dch) return centre({ ch: tag.dch, fg: '#7fe8ff', bg: groundBg(F, tag), bold: true, accent: true }); // fountain statue
-      const wb = groundBg(F, tag);
+      if (tag.k === 'deco' && tag.dch) return { ch: tag.dch, fg: '#7fe8ff', bg: groundBg(F, tag), bold: true, accent: true }; // fountain statue
       const tint = tag.t === 'pond' ? '#0a3a2a' : tag.t === 'spring' ? '#0a3a4a' : tag.t === 'fountain' ? '#0a3a6a' : '';
-      let bg = tint ? mix(wb, tint, 0.6) : wb;
       const fgc = tag.t === 'spring' ? '#9ae8ff' : tag.t === 'fountain' ? '#7fe8ff' : tag.t === 'pond' ? '#5ae0a0' : th.waterFg;
-      if (g === '-' && sub === 0) return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
-      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
-        const n = F.tags[y + dy]?.[x + dx];
-        return !!n && !WATERY.has(n.t) && n.t !== 'bridge';
-      });
-      if (edge) return { ch: hs < 0.5 ? '∼' : ' ', fg: mix(fgc, '#ffffff', 0.25), bg: mix(bg, '#2a5aa0', 0.4), bold: false };
-      // deeper water further from the shore
-      let deep = true;
-      for (let dy = -2; dy <= 2 && deep; dy++) {
-        for (let dx = -3; dx <= 3; dx++) {
+      const T = Math.floor(F.t * 3) / 3; // water moves in small steps so a calm scene doesn't repaint every tick
+      // depth: distance to the nearest shore, where a row counts about double (cells are tall)
+      let depth = WATER_DEPTH.length - 1;
+      for (let dy = -2; dy <= 2 && depth > 1; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
           const n = F.tags[y + dy]?.[x + dx];
-          if (n && !WATERY.has(n.t) && n.t !== 'bridge') { deep = false; break; }
+          if (n && n.t !== 'ui' && !WATERY.has(n.t) && n.t !== 'bridge') depth = Math.min(depth, Math.max(Math.abs(dx), dy ? Math.abs(dy) * 2 - 1 : 0));
         }
       }
-      if (deep) bg = mix(bg, '#000000', 0.32);
-      if (th.lilies && tag.t === 'water' && hash(wx, wy, 46) < 0.03) return centre({ ch: '◒', fg: '#3aa040', bg, bold: false });
-      const glint = hash(wx * 2 + sub, wy, 80 + (Math.floor(F.t * 3) % 97));
+      let bg = groundBg(F, tag);
+      if (tint) bg = mix(bg, tint, 0.6);
+      const dk = WATER_DEPTH[depth];
+      bg = dk > 0 ? mix(bg, '#3a6ab0', dk) : mix(bg, '#000000', -dk);
+      // the surface colour wanders a little around its depth colour, never drifting away from it
+      const shimmer = valueNoise(wx / 6 + T * 0.25, wy / 3 - T * 0.1, 22) - 0.5;
+      bg = shimmer > 0 ? mix(bg, '#5a8ad0', shimmer * 0.18) : mix(bg, '#000000', -shimmer * 0.18);
+      if (g === '-') return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
+      if (th.lilies && tag.t === 'water' && !F.sea && depth > 1 && hash(wx, wy, 46) < 0.03) return { ch: '◒', fg: '#3aa040', bg, bold: false, accent: true };
+      const glint = hash(wx * 2, wy, 80 + (Math.floor(T * 3) % 97));
       if (!F.indoor && F.weather === 'Sunny' && F.amb > 0.85 && glint < 0.014) return { ch: '✦', fg: '#ffffff', bg, bold: true, glow: '#cfe8ff', glowR: 5 };
-      if (!F.indoor && F.weather === 'Sunny' && F.amb < 0.5 && hash(wx * 2 + sub, wy, 85 + (Math.floor(F.t * 1.5) % 61)) < 0.012) return { ch: '·', fg: '#e8eeff', bg, bold: true };
-      const f = Math.floor(F.t * 1.2);
-      const hw = hash(wx * 2 + sub, wy, 20 + (f % 64));
-      if (tag.t === 'spring' && hw < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
-      return { ch: hw < 0.3 ? '≈' : hw < 0.55 ? '∼' : ' ', fg: fgc, bg, bold: false };
+      if (!F.indoor && F.weather === 'Sunny' && F.amb < 0.5 && hash(wx * 2, wy, 85 + (Math.floor(T * 1.5) % 61)) < 0.012) return { ch: '·', fg: '#e8eeff', bg, bold: true };
+      if (tag.t === 'spring' && hash(wx * 2, wy, 20 + (Math.floor(T * 1.2) % 64)) < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
+      // ripples run in short streaks that drift across the surface together
+      const r = valueNoise(wx / 3 - T * 0.5, wy * 0.9, 21) * 0.8 + hash(wx, wy, 23) * 0.2;
+      const ch = r > 0.64 ? '≈' : r > 0.54 ? '∼' : ' ';
+      return { ch, fg: depth <= 1 ? mix(fgc, '#ffffff', 0.25) : fgc, bg, bold: false };
     }
   }
   // Generic: furniture, signs, bins, doghouse... keep the readable glyph on a grounded background.
-  return centre({ ch: g, fg: pal(fg), bg: F.indoor || lead[2] === '01' ? '#3a2818' : groundBg(F, tag), bold, accent: INTEREST.has(tag.t) });
+  return { ch: g, fg: pal(fg), bg: F.indoor || cell[2] === '01' ? '#3a2818' : groundBg(F, tag), bold, accent: INTEREST.has(tag.t) };
 }
 
 // ---------------------------------------------------------------- frame
@@ -712,7 +708,8 @@ export function computeFrame(
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
   const motion = !ctx?.reducedMotion;
   const skyNow = ctx ? skyFor(ctx) : null;
-  const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720 };
+  // with reduced motion every tile animation (sway, ripples, twinkles) holds its first frame
+  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, sea: ctx?.mapName === 'beach' };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -761,7 +758,7 @@ export function computeFrame(
         o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
       }
       if (uiCell) o.ui = true;
-      else if (tag) o.seed = hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 200);
+      else if (tag) o.seed = hash((tag.wx ?? x) * 2, tag.wy ?? y, 200);
       row[x] = o;
     }
     out[y] = row;
@@ -845,8 +842,8 @@ export function computeFrame(
         o.bg = mix(o.bg, '#000000', k);
         o.fg = mix(o.fg, '#000000', k * 0.6);
         // sunlight dapples through the leaves onto the shaded ground
-        if (up && up.t === 'tree' && o.ch === ' ' && !o.dx && sky.amb > 0.85 && ctx.weather === 'Sunny'
-          && hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 150) < 0.5) {
+        if (up && up.t === 'tree' && o.ch === ' ' && sky.amb > 0.85 && ctx.weather === 'Sunny'
+          && hash((tag.wx ?? x) * 2, tag.wy ?? y, 150) < 0.5) {
           o.ch = '˙';
           o.fg = mix(o.bg, '#fff4d8', 0.55);
         }
@@ -862,9 +859,7 @@ export function computeFrame(
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
-        const zw = tag.zw ?? 1;
-        const px = (tag.wx ?? x) + (tag.sub ?? 0) / zw;
-        const n = valueNoise(px / 9 + tc * 0.06, (tag.wy ?? y) / 5 + tc * 0.02, 51);
+        const n = valueNoise((tag.wx ?? x) / 9 + tc * 0.06, (tag.wy ?? y) / 5 + tc * 0.02, 51);
         if (n > 0.64) {
           const k = Math.min(1, (n - 0.64) / 0.2) * 0.3;
           const o = out[y][x];
@@ -904,11 +899,9 @@ export function computeFrame(
         if (!tag || tag.t === 'ui' || tag.ent) continue;
         const open = WALKABLE_OPEN.has(tag.t) || WATERY.has(tag.t) || (tag.k || '').startsWith('soil') || (tag.k || '').startsWith('crop:');
         if (!open) continue;
-        const zw = tag.zw ?? 1;
-        const wx = (tag.wx ?? x) * zw + (tag.sub ?? 0);
+        const wx = tag.wx ?? x;
         const wy = tag.wy ?? y;
         const o = out[y][x];
-        if (o.dx) continue; // don't paint over a centred sprite
         if (rain) {
           const drift = w === 'Typhoon' ? 2 : 1;
           if (hash(wx - f * drift, wy - f, 11) < dens) {
@@ -945,15 +938,11 @@ export function computeFrame(
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
-        // one light per tile, centred on it
-        if ((tag.sub ?? 0) !== 0) continue;
-        const lx = x + ((tag.zw ?? 1) - 1) / 2;
-        const zr = tag.zw ?? 1;
-        if (tag.ent === 'player' && sky.lanterns) lights.push({ x: lx, y, r: (ctx.mapName === 'mine' ? 8 : 10) * (zr > 1 ? 1.3 : 1), col: hexToRgb('#ffd890'), k: 1.15 });
-        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') lights.push({ x: lx, y, r: 3.4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffb050'), k: 0.75 });
-        if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x: lx, y, r: 4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffa040'), k: 0.8 });
-        if (tag.t === 'fireplace') lights.push({ x: lx, y, r: 5 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ff8a40'), k: 0.8 });
-        if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x: lx, y: y + 1, r: 5 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ff9900'), k: 0.85 });
+        if (tag.ent === 'player' && sky.lanterns) lights.push({ x, y, r: ctx.mapName === 'mine' ? 8 : 10, col: hexToRgb('#ffd890'), k: 1.15 });
+        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') lights.push({ x, y, r: 3.4, col: hexToRgb('#ffb050'), k: 0.75 });
+        if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x, y, r: 4, col: hexToRgb('#ffa040'), k: 0.8 });
+        if (tag.t === 'fireplace') lights.push({ x, y, r: 5, col: hexToRgb('#ff8a40'), k: 0.8 });
+        if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x, y: y + 1, r: 5, col: hexToRgb('#ff9900'), k: 0.85 });
       }
     }
     const tintRgb = hexToRgb(sky.tint);
@@ -1001,8 +990,8 @@ export function computeFrame(
         const entBoost = tag.ent ? 0.35 : 0;
         o.bg = shade(o.bg, lr, lg, lb, ls);
         // the rim of each light pool fades out through ':' and '.' (an ASCII gradient)
-        if (ls > 0.04 && ls < 0.32 && o.ch === ' ' && SHADOW_RECEIVERS.has(tag.t) && !tag.ent && !o.dx && !(x > 0 && out[y][x - 1].dx)
-          && hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 73) < 0.45) {
+        if (ls > 0.04 && ls < 0.32 && o.ch === ' ' && SHADOW_RECEIVERS.has(tag.t) && !tag.ent
+          && hash((tag.wx ?? x) * 2, tag.wy ?? y, 73) < 0.45) {
           o.ch = ls < 0.14 ? '.' : ':';
           o.fg = mix(o.bg, '#ffe0a0', 0.22 + ls * 0.6);
         }
@@ -1026,8 +1015,8 @@ export function computeFrame(
           o.glowR = 10;
           o.accent = true;
         }
-        if (fireflies && tag.t === 'grass' && !tag.ent && !o.dx) {
-          const wx = (tag.wx ?? x) * (tag.zw ?? 1) + (tag.sub ?? 0);
+        if (fireflies && tag.t === 'grass' && !tag.ent) {
+          const wx = tag.wx ?? x;
           const wy = tag.wy ?? y;
           if (hash(wx, wy, 77) < 0.03 && hash(wx, wy, 78 + (Math.floor(t * 1.5) % 40)) > 0.35) {
             o.ch = '·';
@@ -1043,7 +1032,8 @@ export function computeFrame(
   }
   // ---- reflections in calm water (after lighting, so lit windows reflect too)
   if (outdoor && ctx.weather === 'Sunny') reflections(out, tags, v, t, W, H);
-  shoreFoam(out, tags, v, W, H);
+  shoreFoam(out, tags, v, W, H, motion ? t : 0);
+  if (!ctx.indoor) worldMargin(out, tags, buf, v, ctx.divX, ctx.divY, boxes);
 
   monochrome(out, boxes);
   decorateBoxes(out, boxes, W, H);
@@ -1073,20 +1063,17 @@ function footprints(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['
     trail.push({ map: ctx.mapName, wx: pwx, wy: pwy });
     if (trail.length > 16) trail.shift();
   }
-  const zw = ctx.zoom || 1;
   for (let i = 0; i < trail.length - 1; i++) {
     const s = trail[i];
-    const x = px + (s.wx - pwx) * zw;
+    const x = px + (s.wx - pwx);
     const y = py + (s.wy - pwy);
     if (y < v.y || y >= v.y + v.h || x < v.x || x >= v.x + v.w) continue;
     const tg = tags[y][x];
     if (!tg || tg.wx !== s.wx || tg.wy !== s.wy || tg.ent || tg.k) continue;
     if (!((season === 3 && GROUND.has(tg.t)) || tg.t === 'sand')) continue;
     const o = out[y][x];
-    if (o.dx) continue;
     const fresh = (i + 1) / trail.length; // older prints fade
-    out[y][x] = { ...o, ch: ':', fg: mix(o.bg, '#b4bccc', 0.3 + 0.55 * fresh), bold: true, glow: undefined, dx: zw > 1 ? 0.5 : undefined };
-    if (zw > 1 && out[y][x + 1]) out[y][x + 1] = { ...out[y][x + 1], ch: ' ' };
+    out[y][x] = { ...o, ch: ':', fg: mix(o.bg, '#b4bccc', 0.3 + 0.55 * fresh), bold: true, glow: undefined };
   }
 }
 
@@ -1105,14 +1092,15 @@ function birds(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'
     const x = Math.round(lead - dir * rank * 2);
     const y = y0 + Math.round(p * 3) + (i === 0 ? 0 : i % 2 ? -rank : rank);
     const tg = tags[y]?.[x];
-    if (!tg || tg.t === 'ui' || tg.ent || out[y][x].dx) continue;
+    if (!tg || tg.t === 'ui' || tg.ent) continue;
     const flap = Math.floor(t * 5 + i) % 2 === 0;
     out[y][x] = { ...out[y][x], ch: flap ? 'v' : 'ˇ', fg: '#d8d8d8', bold: true, glow: undefined };
   }
 }
 
 /** Mark water cells that touch land so the painter can draw a thin foam line on that side. */
-function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number) {
+function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number, t: number) {
+  const T = Math.floor(t * 3) / 3;
   const land = (n: CellTag | null | undefined) => !!n && n.t !== 'ui' && !WATERY.has(n.t) && n.t !== 'bridge' && n.t !== 'void';
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
@@ -1124,9 +1112,13 @@ function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['v
       if (land(tags[y + 1]?.[x])) m |= 4;
       if (land(tags[y][x - 1])) m |= 8;
       if (!m) continue;
+      // the foam laps: each stretch of shore brightens, fades and breaks on its own beat,
+      // so the waterline reads as moving foam rather than a stone kerb
+      const lap = 0.5 + 0.5 * Math.sin(T * 2.2 + (tg.wx ?? x) * 0.8 + (tg.wy ?? y) * 1.3);
+      if (lap < 0.22) continue;
       const o = out[y][x];
       o.foam = m;
-      o.foamCol = mix(o.bg, '#ffffff', 0.42);
+      o.foamCol = mix(o.bg, '#ffffff', 0.16 + 0.26 * lap);
     }
   }
   // the same thin edge line, fainter, gives paths a stone kerb where they meet grass or soil
@@ -1144,6 +1136,45 @@ function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['v
       const o = out[y][x];
       o.foam = m;
       o.foamCol = mix(o.bg, '#ffffff', 0.2);
+    }
+  }
+}
+
+/**
+ * A map narrower or shorter than its window leaves a margin. Instead of a hard black frame,
+ * the world's edge carries on into the dark: each margin cell borrows a cell from the map's
+ * outer band (so a treeline stays a forest and a road keeps going), dimmer and sparser with
+ * distance. Dialogs over the margin are left alone.
+ */
+function worldMargin(out: OutCell[][], tags: (CellTag | null)[][], buf: Cell[][], v: RenderCtx['view'], divX: number, divY: number, boxes: Screen['boxes']) {
+  if (v.w < 2 || v.h < 2) return;
+  const x1 = v.x + v.w - 1;
+  const y1 = v.y + v.h - 1;
+  const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
+  for (let y = 1; y < Math.min(divY, out.length); y++) {
+    for (let x = 0; x < Math.min(divX, out[y].length); x++) {
+      if (x >= v.x && x <= x1 && y >= v.y && y <= y1) continue;
+      if (tags[y][x] || buf[y][x][0] !== ' ' || inBox(x, y)) continue;
+      const ex = x < v.x ? v.x - x : x > x1 ? x - x1 : 0;
+      const ey = y < v.y ? v.y - y : y > y1 ? y - y1 : 0;
+      const d = Math.max(ex, ey * 2); // rows are about twice as tall as columns are wide
+      const fade = 0.4 + d * 0.07;
+      if (fade >= 0.97) continue;
+      // borrow from the two outermost rings, nudged a row or column so copies don't streak
+      const j = hash(x, y, 210) < 0.5 ? 0 : 1;
+      const n = Math.floor(hash(x, y, 211) * 3) - 1;
+      const sx = x < v.x ? v.x + j : x > x1 ? x1 - j : Math.max(v.x, Math.min(x1, x + n));
+      const sy = y < v.y ? v.y + j : y > y1 ? y1 - j : Math.max(v.y, Math.min(y1, y + n));
+      const src = out[sy][sx];
+      const st = tags[sy][sx];
+      const sparse = hash(x, y, 212) < (d - 1) * 0.15; // glyphs thin out toward the far edge
+      out[y][x] = {
+        ch: !st || st.ent || sparse ? ' ' : src.ch,
+        fg: mix(src.fg, '#000000', fade),
+        bg: mix(src.bg, '#000000', fade),
+        bold: false,
+        seed: hash(x, y, 213),
+      };
     }
   }
 }
@@ -1175,18 +1206,14 @@ function reflections(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx[
       const src = out[sy][x];
       if (!(TALL.has(st.t) || st.ent || src.accent)) continue;
       const o = out[y][x];
-      if (src.ch === ' ') {
-        if (x > 0 && out[sy][x - 1].dx) out[y][x] = { ...o, ch: ' ', glow: undefined };
-        continue;
-      }
-      if (hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 120 + (f % 31)) < 0.22) continue; // ripple break-up
+      if (src.ch === ' ') continue;
+      if (hash((tag.wx ?? x) * 2, tag.wy ?? y, 120 + (f % 31)) < 0.22) continue; // ripple break-up
       out[y][x] = {
         ch: MIRROR[src.ch] ?? src.ch,
         fg: mix(src.fg, o.bg, 0.5 + 0.1 * k),
         bg: o.bg,
         bold: false,
         accent: src.accent,
-        dx: src.dx,
         glow: src.accent && src.glow ? mix(src.glow, '#000000', 0.5) : undefined,
         glowR: 4,
       };
@@ -1223,12 +1250,11 @@ function blendGroundEdges(out: OutCell[][], tags: (CellTag | null)[][], v: Rende
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !GROUND.has(tag.t) || tag.k || out[y][x].ch !== ' ') continue;
-      if (out[y][x - 1]?.dx) continue; // under a centred sprite
-      if (hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 61) > 0.55) continue; // ragged, not a solid band
+      if (hash((tag.wx ?? x) * 2, tag.wy ?? y, 61) > 0.55) continue; // ragged, not a solid band
       for (const [dx, dy, edge] of dirs) {
         const n = tags[y + dy]?.[x + dx];
         if (n && n.t !== 'ui' && GROUND.has(n.t) && !n.k && rank[n.t] > rank[tag.t]) {
-          const solid = hash((tag.wx ?? x) * 2 + (tag.sub ?? 0) + dx, (tag.wy ?? y) + dy, 62) < 0.34;
+          const solid = hash((tag.wx ?? x) * 2 + dx, (tag.wy ?? y) + dy, 62) < 0.34;
           out[y][x] = { ...out[y][x], ch: solid ? edge : '░', fg: base[y + dy][x + dx] };
           break;
         }
@@ -1270,7 +1296,6 @@ function chimneys(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['vi
         const phase = (t * 0.9 + seed + k * 0.37) % 1;
         if (phase < 0.25 * k - 0.2) continue;
         const o = out[yy][xx];
-        if (o.dx) continue;
         out[yy][xx] = { ...o, ch: k === 1 ? '°' : k === 2 ? '∘' : '·', fg: mix('#eeeef4', o.bg, 0.05 + k * 0.15), bold: k === 1, glow: undefined };
       }
     }
@@ -1305,7 +1330,6 @@ function critters(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['vi
     if (butterflies && !(GROUND.has(tg.t) || (tg.k || '').startsWith('soil') || (tg.k || '').startsWith('crop:'))) continue;
     if (leaves && !(GROUND.has(tg.t) || WATERY.has(tg.t) || (tg.k || '').startsWith('soil'))) continue;
     const o = out[y][x];
-    if (o.dx) continue;
     const flap = Math.floor(t * 6 + i) % 2 === 0;
     out[y][x] = {
       ...o,
@@ -1435,16 +1459,15 @@ export const SPRITE_KEEP = new Set(['ψ', '•']);
  * should stay a single glyph (glowing crops, tokens, the HUD, small fonts).
  */
 export function spritePattern(o: OutCell, fontPx: number, level: number): string[] | null {
-  if (level < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.token || o.glow) return null;
+  if (level < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.plain || o.token || o.glow) return null;
   const pools = SPRITE_POOLS[o.ch];
   if (!pools) return null;
-  const cols = level * (o.dx ? 2 : 1);
   const seed = o.seed ?? 0;
   const rows: string[] = [];
   for (let r = 0; r < level; r++) {
     let row = '';
-    for (let c = 0; c < cols; c++) {
-      const dx = (c + 0.5) / cols - 0.5;
+    for (let c = 0; c < level; c++) {
+      const dx = (c + 0.5) / level - 0.5;
       const dy = (r + 0.5) / level - 0.5;
       const pool = Math.sqrt(dx * dx * 1.6 + dy * dy) < 0.3 ? pools[0] : pools[1];
       const j = Math.sin(seed * 6151 + r * 17.3 + c * 41.9) * 43758.5453;
@@ -1476,7 +1499,7 @@ export function effectiveHiresLevel(fontPx: number, dpr = 1, hires = true): numb
 
 /** The n x n high-resolution pattern for a cell (n*n glyphs, row by row), or null for a plain glyph. */
 export function subPattern(o: OutCell, fontPx: number, n = 2): string | null {
-  if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.dx || o.token || o.glow) return null;
+  if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.plain || o.token || o.glow) return null;
   const v = SUBPIX[o.ch];
   if (!v) return null;
   const seed = o.seed ?? 0;
@@ -1522,12 +1545,16 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
   g.save();
   g.textBaseline = 'middle';
   g.shadowBlur = 0;
+  // backgrounds go down in runs of equal colour: one rectangle per run, not per cell
   for (let y = 0; y < frame.length; y++) {
     const row = frame[y];
-    for (let x = 0; x < row.length; x++) {
-      g.fillStyle = row[x].bg;
+    let x0 = 0;
+    for (let x = 1; x <= row.length; x++) {
+      if (x < row.length && row[x].bg === row[x0].bg) continue;
+      g.fillStyle = row[x0].bg;
       // +1px overlap on both axes so scaled canvases show no seams between cells
-      g.fillRect(Math.floor(x * cw), Math.floor(y * ch), Math.ceil(cw) + 1, Math.ceil(ch) + 1);
+      g.fillRect(Math.floor(x0 * cw), Math.floor(y * ch), Math.ceil((x - x0) * cw) + 1, Math.ceil(ch) + 1);
+      x0 = x;
     }
   }
   let curFont = '';
@@ -1537,7 +1564,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
     for (let x = 0; x < row.length; x++) {
       const o = row[x];
       if (o.ch === ' ') continue;
-      const px = (x + (o.dx ?? 0)) * cw;
+      const px = x * cw;
       const py = y * ch;
       if (o.ch === '▄' || o.ch === '▀' || o.ch === '█') {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
@@ -1568,9 +1595,8 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       // switches once per frame instead of once per cell.
       const spr = spritePattern(o, fontPx, level);
       if (spr) {
-        const left = px - (o.dx ?? 0) * cw; // a centred sprite spans its whole tile
         for (let r = 0; r < spr.length; r++) {
-          if (spr[r].trim() !== '') mini(left, py + r * (ch / level) + ch / (2 * level) + 0.5, spr[r], o.fg, 1, o.bold);
+          if (spr[r].trim() !== '') mini(px, py + r * (ch / level) + ch / (2 * level) + 0.5, spr[r], o.fg, 1, o.bold);
         }
         if (!SPRITE_KEEP.has(o.ch)) continue; // obstacles also draw their full-size glyph below
       }
@@ -1591,9 +1617,8 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       }
       if (o.token) {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
-        const wide = !!o.dx;
         g.beginPath();
-        g.ellipse(px + cw / 2, py + ch / 2, wide ? ch * 0.48 : cw * 0.62, ch * 0.46, 0, 0, Math.PI * 2);
+        g.ellipse(px + cw / 2, py + ch / 2, cw * 0.62, ch * 0.46, 0, 0, Math.PI * 2);
         g.fillStyle = o.token;
         g.fill();
         if (o.rim) {

@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 78/78 tests pass, typecheck clean, production build passes.
+- **State:** working. 84/84 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** ask the user what's next. Likely: an optional high-res-detail toggle, a wider map view on large monitors, or lint setup.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 78 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 84 passed, 5 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -71,7 +71,7 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 78 tests: enhanced 58, render 10, rules 7, engine 3
+src/game/*.test.ts             node:test — 84 tests: enhanced 64, render 10, rules 7, engine 3
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -130,8 +130,9 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #22: graded water depth, drifting ripples, lapping foam, summer lily pads, soft ground mottling, map edges fading into the margin, sign apostrophes kept, background runs batched, dead Large-tile code removed.
+- #20 `6d032da`: high-res ground detail toggle in the desktop toolbar and Diary menu (`hrvstmn-hires`).
 - #19 `cbfdf1f`: touch action shows `OK` inside menus/dialogs; clearer Today readiness wording.
-- #20: high-res ground detail toggle in the desktop toolbar and Diary menu (`hrvstmn-hires`).
 - #18 `181eb96`: Today's Plan, Villager Notes, JSON save export/import, tool cost/footprint previews, context touch action, eased camera, longer shadows, directional terrain edges, quieter HUD, reduced motion.
 - #16 `dad620f`: dappled sunlight under trees, path kerbs, morning dew.
 - #15 `225a9a3`: small objects as tile-wide clusters, meadow stipple, batched small glyphs.
@@ -146,7 +147,7 @@ Newest first.
 
 ## Open work / known gotchas
 
-- Wider map view on large monitors (user idea, not started; decide whether that means more tiles or a larger font).
+- Wider map view on large monitors (user idea, not started; decide whether that means more tiles or a larger font). Small maps now fade into the margin (`worldMargin()`), which fills the empty space but does not show more of the map.
 - Lint is not configured; don't run `npm run lint` unless you intend to set it up.
 - `npm run build` says "Skipping validation of types / Skipping linting" by design; `npx tsc --noEmit` is the real type gate.
 - Test server is for local verification only; stop it when done. If you rebuild while `next start` is running, restart the server so the HTML and chunk files match.
