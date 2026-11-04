@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -295,11 +295,34 @@ describe('computeFrame', () => {
     }
   });
 
-  test('water is deeper (darker) away from the shore', () => {
-    const s = scene();
+  const lake = (over: Partial<RenderCtx> = {}) => {
+    const s = scene(over);
     for (let y = 2; y < 18; y++) for (let x = 5; x < 40; x++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
-    const out = computeFrame(s, 0);
-    assert.ok(lum(out[10][20].bg) < lum(out[3][20].bg));
+    return s;
+  };
+  const rowLum = (row: { bg: string }[]) => row.slice(12, 33).reduce((a, o) => a + lum(o.bg), 0) / 21;
+
+  test('water is deeper (darker) away from the shore, through a graded middle', () => {
+    const out = computeFrame(lake(), 0);
+    assert.ok(rowLum(out[2]) > rowLum(out[3]), 'shallows are lightest');
+    assert.ok(rowLum(out[3]) > rowLum(out[10]), 'the middle is darkest');
+  });
+
+  test('ripples drift across the water together, and hold still with reduced motion', () => {
+    const ripples = (s: Screen, t: number) => computeFrame(s, t).slice(4, 16).map((r) => r.slice(10, 35).map((o) => o.ch).join('')).join('|');
+    const s = lake();
+    assert.notEqual(ripples(s, 0), ripples(s, 4), 'the surface moves');
+    const streaks = ripples(s, 0).match(/[≈∼]{3,}/g) ?? [];
+    assert.ok(streaks.length > 10, 'ripples run in streaks, not single specks');
+    const still = lake({ reducedMotion: true });
+    assert.equal(ripples(still, 0), ripples(still, 4));
+  });
+
+  test('summer lily pads keep a touch of colour on ponds, not the sea', () => {
+    const out = computeFrame(lake({ season: 1 }), 0).flat().filter((o) => o.ch === '◒');
+    assert.ok(out.length > 3);
+    assert.ok(out.every((o) => o.accent && grey(o.fg) !== o.fg));
+    assert.equal(computeFrame(lake({ season: 1, mapName: 'beach' }), 0).flat().filter((o) => o.ch === '◒').length, 0, 'none on the sea');
   });
 
   test('walls under the eaves are shaded and building ends get corner posts', () => {
@@ -484,8 +507,10 @@ describe('computeFrame', () => {
     const s = scene();
     for (let x = 0; x < 50; x++) for (let y = 8; y < 14; y++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
     const out = computeFrame(s, 0);
-    assert.ok((out[8][20].foam ?? 0) & 1, 'top shore');
-    assert.ok((out[13][20].foam ?? 0) & 4, 'bottom shore');
+    const shore = (y: number, bit: number) => out[y].slice(5, 45).filter((o) => (o.foam ?? 0) & bit).length;
+    assert.ok(shore(8, 1) > 25, 'top shore');
+    assert.ok(shore(13, 4) > 25, 'bottom shore');
+    assert.ok(shore(8, 1) < 40, 'broken here and there where the foam has drawn back');
     assert.equal(out[10][20].foam, undefined, 'open water has none');
   });
 
@@ -511,16 +536,16 @@ describe('computeFrame', () => {
   });
 
   test('small objects become clusters across their tile, denser in the middle', () => {
-    const weed = { ch: '✿', fg: '#0f0', bg: '#000', bold: false, dx: 0.5, seed: 0.21 };
+    const weed = { ch: '✿', fg: '#0f0', bg: '#000', bold: false, seed: 0.21 };
     const rows = spritePattern(weed, 16, 3)!;
     assert.equal(rows.length, 3);
-    assert.ok(rows.every((r) => [...r].length === 6), 'spans the 2-cell tile');
+    assert.ok(rows.every((r) => [...r].length === 3), 'one glyph per detail step across the tile');
     let mid = 0;
     let edge = 0;
     for (let i = 0; i < 300; i++) {
       const rr = spritePattern({ ...weed, seed: i / 300 }, 16, 3)!;
-      mid += rr[1].slice(2, 4).replace(/ /g, '').length;
-      edge += (rr[0][0] + rr[2][5]).replace(/ /g, '').length;
+      mid += rr[1][1].replace(/ /g, '').length;
+      edge += (rr[0][0] + rr[2][2]).replace(/ /g, '').length / 2;
     }
     assert.ok(mid > edge * 1.5);
     assert.equal(spritePattern({ ...weed, glow: '#fff' }, 16, 3), null, 'glowing ripe crops stay single');
@@ -528,7 +553,7 @@ describe('computeFrame', () => {
     assert.equal(spritePattern(weed, 16, 1), null, 'off on small screens');
     assert.ok(SPRITE_KEEP.has('ψ') && SPRITE_KEEP.has('•'), 'weeds and stones keep a full-size glyph');
     const w3 = spritePattern({ ...weed, ch: 'ψ' }, 16, 3)!;
-    assert.equal(w3[1].slice(2, 4), '  ', 'centre left clear for the full-size weed');
+    assert.equal(w3[1][1], ' ', 'centre left clear for the full-size weed');
   });
 
   test('meadows carry a faint stipple between the tufts', () => {
@@ -560,6 +585,64 @@ describe('computeFrame', () => {
     const dew = (minutes: number) => [0, 0.5, 1, 1.5].reduce((n, tt) => n + computeFrame(scene({ minutes }), tt).flat().filter((o) => o.ch === '✧').length, 0);
     assert.ok(dew(7 * 60) > 0);
     assert.equal(dew(13 * 60), 0);
+  });
+
+  test('meadow shading comes in soft patches rather than per-cell speckle', () => {
+    const out = computeFrame(scene({ weather: 'Rain' }), 0);
+    let near = 0;
+    let far = 0;
+    for (let y = 2; y < 19; y++) {
+      for (let x = 0; x < 40; x++) {
+        if (out[y][x].bg !== out[y][x + 1].bg) near++;
+        if (out[y][x].bg !== out[y][x + 7].bg) far++;
+      }
+    }
+    assert.ok(near < far * 0.7, `neighbours mostly match (${near} vs ${far})`);
+  });
+
+  test('a map narrower than its window fades into the margin instead of a black frame', () => {
+    const narrow = (over: Partial<RenderCtx> = {}) => {
+      const s = new Screen(80, 24);
+      s.ctx = { mapName: 'farm', indoor: false, minutes: 12 * 60, season: 0, weather: 'Sunny', zoom: 1, view: { x: 15, y: 1, w: 20, h: 19 }, divX: 50, divY: 20, icons: [], ...over };
+      for (let y = 1; y < 20; y++) {
+        for (let x = 15; x < 35; x++) {
+          const tree = x < 17 || x > 32;
+          s.put(x, y, tree ? 'T' : ' ', '0B', '00', tree);
+          s.tag(x, y, { t: tree ? 'tree' : 'grass', wx: x - 15, wy: y });
+        }
+      }
+      return s;
+    };
+    const out = computeFrame(narrow(), 0);
+    const near = out[10][14];
+    const far = out[10][3];
+    assert.ok(!near.ui && lum(near.bg) > 0, 'the margin next to the map is not black');
+    assert.ok(lum(near.bg) <= lum(out[10][15].bg), 'and no brighter than the map edge');
+    assert.ok(lum(far.bg) < lum(near.bg) || far.bg === '#000000', 'it fades with distance');
+    assert.ok(out[10].slice(10, 15).some((o) => '♣♠'.includes(o.ch)), 'the treeline carries on');
+    assert.ok(out[10][36].bg !== '#000000', 'on both sides');
+    const indoor = computeFrame(narrow({ indoor: true }), 0);
+    assert.equal(indoor[10][14].bg, '#000000', 'rooms stay framed by black');
+    const d = narrow();
+    d.box(0, 6, 12, 6, '03', '00', 'Hi');
+    assert.ok(computeFrame(d, 0)[8][4].ui, 'a dialog over the margin stays a dialog');
+  });
+
+  test('sign lettering stays a plain glyph, even an apostrophe', () => {
+    const s = scene();
+    s.put(10, 5, "'", '07', '00');
+    s.tag(10, 5, { t: 'wall', k: 'deco', dch: "'", wx: 10, wy: 5 });
+    const out = computeFrame(s, 0);
+    assert.equal(out[5][10].ch, "'");
+    assert.equal(subPattern(out[5][10], 16, 2), null, 'not turned into grass texture');
+    const grassTick = out.flat().find((o) => o.ch === "'" && o !== out[5][10]);
+    assert.ok(grassTick && subPattern(grassTick, 16, 2), 'grass ticks still get their texture');
+  });
+
+  test('shoreline foam laps: its brightness changes over time', () => {
+    const s = lake();
+    const foam = (t: number) => computeFrame(s, t)[2].slice(10, 35).map((o) => o.foamCol).join();
+    assert.notEqual(foam(0), foam(1.5));
   });
 
   test('hash is deterministic and in range', () => {

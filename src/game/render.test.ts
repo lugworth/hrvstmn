@@ -55,7 +55,6 @@ describe('engine + renderer', () => {
     const [x, y] = p!;
     const out = computeFrame(s, 0);
     assert.equal(out[y][x].ch, '☻');
-    assert.equal(out[y][x].dx, undefined);
   });
 
   test('a dialog drawn over the map clears the map tags under it', () => {
