@@ -155,4 +155,19 @@ describe('engine + renderer', () => {
     assert.equal(g.requests.length, 2);
     assert.equal(g.inv[request.item], undefined);
   });
+
+  test('achievements derive from saved progress', () => {
+    const { g } = farm();
+    const list = g.achievement_list();
+    assert.equal(list.length, 14);
+    assert.equal(list.find((a) => a.name === 'First Shipment')?.done, false);
+    g.shipped_total = 10000;
+    g.museum = g.museum_pool().slice(0, 10);
+    g.requests_done = 5;
+    const updated = g.achievement_list();
+    assert.equal(updated.find((a) => a.name === 'First Shipment')?.done, true);
+    assert.equal(updated.find((a) => a.name === 'Market Regular')?.done, true);
+    assert.equal(updated.find((a) => a.name === 'Museum Patron')?.done, true);
+    assert.equal(updated.find((a) => a.name === 'Good Neighbor')?.done, true);
+  });
 });
