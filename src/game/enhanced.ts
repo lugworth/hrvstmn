@@ -416,21 +416,19 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
   const th = F.theme;
   const wx = tag.wx ?? x;
   const wy = tag.wy ?? y;
-  const sub = tag.sub ?? 0;
-  const wide = (tag.zw ?? 1) > 1;
-  // In large-tile mode the engine writes the tile's glyph into sub-cell 0 only.
-  const lead = sub > 0 && x - sub >= 0 ? F.buf[y][x - sub] : cell;
-  const g = lead[0];
-  const fg = lead[1];
-  const bold = lead[3];
+  const g = cell[0];
+  const fg = cell[1];
+  const bold = cell[3];
   const h = hash(wx, wy);
-  // per-sub-cell noise, so a 2-cell tile gets two independent texture samples
-  const hs = wide ? hash(wx * 2 + sub, wy, 17) : h;
+  const hs = h;
   const k = tag.k || '';
-  /** A single glyph that should sit centred in its tile. */
-  const centre = (o: OutCell): OutCell => (!wide ? o : sub === 0 ? { ...o, dx: 0.5 } : { ...o, ch: ' ', glow: undefined });
-  /** Light comes from the top-left: on 2-cell sprites the left cell is lit, the right in shade. */
-  const lit = (o: OutCell): OutCell => (!wide ? o : { ...o, fg: sub === 0 ? mix(o.fg, '#ffffff', 0.2) : mix(o.fg, '#000000', 0.28) });
+  // Large tiles are retired. These aliases keep the shared texture code simple:
+  // every cell is now its own tile, so no cell is a sub-cell or spans two cells.
+  const sub = 0;
+  const wide = false;
+  const lead = cell;
+  const centre = (o: OutCell): OutCell => o;
+  const lit = (o: OutCell): OutCell => o;
 
   // ---- objects on the field
   if (k.startsWith('obj:')) {
@@ -505,7 +503,6 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     case 'flower': {
       const gb = grassBg(F, wx, wy);
       if (th.snow || g === '.') return { ch: '·', fg: th.grassDetail, bg: gb, bold: false };
-      if (wide && sub === 1) return { ch: hash(wx, wy, 33) < 0.5 ? ',' : ' ', fg: th.tuft, bg: gb, bold: false };
       return centre({ ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true, accent: true });
     }
     case 'tree': {
@@ -563,8 +560,6 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       const dch = tag.dch || '^';
       const outside = F.indoor ? '#2a2018' : grassBg(F, wx, wy);
       if (dch === '/' || dch === '\\') {
-        // in large-tile mode the slope takes one cell and the other is solid roof
-        if (wide && ((dch === '/' && sub === 1) || (dch === '\\' && sub === 0))) return { ch: ' ', fg: rc.mid, bg: rc.mid, bold: false };
         return { ch: dch === '/' ? '◢' : '◣', fg: rc.mid, bg: outside, bold: false };
       }
       const above = y > 0 ? F.tags[y - 1][x] : null;
@@ -715,6 +710,7 @@ export function computeFrame(
   const H = buf.length;
   const W = H ? buf[0].length : 0;
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
+  const motion = !ctx?.reducedMotion;
   const skyNow = ctx ? skyFor(ctx) : null;
   const F: Frame = { buf, tags, theme: THEMES[season], t, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720 };
   const out: OutCell[][] = new Array(H);
@@ -727,7 +723,6 @@ export function computeFrame(
       let o: OutCell;
       let uiCell = !tag;
       if (tag && tag.t !== 'ui') {
-        const leadEnt = (tag.sub ?? 0) > 0 ? tags[y][x - (tag.sub ?? 0)]?.ent : undefined;
         if (tag.ent) {
           const under = styleTile(F, x, y, { ...tag, ent: undefined, k: tag.k?.startsWith('obj:') ? undefined : tag.k }, cell);
           const isPlayer = tag.ent === 'player';
@@ -740,19 +735,21 @@ export function computeFrame(
             bold: true,
             glow: isPlayer ? pal(cell[1]) : tag.ent === 'npc' ? mix(pal(cell[1]), '#000000', 0.4) : undefined,
             glowR: isPlayer ? 5 : tag.ent === 'npc' ? 3 : undefined,
-            dx: (tag.zw ?? 1) > 1 ? 0.5 : undefined,
             token: mix(under.bg, '#000000', 0.45),
             rim: mix(under.bg, pal(cell[1]), isPlayer ? 0.55 : 0.4),
             accent: true,
           };
-        } else if (leadEnt) {
-          // second cell of a large tile that holds an entity: ground only, the sprite is centred over both
-          const under = styleTile(F, x, y, { ...tag, k: tag.k?.startsWith('obj:') ? undefined : tag.k }, cell);
-          o = { ...under, ch: ' ', glow: undefined };
         } else {
           o = styleTile(F, x, y, tag, cell);
         }
-        if (tag.hl) o.bg = mix(o.bg, '#c8d4ff', 0.26);
+        if (tag.hl) {
+          const pulse = 0.26 + 0.05 * Math.sin(F.t * 5);
+          o.bg = mix(o.bg, '#c8d4ff', pulse);
+          o.glow = '#d8e2ff';
+          o.glowR = 4;
+        } else if (tag.hlArea) {
+          o.bg = mix(o.bg, '#c8d4ff', 0.11);
+        }
       } else if (tag && tag.t === 'ui') {
         const k = tag.k || '';
         uiCell = true;
@@ -826,16 +823,23 @@ export function computeFrame(
     out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: true };
   }
 
-  // ---- contact shadows: ground just below/right of buildings, trees and cliffs is darker
+  // ---- contact shadows: ground below/right of buildings, trees and cliffs is darker.
+  // At dawn and dusk the shadow reaches one cell farther, like a low sun.
+  const sunHour = (((ctx.minutes / 60) % 24) + 24) % 24;
+  const longShadow = sunHour < 8 || sunHour > 17;
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !SHADOW_RECEIVERS.has(tag.t) || (tag.k || '').startsWith('obj:boulder')) continue;
       const up = y > 0 ? tags[y - 1][x] : null;
+      const up2 = longShadow && y > 1 ? tags[y - 2][x] : null;
       const left = x > 0 ? tags[y][x - 1] : null;
+      const left2 = longShadow && x > 1 ? tags[y][x - 2] : null;
       let k = 0;
       if (up && up.t !== 'ui' && SHADOW_CASTERS.has(up.t)) k = up.t === 'tree' ? 0.22 : 0.34;
+      else if (up2 && up2.t !== 'ui' && SHADOW_CASTERS.has(up2.t)) k = up2.t === 'tree' ? 0.1 : 0.16;
       else if (left && left.t !== 'ui' && (left.t === 'wall' || left.t === 'door')) k = 0.16;
+      else if (left2 && left2.t !== 'ui' && (left2.t === 'wall' || left2.t === 'door')) k = 0.09;
       if (k) {
         const o = out[y][x];
         o.bg = mix(o.bg, '#000000', k);
@@ -852,7 +856,7 @@ export function computeFrame(
 
   // ---- drifting cloud shadows on fair days
   const outdoor = !ctx.indoor && ctx.mapName !== 'mine';
-  if (outdoor && ctx.weather === 'Sunny' && sky.amb > 0.85) {
+  if (outdoor && ctx.weather === 'Sunny' && sky.amb > 0.85 && motion) {
     const tc = Math.floor(t * 2) / 2; // step twice a second so a static scene doesn't repaint every frame
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
@@ -873,7 +877,7 @@ export function computeFrame(
   }
 
   // ---- chimney smoke, butterflies, falling leaves
-  if (outdoor) {
+  if (outdoor && motion) {
     chimneys(out, tags, v, t, W, H, ctx.weather);
     critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
   }
@@ -890,7 +894,7 @@ export function computeFrame(
   // ---- weather (outdoor only)
   const outdoorFx = !ctx.indoor && ctx.mapName !== 'mine';
   const w = ctx.weather;
-  if (outdoorFx && w !== 'Sunny') {
+  if (outdoorFx && w !== 'Sunny' && motion) {
     const rain = w === 'Rain' || w === 'Typhoon';
     const dens = w === 'Typhoon' || w === 'Blizzard' ? 0.1 : 0.055;
     const f = Math.floor(t * (rain ? 10 : 4));
@@ -924,16 +928,16 @@ export function computeFrame(
 
   // ---- footprints in snow and sand, birds on fine days
   if (outdoorFx) footprints(out, tags, v, ctx, season);
-  if (outdoorFx && w === 'Sunny' && sky.amb > 0.85) birds(out, tags, v, t);
+  if (outdoorFx && w === 'Sunny' && sky.amb > 0.85 && motion) birds(out, tags, v, t);
 
   // ---- lighting (with lightning flashes in a typhoon)
-  const flash = outdoor && ctx.weather === 'Typhoon' && lightning(t);
+  const flash = motion && outdoor && ctx.weather === 'Typhoon' && lightning(t);
   if (flash) {
     sky.amb = Math.min(1.1, sky.amb + 0.65);
     sky.tint = '#c8d8ff';
     sky.tintAmt = 0.25;
   }
-  const fireflies = outdoorFx && sky.amb < 0.62 && (season === 0 || season === 1) && w === 'Sunny';
+  const fireflies = motion && outdoorFx && sky.amb < 0.62 && (season === 0 || season === 1) && w === 'Sunny';
   const FIREFLY = '#fff27a';
   if (sky.amb < 0.999 || flash) {
     const lights: Light[] = [];
@@ -1209,16 +1213,23 @@ function blendGroundEdges(out: OutCell[][], tags: (CellTag | null)[][], v: Rende
   // creeps into its neighbour as a light shade pattern in its own colour.
   const rank: Record<string, number> = { grass: 3, flower: 3, field: 2, sand: 1, path: 0 };
   const base = out.map((r) => r.map((o) => o.bg));
+  const dirs: [number, number, string][] = [
+    [0, -1, '▀'],
+    [0, 1, '▄'],
+    [-1, 0, '▌'],
+    [1, 0, '▐'],
+  ];
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !GROUND.has(tag.t) || tag.k || out[y][x].ch !== ' ') continue;
       if (out[y][x - 1]?.dx) continue; // under a centred sprite
       if (hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 61) > 0.55) continue; // ragged, not a solid band
-      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+      for (const [dx, dy, edge] of dirs) {
         const n = tags[y + dy]?.[x + dx];
         if (n && n.t !== 'ui' && GROUND.has(n.t) && !n.k && rank[n.t] > rank[tag.t]) {
-          out[y][x] = { ...out[y][x], ch: '░', fg: base[y + dy][x + dx] };
+          const solid = hash((tag.wx ?? x) * 2 + (tag.sub ?? 0) + dx, (tag.wy ?? y) + dy, 62) < 0.34;
+          out[y][x] = { ...out[y][x], ch: solid ? edge : '░', fg: base[y + dy][x + dx] };
           break;
         }
       }

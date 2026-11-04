@@ -1,6 +1,6 @@
 // Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
-import { Screen, CellTag, STYLE_LABEL } from './screen';
+import { Screen, CellTag } from './screen';
 import {
   GameMap,
   build_farm,
@@ -224,6 +224,9 @@ export class Game {
   px: number = 1;
   py: number = 2;
   face: [number, number] = [0, -1];
+  /** Eased camera top-left, in map cells. Null means snap on the next frame. */
+  cam_x: number | null = null;
+  cam_y: number | null = null;
   animals: any[] = [];
   house_flags: string[] = [];
   project: [string, number] | null = null;
@@ -361,6 +364,8 @@ export class Game {
     this.mapname = 'house';
     [this.px, this.py] = HOUSE_WAKE;
     this.face = [0, -1];
+    this.cam_x = null;
+    this.cam_y = null;
 
     const rng = py_rng();
     const m = this.maps['farm'];
@@ -485,7 +490,7 @@ export class Game {
     return true;
   }
 
-  save(slot: number = 1): void {
+  snapshot(): Record<string, any> {
     const d: Record<string, any> = {};
     for (const k of this.SAVE_FIELDS) {
       d[k] = (this as any)[k];
@@ -496,6 +501,11 @@ export class Game {
     d['objs'] = { ...this.objs.farm };
     d['hp'] = { ...this.hp };
     d['forage'] = { ...this.forage };
+    return d;
+  }
+
+  save(slot: number = 1): void {
+    const d = this.snapshot();
     try {
       if (typeof localStorage !== 'undefined') {
         const key = slot === 2 ? `${SAVE_KEY}-2` : SAVE_KEY;
@@ -506,20 +516,54 @@ export class Game {
     }
   }
 
-  load(slot: number = 1): void {
-    let jsonStr = '';
+  export_save(): void {
+    if (typeof document === 'undefined') {
+      this.msg('Save export is only available in the browser.', '08');
+      return;
+    }
+    const data = JSON.stringify(this.snapshot(), null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hrvstmn-${this.farm.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-y${this.year}s${this.season + 1}d${this.day}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this.msg('Farm exported as a save file.', '0B');
+  }
+
+  async import_save(): Promise<void> {
+    if (typeof document === 'undefined') {
+      this.msg('Save import is only available in the browser.', '08');
+      return;
+    }
+    const file = await new Promise<File | null>((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json,.json';
+      input.style.display = 'none';
+      input.onchange = () => resolve(input.files?.[0] ?? null);
+      input.oncancel = () => resolve(null);
+      document.body.appendChild(input);
+      input.click();
+    });
+    if (!file) return;
     try {
-      if (typeof localStorage !== 'undefined') {
-        const key = slot === 2 ? `${SAVE_KEY}-2` : SAVE_KEY;
-        jsonStr = localStorage.getItem(key) || '';
+      const d = JSON.parse(await file.text());
+      if (!d || typeof d !== 'object' || typeof d.name !== 'string' || !Array.isArray(d.tilled)) {
+        throw new Error('That does not look like an HRVSTMN save file.');
       }
-    } catch (e) {
-      console.error('Load failed', e);
+      this.applySaveData(d);
+      this.save(1);
+      this.msg('Farm imported into Diary Slot 1.', '0B');
+    } catch (e: any) {
+      await this.say(e?.message || 'Could not read that save file.', null);
     }
-    if (!jsonStr) {
-      throw new Error(`No save file in Slot ${slot}`);
-    }
-    const d = JSON.parse(jsonStr);
+  }
+
+  applySaveData(d: Record<string, any>): void {
     this.new_game(d.name || 'Pete', d.farm || 'Moon');
     for (const k of this.SAVE_FIELDS) {
       if (k in d) {
@@ -548,7 +592,25 @@ export class Game {
     this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
     this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
     this.rebuild_house();
+    this.cam_x = null;
+    this.cam_y = null;
     this.setBodyState('playing');
+  }
+
+  load(slot: number = 1): void {
+    let jsonStr = '';
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const key = slot === 2 ? `${SAVE_KEY}-2` : SAVE_KEY;
+        jsonStr = localStorage.getItem(key) || '';
+      }
+    } catch (e) {
+      console.error('Load failed', e);
+    }
+    if (!jsonStr) {
+      throw new Error(`No save file in Slot ${slot}`);
+    }
+    this.applySaveData(JSON.parse(jsonStr));
   }
 
   async run(): Promise<void> {
@@ -681,9 +743,10 @@ export class Game {
       } else {
         this.msg('Unearth the Teleport Stone on Floor 255 of the Spring Mine to warp anywhere!');
       }
-    } else if (k === 'v' || k === 'V') {
-      const style = this.scr.toggleStyle();
-      this.msg(`Visual style: ${STYLE_LABEL[style]} (V to switch)`, '0C');
+    } else if (k === 'y' || k === 'Y') {
+      await this.today_panel();
+    } else if (k === 'r' || k === 'R') {
+      await this.relationships();
     } else if (k === '?') {
       await this.show_lines('Help & Controls', HELP);
     } else if (k === 'esc') {
@@ -740,12 +803,16 @@ export class Game {
     this.setBodyState('paused');
     const opts = [
       'Resume',
+      'Today’s Plan (y)',
+      'Villager Notes (r)',
       'Rucksack (i)',
       'Ranch Summary & Memo (m)',
       'Save Diary — Slot 1',
       'Save Diary — Slot 2',
       'Load Diary — Slot 1',
       'Load Diary — Slot 2',
+      'Export Save File',
+      'Import Save File',
     ];
     if (this.inv['Teleport Stone']) {
       opts.push('Use Teleport Stone');
@@ -758,6 +825,10 @@ export class Game {
     const choice = opts[sel];
     if (choice === 'Rucksack (i)') {
       await this.rucksack();
+    } else if (choice === 'Today’s Plan (y)') {
+      await this.today_panel();
+    } else if (choice === 'Villager Notes (r)') {
+      await this.relationships();
     } else if (choice === 'Ranch Summary & Memo (m)') {
       await this.ranch_summary();
     } else if (choice === 'Save Diary — Slot 1') {
@@ -780,6 +851,10 @@ export class Game {
       } catch (e: any) {
         await this.say(e.message || 'No save in Slot 2.');
       }
+    } else if (choice === 'Export Save File') {
+      this.export_save();
+    } else if (choice === 'Import Save File') {
+      await this.import_save();
     } else if (choice === 'Use Teleport Stone') {
       await this.use_teleport_stone();
     } else if (choice === 'Help (?)') {
@@ -976,6 +1051,8 @@ export class Game {
     this.px = x;
     this.py = y;
     if (face) this.face = face;
+    this.cam_x = null;
+    this.cam_y = null;
     this.update_npcs();
     if (!this.map.indoor) {
       this.msg(`~ ${this.map.title} ~`, '0C');
@@ -3089,6 +3166,143 @@ export class Game {
     }
   }
 
+  crop_water_count(): number {
+    return Object.keys(this.crops).filter((k) => !this.wet.has(k)).length;
+  }
+
+  animal_feed_count(): number {
+    return this.animals.filter((a) => !a.fed).length + Math.max(0, this.chickens - this.fed);
+  }
+
+  ready_livestock_count(): number {
+    return (
+      this.animals.filter((a) => (a.kind === 'cow' && a.ready) || (a.kind === 'sheep' && a.wool >= WOOL_DAYS)).length +
+      (this.eggs > 0 ? 1 : 0)
+    );
+  }
+
+  today_lines(): string[] {
+    const lines: string[] = [];
+    const now = this.minutes;
+    const binValue = py_sum(Object.entries(this.bin).map(([i, q]) => (ITEMS[i] ? ITEMS[i][0] : 0) * q));
+    const cutoff = 17 * 60;
+    const until = Math.max(0, cutoff - now);
+    const hh = Math.floor(until / 60);
+    const mm = until % 60;
+    const ship =
+      this.zack_paid_today
+        ? 'Zack already collected today’s shipment.'
+        : now >= cutoff
+          ? 'Zack has gone home; shipments roll over to tomorrow.'
+          : `Zack collects at 5:00 PM (${hh}h ${mm.toString().padStart(2, '0')}m from now).`;
+
+    lines.push(`  ${this.date_str()} — ${this.weather}`);
+    lines.push(`  Tomorrow: ${this.tomorrow}`);
+    lines.push('');
+    lines.push(`  Ship   ${binValue ? `${binValue}G waiting` : 'empty'}`);
+    lines.push(`         ${ship}`);
+    lines.push(`  Water  ${this.crop_water_count()} crop${this.crop_water_count() === 1 ? '' : 's'} still dry`);
+    lines.push(`  Feed   ${this.animal_feed_count()} animal${this.animal_feed_count() === 1 ? '' : 's'} still hungry`);
+    lines.push(`  Ready  ${this.ready_livestock_count()} milk/wool/egg collect${this.ready_livestock_count() === 1 ? '' : 's'}`);
+    lines.push('');
+    const bdays = this.birthdays();
+    if (bdays.length) lines.push(`  Birthday today: ${bdays.join(', ')} (5× gift bonus!)`);
+    const bdayTomorrow = this.birthdays(1);
+    if (bdayTomorrow.length) lines.push(`  Birthday tomorrow: ${bdayTomorrow.join(', ')}`);
+    const fest = this.fest_on();
+    if (fest) lines.push(`  Festival: ${fest[0]} at Rose Square (${fmt_hour(fest[1])}–${fmt_hour(fest[2])})`);
+    const festTomorrow = this.fest_on(1);
+    if (festTomorrow) lines.push(`  Tomorrow’s festival: ${festTomorrow[0]}`);
+    if (!bdays.length && !bdayTomorrow.length && !fest && !festTomorrow) lines.push('  No birthdays or festivals today.');
+    lines.push('');
+    if (this.stamina <= 30 || this.fatigue >= 80) {
+      lines.push('  Rest: stamina is low. Eat, soak at the Hot Spring, or sleep early.');
+    } else {
+      lines.push('  Plan: clear weeds, water crops, care for animals, then ship before 5 PM.');
+    }
+    return lines;
+  }
+
+  async today_panel(): Promise<void> {
+    await this.show_lines('Today on the Farm', this.today_lines());
+  }
+
+  async relationships(): Promise<void> {
+    const names = Object.keys(NPCS).sort((a, b) => (this.friend[b] || 0) - (this.friend[a] || 0));
+    const groups: string[][] = [];
+    for (const n of names) {
+      const d = NPCS[n];
+      const h = this.hearts(n);
+      const where = d.where ? this.maps[d.where[0]]?.title || d.where[0] : 'Indoors';
+      const hours = d.out ? `${fmt_hour(d.out[0])}–${fmt_hour(d.out[1])}` : 'all day';
+      const loves = (d.loves || []).slice(0, 3).join(', ') || '—';
+      groups.push([
+        `  ${n.padEnd(16)} ${h[0]}${d.bach ? '  ♡ eligible' : ''}`,
+        `    loves: ${loves}`,
+        `    usually: ${where}, ${hours}`,
+      ]);
+    }
+    const pages: string[][] = [];
+    for (let i = 0; i < groups.length; i += 6) {
+      pages.push(groups.slice(i, i + 6).flat());
+    }
+    await this.show_pages('Villager Notes', pages);
+  }
+
+  tool_cost(): number {
+    const [tx, ty] = this.target();
+    const tile = this.map.tile(tx, ty);
+    if (this.tool.endsWith(' Seeds')) return 1;
+    if (this.tool === 'Fishing Rod') return tile === 'water' || tile === 'pond' ? 3 : 0;
+    if (this.tool === 'Watering Can') {
+      if (tile === 'water' || tile === 'fountain' || tile === 'pond') return 0;
+      if (this.water <= 0) return 0;
+    }
+    return 2;
+  }
+
+  action_preview(): { cost: number; faint: boolean } {
+    const cost = this.tool_cost();
+    if (cost <= 0) return { cost, faint: false };
+    const res = calculateStaminaSpend(this.stamina, this.fatigue, cost, {
+      weather: this.map.indoor ? 'Sunny' : this.weather,
+      minutes: this.minutes,
+      hasMysticBerry: this.has_mystic_berry,
+      isCursedTool: this.levels[this.tool] === 5,
+    });
+    return { cost, faint: res.fainted };
+  }
+
+  /** What the big touch button should do for the tile the player is facing. */
+  context_action(): { key: 'x' | 'space'; label: string } {
+    const [tx, ty] = this.target();
+    const pKey = pkey(tx, ty);
+    const m = this.map;
+    if (this.npc_at(tx, ty)) return { key: 'x', label: 'TALK' };
+    if (pKey in m.doors || pKey in m.warps) return { key: 'x', label: 'ENTER' };
+    if (this.mapname === 'farm' && ((tx === 21 && ty === 6) || (!this.riding_horse && tx === 25 && ty === 6))) {
+      return { key: 'x', label: 'CARE' };
+    }
+    const tile = m.tile(tx, ty);
+    if (tile === 'spring') return { key: 'x', label: 'SOAK' };
+    if (tile === 'pond') return { key: 'x', label: 'OFFER' };
+    if (this.mapname === 'farm' && pKey in this.crops) {
+      const [crop, age] = this.crops[pKey];
+      return { key: 'x', label: age >= CROPS[crop][2] ? 'HARVEST' : 'CHECK' };
+    }
+    if (pKey in (this.forage[this.mapname] || {})) return { key: 'x', label: 'PICK' };
+    if (tile === 'bin') return { key: 'x', label: 'SHIP' };
+    if (tile === 'bed') return { key: 'x', label: 'SLEEP' };
+    if (tile === 'tv') return { key: 'x', label: 'WATCH' };
+    if (tile === 'cal') return { key: 'x', label: 'CALENDAR' };
+    if (['counter', 'bookcase', 'kitchen', 'bath', 'shelf', 'vase', 'fireplace', 'sign', 'doghouse', 'stable', 'mill', 'trash', 'phone'].includes(tile)) {
+      return { key: 'x', label: 'USE' };
+    }
+    if (this.tool === 'Fishing Rod' && (tile === 'water' || tile === 'pond')) return { key: 'space', label: 'CAST' };
+    const short = this.tool.endsWith(' Seeds') ? this.tool.slice(0, -6) : this.tool;
+    return { key: 'space', label: short.length > 7 ? 'USE' : `USE ${short.toUpperCase()}` };
+  }
+
   async ranch_summary(): Promise<void> {
     const degPts =
       this.shipped_total / 100 +
@@ -3941,10 +4155,11 @@ export class Game {
   }
 
   /** Semantic tag for a map cell, mirroring the precedence used by glyph(). */
-  cell_tag(m: GameMap, x: number, y: number, t: string, hl: boolean): CellTag {
+  cell_tag(m: GameMap, x: number, y: number, t: string, hl: boolean, hlArea: boolean = false): CellTag {
     const pKey = pkey(x, y);
     const name = m.name;
     const tag: CellTag = { t, wx: x, wy: y, hl };
+    if (hlArea) tag.hlArea = true;
     const obj = this.objs[name]?.[pKey];
     if (obj && OBJ_GLYPH[obj]) {
       tag.k = `obj:${obj}`;
@@ -4051,7 +4266,7 @@ export class Game {
       return ['*', ['0A', '0E', '08', '0C', '07'][h % 5], '00', false];
     }
     if (t === 'water' || t === 'fountain' || t === 'spring' || t === 'pond') {
-      if ((x + y + Math.floor((Date.now() / 1000) * 1.5)) % 7 === 0) {
+      if (!this.scr.reducedMotion && (x + y + Math.floor((Date.now() / 1000) * 1.5)) % 7 === 0) {
         ch = '-';
       }
       if (season === 3 && t === 'water' && m.name !== 'mine') {
@@ -4081,7 +4296,8 @@ export class Game {
       minutes: this.minutes,
       season: this.season,
       weather: this.map.indoor ? 'Sunny' : this.weather,
-      zoom: s.zoom,
+      zoom: 1,
+      reducedMotion: s.reducedMotion,
       view: { x: 0, y: 1, w: vw, h: vh },
       divX: vw,
       divY: H - 4,
@@ -4122,28 +4338,39 @@ export class Game {
   draw_map(ox: number, oy: number, vw: number, vh: number): void {
     const s = this.scr;
     const m = this.map;
-    // Large-tile mode draws each map tile into ZX screen cells; the viewport is measured in tiles.
-    const ZX = s.zoom;
     const cellW = vw;
-    vw = Math.floor(cellW / ZX);
-    let cx = 0;
-    let cy = 0;
+    let targetX = 0;
+    let targetY = 0;
     if (m.w <= vw) {
-      ox += Math.floor((cellW - m.w * ZX) / 2);
+      ox += Math.floor((cellW - m.w) / 2);
     } else {
-      ox += Math.floor((cellW - vw * ZX) / 2);
-      cx = clamp(this.px - Math.floor(vw / 2), 0, m.w - vw);
+      targetX = clamp(this.px - Math.floor(vw / 2), 0, m.w - vw);
     }
     if (m.h <= vh) {
       oy += Math.floor((vh - m.h) / 2);
     } else {
-      cy = clamp(this.py - Math.floor(vh / 2), 0, m.h - vh);
+      targetY = clamp(this.py - Math.floor(vh / 2), 0, m.h - vh);
     }
+    if (
+      s.reducedMotion ||
+      this.cam_x === null ||
+      this.cam_y === null ||
+      Math.abs(targetX - this.cam_x) > 6 ||
+      Math.abs(targetY - this.cam_y) > 6
+    ) {
+      this.cam_x = targetX;
+      this.cam_y = targetY;
+    } else {
+      this.cam_x += (targetX - this.cam_x) * 0.28;
+      this.cam_y += (targetY - this.cam_y) * 0.28;
+    }
+    const cx = Math.round(this.cam_x);
+    const cy = Math.round(this.cam_y);
     const hour = this.minutes / 60;
     const classic = s.style === 'classic';
     const night = classic && !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
     const dusk = classic && !m.indoor && m.name !== 'mine' && 17.5 <= hour && hour < 19;
-    if (s.ctx) s.ctx.view = { x: ox, y: oy, w: Math.min(vw, m.w) * ZX, h: Math.min(vh, m.h) };
+    if (s.ctx) s.ctx.view = { x: ox, y: oy, w: Math.min(vw, m.w), h: Math.min(vh, m.h) };
     const [tx, ty] = this.target();
     const aoeSet = new Set<string>();
     aoeSet.add(pkey(tx, ty));
@@ -4176,18 +4403,16 @@ export class Game {
         if (hl) {
           bg = bg === '01' ? '02' : '01';
         }
-        const tag = this.cell_tag(m, x, y, row[x], hl);
-        for (let i = 0; i < ZX; i++) {
-          const px = ox + sx * ZX + i;
-          s.put(px, oy + sy, i === 0 ? ch : ' ', fg, bg, bold);
-          s.tag(px, oy + sy, ZX > 1 ? { ...tag, sub: i, zw: ZX } : tag);
-        }
+        const tag = this.cell_tag(m, x, y, row[x], hl, hl && !(x === tx && y === ty));
+        const px = ox + sx;
+        s.put(px, oy + sy, ch, fg, bg, bold);
+        s.tag(px, oy + sy, tag);
       }
     }
     const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc') => {
       const [sx, sy] = [x - cx, y - cy];
       if (0 <= sx && sx < Math.min(vw, m.w) && 0 <= sy && sy < Math.min(vh, m.h)) {
-        const px = ox + sx * ZX;
+        const px = ox + sx;
         const bg = s.buf[oy + sy][px][2];
         const under = s.tags[oy + sy][px];
         s.put(px, oy + sy, ch, fg, bg, bold);
@@ -4246,18 +4471,18 @@ export class Game {
               : '07';
     at(this.px, this.py, '@', playerCol, true, 'player');
 
-    if (classic && !m.indoor && m.name !== 'mine' && this.weather !== 'Sunny') {
+    if (classic && !m.indoor && m.name !== 'mine' && this.weather !== 'Sunny' && !s.reducedMotion) {
       const rng = py_rng(Math.floor((Date.now() / 1000) * 8));
       const isRain = this.weather === 'Rain' || this.weather === 'Typhoon';
       const drops = Math.floor((vw * vh) / (isRain ? 22 : 40));
       for (let i = 0; i < drops; i++) {
         const [sx, sy] = [rng.randrange(Math.min(vw, m.w)), rng.randrange(Math.min(vh, m.h))];
         if (sx + cx === this.px && sy + cy === this.py) continue;
-        const cell = s.buf[oy + sy][ox + sx * ZX];
+        const cell = s.buf[oy + sy][ox + sx];
         if (isRain) {
-          s.put(ox + sx * ZX, oy + sy, '/', '0D', cell[2]);
+          s.put(ox + sx, oy + sy, '/', '0D', cell[2]);
         } else {
-          s.put(ox + sx * ZX, oy + sy, rng.choice('*.'), '07', cell[2]);
+          s.put(ox + sx, oy + sy, rng.choice('*.'), '07', cell[2]);
         }
       }
     }
@@ -4271,11 +4496,14 @@ export class Game {
     y += 3;
 
     const t = this.tool;
+    const preview = this.action_preview();
+    const costTxt = preview.cost > 0 ? `-${preview.cost}st` : '';
     const icon = (iy: number, kind: 'stamina' | 'fatigue' | 'gold' | 'bin' | 'tool') => s.ctx?.icons.push({ x: x - 1, y: iy, icon: kind });
     icon(y, 'tool');
-    s.put(x, y, 'Tool', '03');
+    s.put(x, y, 'Tool', '02');
     const idx = TOOLS.includes(t) ? `[${TOOLS.indexOf(t) + 1}] ` : '    ';
-    s.put(x + 6, y, (idx + t).slice(0, w - 6), '07', '00', true);
+    s.put(x + 6, y, (idx + t).slice(0, Math.max(4, w - 6 - costTxt.length - 1)), '07', '00', true);
+    if (costTxt) s.put(x + w - costTxt.length, y, costTxt, preview.faint ? '08' : '03');
     y += 1;
     if (UPGRADABLE.includes(t)) {
       const lvl = this.levels[t] || 0;
@@ -4284,6 +4512,7 @@ export class Game {
       if (t === 'Watering Can') {
         s.put(x + 19, y, `${this.water}/${CAN_CAP[lvl]}`, '0D');
       }
+      if (preview.faint) s.put(x + w - 1, y, '!', '08', '00', true);
     } else if (t.endsWith(' Seeds')) {
       const crop = t.slice(0, -6);
       const ok = crop === 'Grass' || CROPS[crop]?.[0] === sn;
@@ -4294,13 +4523,13 @@ export class Game {
     }
     y += 1;
     if (this.upgrading) {
-      s.put(x, y, `Forge: ${this.upgrading[0]}`.slice(0, w), '03');
+      s.put(x, y, `Forge: ${this.upgrading[0]}`.slice(0, w), '02');
     } else if (this.riding_horse) {
       s.put(x, y, 'Riding Horse (2x speed)', '09');
     }
     y += 1;
 
-    s.put(x, y, 'Held', '03');
+    s.put(x, y, 'Held', '02');
     const bCount = getBasketTotal(this.basket);
     const held =
       this.held === 'Basket'
@@ -4319,7 +4548,7 @@ export class Game {
     const bw = Math.max(6, w - 14);
     const filled = Math.round(frac * bw);
     icon(y, 'stamina');
-    s.put(x, y, 'Stam', '03');
+    s.put(x, y, 'Stam', '02');
     s.put(x + 5, y, '#'.repeat(filled), col, '00', true);
     s.put(x + 5 + filled, y, '.'.repeat(bw - filled), '01');
     for (let i = 0; i < bw; i++) s.tag(x + 5 + i, y, { t: 'ui', k: i < filled ? 'bar' : 'bar:empty' });
@@ -4329,7 +4558,7 @@ export class Game {
     // Fatigue Bar + Berries
     const fatCol = this.fatigue < 50 ? '0C' : this.fatigue < 80 ? '09' : '08';
     icon(y, 'fatigue');
-    s.put(x, y, 'Fatg', '03');
+    s.put(x, y, 'Fatg', '02');
     s.put(
       x + 5,
       y,
@@ -4339,25 +4568,25 @@ export class Game {
     y += 2;
 
     icon(y, 'gold');
-    s.put(x, y, 'Gold', '03');
+    s.put(x, y, 'Gold', '02');
     s.put(x + 6, y, `${this.gold}G`, '09', '00', true);
     y += 1;
     const binv = py_sum(
       Object.entries(this.bin).map(([i, q]) => (ITEMS[i] ? ITEMS[i][0] : 0) * q)
     );
     icon(y, 'bin');
-    s.put(x, y, 'Bin', '03');
+    s.put(x, y, 'Bin', '02');
     s.put(x + 6, y, `${binv}G (5PM pickup)`, binv ? '09' : '02');
     y += 1;
 
     if (this.chickens) {
-      s.put(x, y, 'Coop', '03');
+      s.put(x, y, 'Coop', '02');
       s.put(x + 6, y, `${this.chickens} hens, ${this.eggs} eggs`, '07');
       y += 1;
     }
     if (this.animals.length) {
       const hungry = this.animals.filter((a) => !a.fed).length;
-      s.put(x, y, 'Barn', '03');
+      s.put(x, y, 'Barn', '02');
       s.put(
         x + 6,
         y,
@@ -4373,15 +4602,15 @@ export class Game {
       ['X', 'act / talk'],
       ['TAB', 'next tool'],
       ['I/M', 'bag / memo'],
+      ['Y/R', 'today / notes'],
       ['⇧H', 'horse  B bell'],
-      ['V', 'visual style'],
       ['ESC', 'diary/save'],
       ['?', 'help'],
     ];
     for (const [k, d] of help_lines) {
       if (y >= s.h - 4) break;
       s.put(x, y, k, '0D', '00', true);
-      s.put(x + 4, y, d, '03');
+      s.put(x + 4, y, d, '02');
       y += 1;
     }
   }
@@ -4478,20 +4707,37 @@ export class Game {
   }
 
   async show_lines(title: string, lines: string[]): Promise<void> {
+    const pageSize = Math.max(4, this.scr.h - 5);
+    const pages: string[][] = [];
+    for (let i = 0; i < lines.length; i += pageSize) {
+      pages.push(lines.slice(i, i + pageSize));
+    }
+    if (!pages.length) pages.push([]);
+    await this.show_pages(title, pages);
+  }
+
+  async show_pages(title: string, pages: string[][]): Promise<void> {
     const [W, H] = [this.scr.w, this.scr.h];
-    const maxLn = Math.max(title.length + 6, ...lines.map((ln) => ln.length + 4));
+    if (!pages.length) pages.push([]);
+    const maxLn = Math.max(
+      title.length + 6,
+      ...pages.flat().map((ln) => ln.length + 4),
+    );
     const bw = Math.min(W - 2, maxLn);
-    const bh = Math.min(H - 2, lines.length + 3);
-    const draw = () => {
-      const [bx, by] = [Math.floor((W - bw) / 2), Math.floor((H - bh) / 2)];
-      this.scr.box(bx, by, bw, bh, '0D', '00', title);
-      const slice = lines.slice(0, bh - 3);
-      for (let i = 0; i < slice.length; i++) {
-        this.scr.put(bx + 2, by + 1 + i, slice[i].slice(0, bw - 4), '05');
-      }
-      this.scr.put(bx + 2, by + bh - 2, 'press any key', '02');
-    };
-    await this.modal(draw);
+    for (let p = 0; p < pages.length; p++) {
+      const page = pages[p];
+      const bh = Math.min(H - 2, page.length + 3);
+      const pageTitle = pages.length > 1 ? `${title} (${p + 1}/${pages.length})` : title;
+      const draw = () => {
+        const [bx, by] = [Math.floor((W - bw) / 2), Math.floor((H - bh) / 2)];
+        this.scr.box(bx, by, bw, bh, '0D', '00', pageTitle.slice(0, bw - 4));
+        for (let i = 0; i < page.length; i++) {
+          this.scr.put(bx + 2, by + 1 + i, page[i].slice(0, bw - 4), '05');
+        }
+        this.scr.put(bx + 2, by + bh - 2, p < pages.length - 1 ? 'press any key — next page' : 'press any key — close', '02');
+      };
+      await this.modal(draw);
+    }
   }
 
   async menu(

@@ -5,9 +5,9 @@ import { Screen, VisualStyle } from './screen';
 import { Game } from './engine';
 import { computeFrame } from './enhanced';
 
-function farm(style: VisualStyle) {
+function farm(style?: VisualStyle) {
   const s = new Screen(132, 30);
-  s.style = style;
+  if (style) s.style = style;
   const g = new Game(s, true) as any;
   g.new_game('Pete', 'Moon');
   g.warp('farm', 23, 9);
@@ -21,61 +21,52 @@ const findPlayer = (s: Screen) => {
 };
 
 describe('engine + renderer', () => {
-  test('large tiles: every map tile spans two cells with matching world coords', () => {
-    const { s } = farm('large');
-    assert.equal(s.ctx?.zoom, 2);
-    let pairs = 0;
-    for (let y = s.ctx!.view.y; y < s.ctx!.view.y + s.ctx!.view.h; y++) {
-      for (let x = s.ctx!.view.x; x < s.ctx!.view.x + s.ctx!.view.w; x += 2) {
-        const a = s.tags[y][x];
-        const b = s.tags[y][x + 1];
-        if (!a || !b || a.ent) continue;
-        assert.equal(a.sub, 0);
-        assert.equal(b.sub, 1);
-        assert.equal(a.wx, b.wx);
-        assert.equal(a.wy, b.wy);
-        pairs++;
-      }
-    }
-    assert.ok(pairs > 500);
+  test('Enhanced is the default style', () => {
+    const s = new Screen();
+    assert.equal(s.style, 'enhanced');
   });
 
-  test('large tiles: the player sits on the first cell and is centred across the tile', () => {
-    const { s } = farm('large');
+  test('classic remains available programmatically', () => {
+    const { s } = farm('classic');
+    assert.equal(s.style, 'classic');
+    assert.equal(s.ctx?.zoom, 1);
+  });
+
+  test('every map tile occupies exactly one cell with its world coords', () => {
+    const { s } = farm();
+    assert.equal(s.ctx?.zoom, 1);
+    let tagged = 0;
+    for (let y = s.ctx!.view.y; y < s.ctx!.view.y + s.ctx!.view.h; y++) {
+      for (let x = s.ctx!.view.x; x < s.ctx!.view.x + s.ctx!.view.w; x++) {
+        const tag = s.tags[y][x];
+        if (!tag || tag.ent) continue;
+        assert.equal(tag.sub, undefined);
+        assert.equal(tag.zw, undefined);
+        tagged++;
+      }
+    }
+    assert.ok(tagged > 500);
+  });
+
+  test('the player is tagged once and rendered as a single creature token', () => {
+    const { s } = farm();
     const p = findPlayer(s);
     assert.ok(p);
     const [x, y] = p!;
-    assert.equal(s.tags[y][x]?.sub, 0);
     const out = computeFrame(s, 0);
     assert.equal(out[y][x].ch, '☻');
-    assert.equal(out[y][x].dx, 0.5);
-    assert.equal(out[y][x + 1].ch, ' ');
-  });
-
-  test('enhanced and classic keep one cell per tile', () => {
-    for (const style of ['enhanced', 'classic'] as VisualStyle[]) {
-      const { s } = farm(style);
-      assert.equal(s.ctx?.zoom, 1);
-      const p = findPlayer(s)!;
-      assert.equal(s.tags[p[1]][p[0]]?.sub, undefined);
-    }
-  });
-
-  test('large mode shows fewer tiles but the same world', () => {
-    const big = farm('large').s.ctx!;
-    const small = farm('enhanced').s.ctx!;
-    assert.ok(big.view.w / 2 <= small.view.w);
+    assert.equal(out[y][x].dx, undefined);
   });
 
   test('a dialog drawn over the map clears the map tags under it', () => {
-    const { s } = farm('large');
+    const { s } = farm();
     s.box(10, 5, 30, 6, '03', '00', 'Hello');
     assert.equal(s.tags[7][20], null);
     assert.equal(s.tags[5][10]?.k, 'box:tl');
   });
 
   test('every enhanced frame of the farm renders without throwing, day and night', () => {
-    const { s, g } = farm('large');
+    const { s, g } = farm();
     for (const minutes of [6 * 60, 12 * 60, 18 * 60, 22 * 60]) {
       g.minutes = minutes;
       g.render();
@@ -84,11 +75,53 @@ describe('engine + renderer', () => {
     }
   });
 
-  test('style cycle is Large -> Enhanced -> Classic -> Large', () => {
-    const s = new Screen();
-    assert.equal(s.style, 'large');
-    assert.equal(s.toggleStyle(), 'enhanced');
-    assert.equal(s.toggleStyle(), 'classic');
-    assert.equal(s.toggleStyle(), 'large');
+  test('today plan reports the daily chores and shipping cutoff', () => {
+    const { g } = farm();
+    g.crops = { '11,10': ['Turnip', 0] };
+    g.wet = new (g.wet.constructor)();
+    g.animals = [{ name: 'Bess', kind: 'cow', fed: false, ready: false, wool: 0 }];
+    const text = g.today_lines().join('\n');
+    assert.match(text, /Tomorrow:/);
+    assert.match(text, /Zack collects at 5:00 PM/);
+    assert.match(text, /1 crop still dry/);
+    assert.match(text, /1 animal still hungry/);
+  });
+
+  test('action preview shows the tool cost and context action follows the facing tile', () => {
+    const { g } = farm();
+    assert.equal(g.tool_cost(), 2);
+    assert.equal(g.action_preview().cost, 2);
+    const action = g.context_action();
+    assert.ok(['x', 'space'].includes(action.key));
+    assert.ok(action.label.length > 0);
+  });
+
+  test('save snapshots restore the farm state', () => {
+    const { g } = farm();
+    g.gold = 4321;
+    g.farm = 'Willow';
+    const snap = g.snapshot();
+    g.gold = 0;
+    g.farm = 'Other';
+    g.applySaveData(snap);
+    assert.equal(g.gold, 4321);
+    assert.equal(g.farm, 'Willow');
+  });
+
+  test('an upgraded tool tags its area-of-effect cells', () => {
+    const { s, g } = farm();
+    g.levels['Hoe'] = 1;
+    g.face = [0, -1];
+    g.render();
+    let target = 0;
+    let area = 0;
+    for (const row of s.tags) {
+      for (const t of row) {
+        if (t?.hl) target++;
+        if (t?.hlArea) area++;
+      }
+    }
+    assert.ok(target >= 1);
+    assert.ok(area >= 1);
   });
 });
