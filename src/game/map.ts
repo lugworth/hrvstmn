@@ -147,6 +147,8 @@ export function build_town(): GameMap {
   m.signs[pkey(30, 11)] = 'trash';
   m.set(30, 15, 'sign');
   m.signs[pkey(30, 15)] = 'Rose Square — Drop litter in the Trash Can (U) north of the plaza!';
+  m.set(42, 10, 'sign');
+  m.signs[pkey(42, 10)] = 'request_board';
   // Add South path & bridge across the river to Mineral Beach (warp only at the south border y=31!)
   m.rect(35, 21, 3, 7, 'path');
   m.rect(35, 28, 3, 2, 'bridge');

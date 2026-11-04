@@ -110,6 +110,15 @@ import {
   getBasketTotal,
 } from './rules';
 
+export interface VillagerRequest {
+  id: number;
+  npc: string;
+  item: string;
+  qty: number;
+  reward: number;
+  deadline: number;
+}
+
 export class Game {
   [key: string]: any;
 
@@ -212,6 +221,8 @@ export class Game {
   makers: string[] = [];
   museum: string[] = [];
   museum_rewards: number[] = [];
+  requests: VillagerRequest[] = [];
+  next_request_id: number = 1;
 
   prayed: boolean = false;
   fest_wins: string[] = [];
@@ -246,6 +257,7 @@ export class Game {
     'shipped_total', 'steps', 'fish_caught', 'goddess_gifts', 'kappa_gifts',
     'goddess_jewels', 'kappa_jewels', 'truth_jewels', 'vase_flower', 'makers',
     'museum', 'museum_rewards',
+    'requests', 'next_request_id',
     'fest_wins', 'house_flags', 'project', 'max_spring_floor', 'max_lake_floor',
     // barn animals, and today's once-per-day flags (a mid-day save/load must not reset them)
     'animals', 'talked', 'gifted', 'honey_picked', 'prayed', 'bathed', 'fireplace_lit',
@@ -357,6 +369,8 @@ export class Game {
     this.makers = [];
     this.museum = [];
     this.museum_rewards = [];
+    this.requests = [];
+    this.next_request_id = 1;
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -1723,6 +1737,9 @@ export class Game {
       let text = m.signs[pKey] || '';
       if (text === 'farm') {
         text = `${this.farm.toUpperCase()} FARM — Owner: ${this.name}`;
+      } else if (text === 'request_board') {
+        await this.request_menu();
+        return;
       }
       await this.say(text, 'Sign');
     } else if (this.held) {
@@ -3221,6 +3238,11 @@ export class Game {
     lines.push(`  Feed   ${this.animal_feed_count()} animal${this.animal_feed_count() === 1 ? '' : 's'} still hungry`);
     lines.push(`  Ready  ${this.ready_livestock_count()} product${this.ready_livestock_count() === 1 ? '' : 's'} to collect`);
     lines.push(`  Museum ${this.museum.length}/${this.museum_total()} donated`);
+    if (this.requests.length) {
+      const r = this.requests[0];
+      const extra = this.requests.length > 1 ? ` (+${this.requests.length - 1} more)` : '';
+      lines.push(`  Board  ${r.npc} needs ${r.qty} × ${r.item}${extra}`);
+    }
     lines.push('');
     const bdays = this.birthdays();
     if (bdays.length) lines.push(`  Birthday today: ${bdays.join(', ')} (5× gift bonus!)`);
@@ -3407,6 +3429,86 @@ export class Game {
       pages.push(page);
     }
     await this.show_pages('Museum Collection', pages);
+  }
+
+  request_pool(): string[] {
+    const crops = Object.keys(CROPS).filter((c) => c !== 'Grass' && CROPS[c][0] === this.season);
+    const extras = Object.keys(ITEMS).filter((i) => ITEMS[i][2] === 'forage' || ITEMS[i][2] === 'fish');
+    return py_sorted([...crops, ...extras]);
+  }
+
+  request_refresh(count: number = 3): number {
+    const rng = py_rng();
+    const npcs = py_sorted(Object.keys(NPCS).filter((n) => n !== 'Curator'));
+    const pool = this.request_pool();
+    let added = 0;
+    while (this.requests.length < count && this.requests.length < 3) {
+      const used = new Set(this.requests.map((r) => r.npc));
+      const available = npcs.filter((n) => !used.has(n));
+      const npc = rng.choice(available.length ? available : npcs);
+      const item = rng.choice(pool);
+      if (!npc || !item) break;
+      const qty = rng.randint(1, 3);
+      const price = Math.max(1, Number(ITEMS[item]?.[0]) || 40);
+      this.requests.push({
+        id: this.next_request_id++,
+        npc,
+        item,
+        qty,
+        reward: Math.max(100, price * qty * 2 + 50),
+        deadline: this.absday() + 3,
+      });
+      added++;
+    }
+    return added;
+  }
+
+  request_day(report: string[]): void {
+    const today = this.absday();
+    const expired = this.requests.filter((r) => r.deadline < today);
+    this.requests = this.requests.filter((r) => r.deadline >= today);
+    if (expired.length) {
+      report.push(`${expired.length} request${expired.length === 1 ? '' : 's'} expired at the Rose Square board.`);
+    }
+    if (this.requests.length < 3) {
+      const added = this.request_refresh(3);
+      if (added) report.push(`${added} new request${added === 1 ? '' : 's'} appeared at the Rose Square board.`);
+    }
+  }
+
+  request_deliver(index: number): string | null {
+    const request = this.requests[index];
+    if (!request) return null;
+    if ((this.inv[request.item] || 0) < request.qty) {
+      return `You need ${request.qty} × ${request.item} for ${request.npc}.`;
+    }
+    this.take(request.item, request.qty);
+    this.gold += request.reward;
+    this.friend[request.npc] = clamp((this.friend[request.npc] || 0) + 5, 0, 100);
+    this.requests.splice(index, 1);
+    return `${request.npc} got ${request.qty} × ${request.item}! You earned ${request.reward}G and +5 friendship.`;
+  }
+
+  async request_menu(): Promise<void> {
+    if (!this.requests.length) this.request_refresh(3);
+    if (!this.requests.length) {
+      await this.say('The request board is empty today. Check again tomorrow morning.', 'Rose Square');
+      return;
+    }
+    const labels = this.requests.map((r) => {
+      const days = Math.max(0, r.deadline - this.absday());
+      return `${r.npc}: ${r.qty} × ${r.item} — ${r.reward}G (${days}d left)`;
+    });
+    const sel = await this.menu('Rose Square Request Board', [...labels, 'Leave']);
+    if (sel === null || sel >= this.requests.length) return;
+    const request = this.requests[sel];
+    const result = this.request_deliver(sel);
+    if (result === null) return;
+    if (result.startsWith('You need')) {
+      await this.say(result, 'Rose Square');
+      return;
+    }
+    await this.say(result, request.npc);
   }
 
   async ranch_summary(): Promise<void> {
@@ -4186,6 +4288,9 @@ export class Game {
       this.child_name = 'Sprout';
       report.push(`Joyous news! ${this.married} and you welcomed a healthy baby into your family!`);
     }
+
+    // Rose Square request board
+    this.request_day(report);
 
     // Spawn daily weeds & mountain/beach forage
     if (this.season !== 3) {
