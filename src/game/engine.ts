@@ -210,6 +210,8 @@ export class Game {
   tv_watched_saturday: string | null = null;
   tv_order: [string, number] | null = null;
   makers: string[] = [];
+  museum: string[] = [];
+  museum_rewards: number[] = [];
 
   prayed: boolean = false;
   fest_wins: string[] = [];
@@ -243,6 +245,7 @@ export class Game {
     'heart_events_seen', 'rival_events_seen', 'married', 'marriage_day', 'child_name', 'child_days',
     'shipped_total', 'steps', 'fish_caught', 'goddess_gifts', 'kappa_gifts',
     'goddess_jewels', 'kappa_jewels', 'truth_jewels', 'vase_flower', 'makers',
+    'museum', 'museum_rewards',
     'fest_wins', 'house_flags', 'project', 'max_spring_floor', 'max_lake_floor',
     // barn animals, and today's once-per-day flags (a mid-day save/load must not reset them)
     'animals', 'talked', 'gifted', 'honey_picked', 'prayed', 'bathed', 'fireplace_lit',
@@ -352,6 +355,8 @@ export class Game {
     this.tv_watched_saturday = null;
     this.tv_order = null;
     this.makers = [];
+    this.museum = [];
+    this.museum_rewards = [];
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -2836,6 +2841,12 @@ export class Game {
     if (bid === 'library') {
       return [['Read a Farming Book', () => this.say(py_rng().choice(BOOKS), 'Book')]];
     }
+    if (bid === 'museum') {
+      return [
+        ['Donate an item', () => this.museum_donate()],
+        ['View the collection', () => this.museum_book()],
+      ];
+    }
     if (bid === 'church') {
       return [
         ['Pray at the Altar', () => this.pray()],
@@ -3209,6 +3220,7 @@ export class Game {
     lines.push(`  Water  ${this.crop_water_count()} crop${this.crop_water_count() === 1 ? '' : 's'} still dry`);
     lines.push(`  Feed   ${this.animal_feed_count()} animal${this.animal_feed_count() === 1 ? '' : 's'} still hungry`);
     lines.push(`  Ready  ${this.ready_livestock_count()} product${this.ready_livestock_count() === 1 ? '' : 's'} to collect`);
+    lines.push(`  Museum ${this.museum.length}/${this.museum_total()} donated`);
     lines.push('');
     const bdays = this.birthdays();
     if (bdays.length) lines.push(`  Birthday today: ${bdays.join(', ')} (5× gift bonus!)`);
@@ -3307,6 +3319,94 @@ export class Game {
     if (this.tool === 'Fishing Rod' && (tile === 'water' || tile === 'pond')) return { key: 'space', label: 'CAST' };
     const short = this.tool.endsWith(' Seeds') ? this.tool.slice(0, -6) : this.tool;
     return { key: 'space', label: short.length > 7 ? 'USE' : `USE ${short.toUpperCase()}` };
+  }
+
+  museum_categories(): [string, string][] {
+    return [
+      ['Fish', 'fish'],
+      ['Ore', 'ore'],
+      ['Forage', 'forage'],
+      ['Crops', 'crop'],
+    ];
+  }
+
+  museum_pool(category: string | null = null): string[] {
+    const excluded = new Set(['Junk Ore', 'Boot', 'Empty Can', 'Failed Dish']);
+    const cats = this.museum_categories();
+    const allowed = new Set(category ? cats.filter(([, c]) => c === category).map(([, c]) => c) : cats.map(([, c]) => c));
+    return py_sorted(
+      Object.entries(ITEMS)
+        .filter(([name, d]) => allowed.has(d[2]) && !excluded.has(name))
+        .map(([name]) => name)
+    );
+  }
+
+  museum_total(): number {
+    return this.museum_pool().length;
+  }
+
+  async museum_reward_check(): Promise<void> {
+    const milestones: [number, number, string, number][] = [
+      [5, 500, 'Flour', 3],
+      [10, 1000, 'Basket', 1],
+      [20, 2000, 'Diamond', 1],
+      [30, 5000, 'Diamond', 2],
+    ];
+    for (const [need, gold, item, qty] of milestones) {
+      if (this.museum.length >= need && !this.museum_rewards.includes(need)) {
+        this.museum_rewards.push(need);
+        this.gold += gold;
+        this.give(item, qty);
+        await this.say(
+          `Museum milestone: ${need} donations! The town fund awards ${gold}G and ${qty} × ${item}.`,
+          'Curator'
+        );
+      }
+    }
+  }
+
+  async museum_donate(): Promise<void> {
+    const pool = new Set(this.museum_pool());
+    const items = py_sorted(
+      Object.keys(this.inv).filter((i) => pool.has(i) && !this.museum.includes(i) && (this.inv[i] || 0) > 0)
+    );
+    if (!items.length) {
+      await this.say(
+        this.museum.length >= this.museum_total()
+          ? 'The collection is complete! Every fish, ore, forage item and crop is on display.'
+          : 'Bring me a fish, ore, forage item or crop that is not already on display.',
+        'Curator'
+      );
+      return;
+    }
+    const sel = await this.menu(
+      `Donate to the Museum   ${this.museum.length}/${this.museum_total()}`,
+      [...items.map((i) => `${i}  x${this.inv[i]}`), 'Leave']
+    );
+    if (sel === null || sel >= items.length) return;
+    const item = items[sel];
+    this.take(item, 1);
+    this.museum.push(item);
+    this.msg(`${item} added to the museum collection! (${this.museum.length}/${this.museum_total()})`, '0B');
+    await this.museum_reward_check();
+  }
+
+  async museum_book(): Promise<void> {
+    const pages: string[][] = [];
+    for (const [label, category] of this.museum_categories()) {
+      const all = this.museum_pool(category);
+      const got = new Set(this.museum.filter((i) => all.includes(i)));
+      let page = [`  ${label} — ${got.size}/${all.length} donated`];
+      for (const item of all) {
+        if (page.length >= 18) {
+          pages.push(page);
+          page = [`  ${label} (continued)`];
+        }
+        page.push(`    ${got.has(item) ? '[x]' : '[ ]'} ${item}`);
+      }
+      pages.push(page);
+    }
+    await this.show_pages('Museum Collection', pages);
   }
 
   async ranch_summary(): Promise<void> {

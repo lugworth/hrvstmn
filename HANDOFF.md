@@ -45,6 +45,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 ## Current feature set
 
 - Crops, livestock, villagers, festivals, mines, house upgrades, cooking, marriage and children.
+- **Mineral Town Museum**: donate fish, ore, forage and crops; a collection book tracks each wing, and milestones pay gold/items. The Curator lives in the museum and can be talked to like any villager.
 - Two save slots in `localStorage` (`hrvstmn-save`, `hrvstmn-save-2`), plus **JSON save export/import** from the Diary menu.
 - **Today's Plan (`Y`)**: date, weather, tomorrow's forecast, shipping-bin value and 5 PM cutoff, dry crops, hungry animals, ready milk/wool/eggs, birthdays, festivals, and a stamina-aware plan line.
 - **Villager Notes (`R`)**: every NPC's hearts, favourite gifts, and usual whereabouts, paginated safely without splitting a villager across pages.

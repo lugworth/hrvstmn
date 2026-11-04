@@ -126,4 +126,15 @@ describe('engine + renderer', () => {
     assert.ok(target >= 1);
     assert.ok(area >= 1);
   });
+
+  test('museum collection uses existing item categories', async () => {
+    const { g } = farm();
+    assert.ok(g.museum_pool().includes('Turnip'));
+    assert.ok(g.museum_pool('fish').includes('Small Fish'));
+    assert.ok(g.museum_total() > 0);
+    const opts = await g.shop_options('museum');
+    assert.equal(opts.length, 2);
+    g.museum = ['Turnip', 'Small Fish'];
+    assert.equal(g.museum.length, 2);
+  });
 });
