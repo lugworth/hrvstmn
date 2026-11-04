@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -519,6 +519,8 @@ describe('computeFrame', () => {
     assert.equal(hiresLevel(16, 1), 2);
     assert.equal(hiresLevel(13, 3), 2, 'needs a 14px font for 3x3');
     assert.equal(hiresLevel(8, 3), 1);
+    assert.equal(effectiveHiresLevel(16, 2, false), 1, 'player preference can turn high-res detail off');
+    assert.equal(effectiveHiresLevel(16, 2, true), 3);
   });
 
   test('3x3 patterns: nine glyphs drawn from the texture pool, deterministic, density kept', () => {
