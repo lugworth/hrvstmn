@@ -1,27 +1,12 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Screen, Cell, VisualStyle, STYLE_CYCLE } from '@/src/game/screen';
+import { Screen, Cell } from '@/src/game/screen';
 import { Game } from '@/src/game/engine';
 import { PALETTE } from '@/src/game/constants';
 import { computeFrame, drawFrame, frameSignature } from '@/src/game/enhanced';
 
 const FONT = '"HRVSTMN Mono", "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace';
-const STYLE_KEY = 'hrvstmn-style';
-
-function initialStyle(): VisualStyle {
-  try {
-    const q = new URLSearchParams(window.location.search).get('style');
-    if (STYLE_CYCLE.includes(q as VisualStyle)) return q as VisualStyle;
-    const saved = window.localStorage.getItem(STYLE_KEY);
-    if (STYLE_CYCLE.includes(saved as VisualStyle)) return saved as VisualStyle;
-  } catch {
-    // storage unavailable (private mode etc.) - fall through to default
-  }
-  return 'large';
-}
-
-const STYLE_BUTTON: Record<VisualStyle, string> = { large: 'Large', enhanced: 'Enhanced', classic: 'Classic' };
 const MIN_COLS = 80;
 const MIN_ROWS = 24;
 const MAX_COLS = 160;
@@ -48,7 +33,9 @@ export default function GameScreen() {
   const [isTouch, setIsTouch] = useState(false);
   const [running, setRunning] = useState(true);
   const [ready, setReady] = useState(false);
-  const [style, setStyleState] = useState<VisualStyle>('large');
+  const [contextLabel, setContextLabel] = useState('USE');
+  const [reducedMotion, setReducedMotionState] = useState(false);
+  const reducedMotionRef = useRef(false);
 
   // Send a key to the game engine
   const sendKey = useCallback((name: string) => {
@@ -79,6 +66,22 @@ export default function GameScreen() {
     if (dpadTimerRef.current.interval) clearInterval(dpadTimerRef.current.interval);
   }, []);
 
+  const toggleMotion = useCallback(() => {
+    const next = !reducedMotionRef.current;
+    reducedMotionRef.current = next;
+    if (screenRef.current) {
+      screenRef.current.reducedMotion = next;
+      gameRef.current?.render();
+      screenRef.current.onRender?.();
+    }
+    setReducedMotionState(next);
+    try {
+      window.localStorage.setItem('hrvstmn-motion', next ? 'off' : 'on');
+    } catch {
+      // storage unavailable; the choice still applies this session
+    }
+  }, []);
+
   useEffect(() => {
     // Detect touch
     const hasTouch =
@@ -101,8 +104,16 @@ export default function GameScreen() {
     let rows = MIN_ROWS;
 
     const screen = new Screen(cols, rows);
-    screen.style = initialStyle();
-    setStyleState(screen.style);
+    let motionOff = false;
+    try {
+      const savedMotion = window.localStorage.getItem('hrvstmn-motion');
+      motionOff = savedMotion ? savedMotion === 'off' : window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch {
+      motionOff = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    screen.reducedMotion = motionOff;
+    reducedMotionRef.current = motionOff;
+    setReducedMotionState(motionOff);
     screenRef.current = screen;
 
     function measure(px: number) {
@@ -161,18 +172,6 @@ export default function GameScreen() {
     let prevBuf: Cell[][] | null = null;
     let lastSig = '';
 
-    screen.onStyleChange = (next) => {
-      try {
-        window.localStorage.setItem(STYLE_KEY, next);
-      } catch {
-        // ignore storage failures; the choice still applies this session
-      }
-      setStyleState(next);
-      prevBuf = null;
-      lastSig = '';
-      if (screen.onRender) screen.onRender();
-    };
-
     const renderEnhanced = () => {
       if (!canvas || !ctx) return;
       if (!prevBuf || prevBuf.length !== screen.h || (prevBuf[0] && prevBuf[0].length !== screen.w)) {
@@ -180,7 +179,7 @@ export default function GameScreen() {
         prevBuf = screen.buf.map((row) => [...row]);
         lastSig = '';
       }
-      const frame = computeFrame(screen, performance.now() / 1000);
+      const frame = computeFrame(screen, screen.reducedMotion ? 0 : performance.now() / 1000);
       const sig = frameSignature(frame);
       if (sig === lastSig) return;
       lastSig = sig;
@@ -279,7 +278,7 @@ export default function GameScreen() {
     // Keep Enhanced animations (water, weather, smoke, title sky) moving even while the engine
     // is waiting in a menu or dialog. Cheap: the renderer skips the paint when nothing changed.
     const animTimer = setInterval(() => {
-      if (screen.style !== 'classic' && screen.onRender) screen.onRender();
+      if (!screen.reducedMotion && screen.style !== 'classic' && screen.onRender) screen.onRender();
     }, 100);
 
     // Check for ?autostart=1 query param
@@ -289,6 +288,11 @@ export default function GameScreen() {
     // Initialize Game engine
     const game = new Game(screen, autostart);
     gameRef.current = game;
+
+    const contextTimer = setInterval(() => {
+      const a = game.context_action();
+      setContextLabel((prev) => (prev === a.label ? prev : a.label));
+    }, 250);
 
     // Start game loop in background
     let isMounted = true;
@@ -310,6 +314,7 @@ export default function GameScreen() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', onResize);
       clearInterval(animTimer);
+      clearInterval(contextTimer);
     };
   }, [sendKey]);
 
@@ -384,6 +389,20 @@ export default function GameScreen() {
           </button>
           <button
             type="button"
+            onClick={() => sendKey('y')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
+          >
+            [Y] Today
+          </button>
+          <button
+            type="button"
+            onClick={() => sendKey('r')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff0099] cursor-pointer"
+          >
+            [R] Villagers
+          </button>
+          <button
+            type="button"
             onClick={() => sendKey('esc')}
             className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#c0c0c0] cursor-pointer"
           >
@@ -398,11 +417,11 @@ export default function GameScreen() {
           </button>
           <button
             type="button"
-            onClick={() => screenRef.current?.toggleStyle()}
+            onClick={toggleMotion}
             className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#cc00ff] cursor-pointer"
-            title="Switch between Enhanced and Classic ASCII graphics"
+            title="Toggle ambient animation (also honors prefers-reduced-motion)"
           >
-            [V] Style: {STYLE_BUTTON[style]}
+            Motion: {reducedMotion ? 'Off' : 'On'}
           </button>
         </div>
       )}
@@ -461,18 +480,11 @@ export default function GameScreen() {
         {/* Action Buttons */}
         <div className="grid grid-cols-4 gap-1.5">
           <button
-            onPointerDown={(e) => handleButtonDown('space', e)}
+            onPointerDown={(e) => handleButtonDown(gameRef.current?.context_action().key || 'space', e)}
             onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-2.5 text-xs font-bold text-[#33ff00] shadow"
+            className="col-span-2 bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-2.5 text-xs font-bold text-[#33ff00] shadow"
           >
-            USE
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('x', e)}
-            onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-2.5 text-xs font-bold text-[#ff0099] shadow"
-          >
-            ACT
+            {contextLabel}
           </button>
           <button
             onPointerDown={(e) => handleButtonDown('tab', e)}
@@ -515,13 +527,6 @@ export default function GameScreen() {
             className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#00ffff] shadow"
           >
             HELP
-          </button>
-          <button
-            type="button"
-            onClick={() => screenRef.current?.toggleStyle()}
-            className="col-span-4 bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-1.5 text-xs font-medium text-[#cc00ff] shadow"
-          >
-            STYLE: {STYLE_BUTTON[style].toUpperCase()}
           </button>
         </div>
       </div>

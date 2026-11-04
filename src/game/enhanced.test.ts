@@ -187,26 +187,6 @@ describe('computeFrame', () => {
     assert.equal(out[1][1].ch, 'H');
   });
 
-  test('large tiles draw two-cell sprites (boulders, cliffs, windows)', () => {
-    const s = scene({ zoom: 2 });
-    const two = (x: number, y: number, tag: object, ch = ' ', fg = '05', bg = '00') => {
-      s.put(x, y, ch, fg, bg);
-      s.put(x + 1, y, ' ', fg, bg);
-      s.tag(x, y, { ...tag, sub: 0, zw: 2 } as any);
-      s.tag(x + 1, y, { ...tag, sub: 1, zw: 2 } as any);
-    };
-    two(4, 4, { t: 'field', wx: 2, wy: 4, k: 'obj:boulder' }, 'O', '04');
-    two(8, 4, { t: 'cliff', wx: 4, wy: 4 }, '^', '03');
-    two(12, 4, { t: 'wall', wx: 6, wy: 4, k: 'deco', dch: '=', dfg: '0C' }, '=', '0C', '01');
-    two(16, 4, { t: 'field', wx: 8, wy: 4, k: 'obj:stone' }, '*', '04');
-    const out = computeFrame(s, 0);
-    assert.deepEqual([out[4][4].ch, out[4][5].ch], ['◖', '◗']);
-    assert.deepEqual([out[4][8].ch, out[4][9].ch], ['◢', '◣']);
-    assert.deepEqual([out[4][12].ch, out[4][13].ch], ['▐', '▌']);
-    assert.equal(out[4][16].dx, 0.5, 'single glyphs are centred in their tile');
-    assert.equal(out[4][17].ch, ' ');
-  });
-
   test('ground right below a building is shaded', () => {
     const s = scene();
     s.put(10, 5, '#', '02', '01');
@@ -313,16 +293,6 @@ describe('computeFrame', () => {
     for (const hex of ['#000000', '#ff0000', '#ff9900', '#ff0099', '#33ff00', '#00ffff', '#0066ff', '#cc00ff', '#3300ff', '#ffffff']) {
       assert.equal(toIsotope(hex), hex);
     }
-  });
-
-  test('large sprites are lit from the top-left', () => {
-    const s = scene({ zoom: 2 });
-    for (const [x, sub] of [[10, 0], [11, 1]] as const) {
-      s.put(x, 5, sub ? ' ' : 'T', '0B', '00', true);
-      s.tag(x, 5, { t: 'tree', wx: 5, wy: 5, sub, zw: 2 });
-    }
-    const out = computeFrame(s, 0);
-    assert.ok(lum(out[5][10].fg) > lum(out[5][11].fg));
   });
 
   test('water is deeper (darker) away from the shore', () => {

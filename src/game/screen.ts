@@ -2,14 +2,8 @@
 
 export type Cell = [char: string, fg: string, bg: string, bold: boolean];
 
-/** Visual style used by the canvas renderer. 'large' is Enhanced with 2-cell (square) map tiles. */
-export type VisualStyle = 'large' | 'enhanced' | 'classic';
-export const STYLE_CYCLE: VisualStyle[] = ['large', 'enhanced', 'classic'];
-export const STYLE_LABEL: Record<VisualStyle, string> = {
-  large: 'Enhanced (large tiles)',
-  enhanced: 'Enhanced',
-  classic: 'Classic ASCII',
-};
+/** Visual style used by the canvas renderer. 'classic' is kept for tests and development. */
+export type VisualStyle = 'enhanced' | 'classic';
 
 /**
  * Semantic info about a screen cell, written by the engine so the enhanced
@@ -30,6 +24,8 @@ export type CellTag = {
   wy?: number;
   /** Tool-target highlight. */
   hl?: boolean;
+  /** Secondary cells covered by an upgraded tool's area of effect. */
+  hlArea?: boolean;
   /** For zoomed tiles: which sub-cell of the tile this is, and the tile width in cells. */
   sub?: number;
   zw?: number;
@@ -48,8 +44,10 @@ export type RenderCtx = {
   /** 0 Spring, 1 Summer, 2 Fall, 3 Winter. */
   season: number;
   weather: string;
-  /** Screen cells per map tile horizontally (1 normal, 2 large tiles). */
+  /** Screen cells per map tile horizontally. Always 1 now that large tiles are gone. */
   zoom: number;
+  /** OS-level or user-chosen reduced motion. Freezes ambient animation. */
+  reducedMotion?: boolean;
   /** Screen rectangle occupied by the map viewport. */
   view: { x: number; y: number; w: number; h: number };
   /** Column of the vertical divider and row of the horizontal divider. */
@@ -68,8 +66,8 @@ export class Screen {
   scene: string | null = null;
   /** Rectangles of boxes (dialogs, menus) drawn this frame, top-most last. */
   boxes: { x: number; y: number; w: number; h: number }[] = [];
-  style: VisualStyle = 'large';
-  onStyleChange?: (style: VisualStyle) => void;
+  style: VisualStyle = 'enhanced';
+  reducedMotion: boolean = false;
   keyQueue: string[] = [];
   private keyWaiters: Array<{
     resolve: (key: string | null) => void;
@@ -104,22 +102,9 @@ export class Screen {
     this.tags[y][x] = tag;
   }
 
+  /** Choose a renderer programmatically. The UI never exposes a style switch. */
   setStyle(style: VisualStyle) {
-    if (style === this.style) return;
     this.style = style;
-    this.onStyleChange?.(style);
-  }
-
-  /** Cycle Large -> Enhanced -> Classic -> Large. */
-  toggleStyle(): VisualStyle {
-    const i = STYLE_CYCLE.indexOf(this.style);
-    this.setStyle(STYLE_CYCLE[(i + 1) % STYLE_CYCLE.length]);
-    return this.style;
-  }
-
-  /** Map tile width in screen cells for the current style. */
-  get zoom(): number {
-    return this.style === 'large' ? 2 : 1;
   }
 
   put(x: number, y: number, text: string, fg: string = '05', bg: string = '00', bold: boolean = false) {
