@@ -127,6 +127,7 @@ export class Game {
   interior_bid: Record<string, string> = {};
   indoor_npcs: Record<string, any> = {};
   _fest_saved: Record<string, any> | null = null;
+  modal_depth: number = 0;
 
   name: string = 'Pete';
   farm: string = 'Moon';
@@ -3203,7 +3204,7 @@ export class Game {
     lines.push(`         ${ship}`);
     lines.push(`  Water  ${this.crop_water_count()} crop${this.crop_water_count() === 1 ? '' : 's'} still dry`);
     lines.push(`  Feed   ${this.animal_feed_count()} animal${this.animal_feed_count() === 1 ? '' : 's'} still hungry`);
-    lines.push(`  Ready  ${this.ready_livestock_count()} milk/wool/egg collect${this.ready_livestock_count() === 1 ? '' : 's'}`);
+    lines.push(`  Ready  ${this.ready_livestock_count()} product${this.ready_livestock_count() === 1 ? '' : 's'} to collect`);
     lines.push('');
     const bdays = this.birthdays();
     if (bdays.length) lines.push(`  Birthday today: ${bdays.join(', ')} (5× gift bonus!)`);
@@ -3275,6 +3276,7 @@ export class Game {
 
   /** What the big touch button should do for the tile the player is facing. */
   context_action(): { key: 'x' | 'space'; label: string } {
+    if (this.modal_depth > 0) return { key: 'space', label: 'OK' };
     const [tx, ty] = this.target();
     const pKey = pkey(tx, ty);
     const m = this.map;
@@ -4655,15 +4657,20 @@ export class Game {
   }
 
   async modal(draw: () => void): Promise<string> {
-    while (true) {
-      this.render();
-      draw();
-      this.scr.flush();
-      const k = await this.scr.getKey(0.25);
-      if (k) {
-        this.last = Date.now() / 1000;
-        return k;
+    this.modal_depth += 1;
+    try {
+      while (true) {
+        this.render();
+        draw();
+        this.scr.flush();
+        const k = await this.scr.getKey(0.25);
+        if (k) {
+          this.last = Date.now() / 1000;
+          return k;
+        }
       }
+    } finally {
+      this.modal_depth = Math.max(0, this.modal_depth - 1);
     }
   }
 
