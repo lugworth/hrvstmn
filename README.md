@@ -12,15 +12,14 @@ An ASCII tribute to *Harvest Moon: Friends of Mineral Town*, rendered in the bas
   - Mountain & Mines: forage wild herbs, bamboo shoots, mushrooms, and delve through 10 mine floors for ores and precious gems.
   - House expansions: carpentry upgrades (kitchen, extension, bathroom, big bed, coop expansion) and cooking with utensils and recipes.
   - Seasonal festivals: New Year's Day, Goddess Festival, Chicken Sumo, Egg Hunt, Fireworks, Harvest Festival, and more.
-- **Three visual styles** (press **V** to cycle, or use the Style button; your choice is remembered):
-  - **Large** (default): Enhanced with square, two-character map tiles. Each tile gets more detail (peaked cliffs, round boulders, window panes, doors with knobs, furniture sprites) and single glyphs sit centred in their tile.
-  - **Enhanced**: one character per tile, so more of the map fits on screen. Both Enhanced styles have textured ground, crafted buildings, shadows under buildings and trees, drifting cloud shadows, seasonal palettes (spring blossom, summer fruit, autumn leaves, winter snow), time-of-day lighting (dawn, dusk, a lantern around the player, lit windows, fireflies, a night vignette), animated rain with puddles, typhoons with lightning and swaying trees, snow and blizzards, chimney smoke, butterflies, falling autumn leaves, sun glints and star reflections on water, animals and villagers on round tokens (`♞` horse, `♉` cows, `☁` sheep), dialogs with a raised panel and drop shadow, and a night-sky title screen.
-  - **Classic**: the original flat base16 ASCII look.
-  - Add `?style=large`, `?style=enhanced` or `?style=classic` to the URL to force one.
+- **Enhanced ASCII presentation**: one character per map tile, with textured ground, crafted buildings, shadows under buildings and trees, drifting cloud shadows, seasonal palettes (spring blossom, summer fruit, autumn leaves, winter snow), time-of-day lighting (dawn, dusk, a lantern around the player, lit windows, fireflies, a night vignette), animated rain with puddles, typhoons with lightning and swaying trees, snow and blizzards, chimney smoke, butterflies, falling autumn leaves, sun glints and star reflections on water, animals and villagers on round tokens (`♞` horse, `♉` cows, `☁` sheep), dialogs with a raised panel and drop shadow, and a night-sky title screen.
+  - Enhanced is the only style shown in the game. The original flat base16 **Classic** ASCII renderer remains in the codebase for reference and tests, but there is no in-game or URL switch.
 - **Controls**:
-  - Keyboard: Arrow keys / WASD to move, Space / Z to use tool, X / E / Enter to interact, Tab / Shift+Tab to switch tools, I for rucksack, V for visual style, Esc for menu, ? for help.
-  - Touch: Full on-screen D-Pad (with tap-or-hold repeat) and action buttons for mobile & tablet gameplay.
+  - Keyboard: Arrow keys / WASD to move, Space / Z to use tool, X / E / Enter to interact, Tab / Shift+Tab to switch tools, I for rucksack, Y for today's plan, R for villager notes, Esc for menu, ? for help.
+  - Touch: Full on-screen D-Pad (with tap-or-hold repeat) and a context-sensitive action button that becomes Use, Talk, Enter, Harvest, Ship or Sleep based on the tile you face.
 - **Auto-Save**: Farm progress, crops, animals, and relationships persist in your browser's local storage.
+- **Today's Plan & Villager Notes**: press **Y** for a daily checklist (weather, shipping cutoff, thirsty crops, hungry animals, ready milk/wool/eggs, birthdays and festivals) and **R** for every villager's hearts, favourite gifts and usual whereabouts. The Diary menu also includes these notes plus JSON save export/import for moving a farm between browsers.
+- **Comfort options**: ambient animation honors `prefers-reduced-motion`, and the Motion button in the desktop toolbar can freeze clouds, smoke, weather particles, fireflies and camera easing.
 
 ## Development
 
@@ -45,7 +44,7 @@ instead of blended. Map backgrounds sink toward Isotope's pure black, and glyph 
 pulled toward the nearest pure Isotope hue while keeping their brightness, for the theme's
 neon-on-black contrast.
 
-Enhanced and Large are drawn **black and white**: every map cell is converted to grey by brightness,
+Enhanced is drawn **black and white**: every map cell is converted to grey by brightness,
 keeping its light and shade. Only things of interest keep their colour as accents: the player,
 villagers and animals, ripe crops, forage and flowers, doors, lit windows, bins, signs, fixtures,
 stairs, fires, torches and ore, and a few seasonal touches.
@@ -60,8 +59,7 @@ size. The patterns are seeded by world position, so they don't shimmer when the 
 ### How the Enhanced renderer works
 
 The engine still writes plain `(glyph, fg, bg)` cells, and also tags each map cell with what it is
-(tile name, world position, deco, entity, tool highlight). In Large mode each tile is drawn into
-two cells tagged `sub: 0/1`, and the camera works in tiles. It also sets a per-frame context
+(tile name, world position, deco, entity, tool highlight). It also sets a per-frame context
 (clock, season, weather, indoors). `src/game/enhanced.ts` turns that into the styled frame, so game
 logic never depends on the visual style. Any ordinary write over a cell clears its tag, so dialogs
 and menus drawn over the map always render as UI.
