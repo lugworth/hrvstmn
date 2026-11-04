@@ -137,4 +137,22 @@ describe('engine + renderer', () => {
     g.museum = ['Turnip', 'Small Fish'];
     assert.equal(g.museum.length, 2);
   });
+
+  test('request board creates deliverable villager requests', () => {
+    const { g } = farm();
+    assert.equal(g.request_refresh(3), 3);
+    assert.equal(g.requests.length, 3);
+    const request = g.requests[0];
+    assert.ok(g.request_pool().includes(request.item));
+    assert.ok(request.deadline > g.absday());
+    g.inv[request.item] = request.qty;
+    const gold = g.gold;
+    const friendship = g.friend[request.npc];
+    const result = g.request_deliver(0);
+    assert.ok(result?.includes('earned'));
+    assert.equal(g.gold, gold + request.reward);
+    assert.equal(g.friend[request.npc], friendship + 5);
+    assert.equal(g.requests.length, 2);
+    assert.equal(g.inv[request.item], undefined);
+  });
 });
