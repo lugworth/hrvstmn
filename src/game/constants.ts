@@ -795,6 +795,11 @@ export const HOURS: Record<string, any> = {
       0
     ]
   ],
+  "museum": [
+    9,
+    17,
+    []
+  ],
   "church": [
     6,
     20,
@@ -829,7 +834,8 @@ export const BUILDINGS: Record<string, string> = {
   "church": "Church",
   "mayor": "Mayor Thomas' House",
   "yodel": "Yodel Ranch",
-  "carpenter": "Gotz's Workshop"
+  "carpenter": "Gotz's Workshop",
+  "museum": "Mineral Town Museum"
 };
 
 export interface NPCDef {
@@ -2024,6 +2030,17 @@ export const INTERIOR_LAYOUTS: Record<string, string[]> = {
     "#p...............p#",
     "#########D#########"
   ],
+  "museum": [
+    "###################",
+    "#HHH#....k....#HHH#",
+    "#...#=====...#....#",
+    "#.................#",
+    "#.BB..BB...BB..BB.#",
+    "#.................#",
+    "#.ctc.........ctc.#",
+    "#p...............p#",
+    "#########D#########"
+  ],
   "church": [
     "#################",
     "#p....#.k.#....p#",
@@ -2942,6 +2959,23 @@ Object.assign(NPCS, {
       ["Good day! Keeping the peace and delivering the mail in Mineral Town is my duty!"],
       ["Everything's peaceful today... well, except when Won tries peddling strange apples."],
       ["If I ever work up the courage to write a letter to Aja in the city, I hope it turns out well."],
+    ],
+  },
+  "Curator": {
+    g: "Ω",
+    col: "0C",
+    home: "museum",
+    out: null,
+    where: null,
+    rain: true,
+    bach: false,
+    loves: ["Diamond", "Pink Diamond", "Alexandrite", "Moondrop Flower"],
+    likes: ["Copper", "Silver", "Gold", "Mystrile", "Medicinal Herb"],
+    hates: ["Junk Ore", "Boot", "Empty Can"],
+    lines: [
+      ["Welcome to the Mineral Town Museum. Bring me a fish, ore, forage or crop and I'll add it to the collection."],
+      ["Every donation helps us rebuild the old exhibits. Milestones earn a small reward from the town fund."],
+      ["The collection is looking better every season. Thank you for helping us remember Mineral Town's natural history."],
     ],
   },
 });

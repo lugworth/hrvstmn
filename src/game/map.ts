@@ -132,6 +132,8 @@ export function build_farm(): GameMap {
 
 export function build_town(): GameMap {
   const m = GameMap.fromPrebuilt('town');
+  // Mineral Town Museum, between the blacksmith and the library on the north row.
+  m.building(28, 2, 8, 5, 4, 'museum', 'MUSEUM', '0C');
   // Add Harvest Sprite Hut behind the Church in NE area (below Church at y=9..12 so Church at y=2..6 is untouched)
   m.building(61, 9, 9, 4, 4, 'sprites', 'SPRITES', '0A');
   m.rect(61, 7, 2, 2, 'path');
