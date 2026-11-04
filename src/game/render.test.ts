@@ -94,6 +94,9 @@ describe('engine + renderer', () => {
     const action = g.context_action();
     assert.ok(['x', 'space'].includes(action.key));
     assert.ok(action.label.length > 0);
+    g.modal_depth = 1;
+    assert.deepEqual(g.context_action(), { key: 'space', label: 'OK' });
+    g.modal_depth = 0;
   });
 
   test('save snapshots restore the farm state', () => {
