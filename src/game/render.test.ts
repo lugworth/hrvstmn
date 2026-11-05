@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { Screen, VisualStyle } from './screen';
 import { Game, MASTERY_DISCIPLINES } from './engine';
 import { computeFrame } from './enhanced';
+import { TILES } from './constants';
 
 function farm(style?: VisualStyle) {
   const s = new Screen(132, 30);
@@ -127,6 +128,54 @@ describe('engine + renderer', () => {
     assert.equal(g.shake_fx.strength, 2);
     g.render();
     assert.ok(g.scr.ctx.fx.some((f: { kind: string; stuff?: string }) => f.kind === 'debris' && f.stuff === 'stone'), 'extras reach the renderer');
+  });
+
+  test('the valley spreads over eight outdoor areas, all linked both ways and reachable from the farm', () => {
+    const { g } = farm();
+    const outdoor = ['farm', 'town', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point'];
+    for (const name of outdoor) assert.ok(g.maps[name], name);
+    const pass = (m: any, x: number, y: number) => m.inside(x, y) && !!TILES[m.tile(x, y)]?.[3];
+    // every edge warp lands on open ground a step or two from a warp back
+    for (const name of outdoor) {
+      const m = g.maps[name];
+      for (const [key, [to, wx, wy]] of Object.entries(m.warps) as [string, [string, number, number]][]) {
+        const t = g.maps[to];
+        assert.ok(t, `${name} ${key} -> ${to}`);
+        assert.ok(pass(t, wx, wy), `${name} ${key} lands on open ground in ${to}`);
+        let back = false;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (t.warps[`${wx + dx},${wy + dy}`]?.[0] === name) back = true;
+        assert.ok(back, `${to} ${wx},${wy} leads back to ${name}`);
+      }
+    }
+    // walk the open ground from the farm, through the edge warps (debris and doors aside)
+    const seen = new Set<string>();
+    const maps = new Set<string>();
+    const queue: [string, number, number][] = [['farm', 23, 9]];
+    while (queue.length) {
+      const [name, x, y] = queue.pop()!;
+      const id = `${name}:${x},${y}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      maps.add(name);
+      const m = g.maps[name];
+      const w = m.warps[`${x},${y}`];
+      if (w && outdoor.includes(w[0])) queue.push([w[0], w[1], w[2]]);
+      for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) if (pass(m, x + dx, y + dy)) queue.push([name, x + dx, y + dy]);
+    }
+    assert.deepEqual([...maps].sort(), [...outdoor].sort());
+  });
+
+  test('the outer regions get forage, and fallen branches gather in the woods each day', () => {
+    const { g } = farm();
+    g.objs.woods = {};
+    g.spawn_forage();
+    for (const name of ['woods', 'ridge', 'river', 'point']) assert.ok(Object.keys(g.forage[name] || {}).length > 0, name);
+    const branches = Object.entries(g.objs.woods).filter(([, v]) => v === 'branch');
+    assert.ok(branches.length >= 5);
+    for (const [k] of branches) {
+      const [x, y] = k.split(',').map(Number);
+      assert.equal(g.maps.woods.tile(x, y), 'grass');
+    }
   });
 
   test('an upgraded tool tags its area-of-effect cells', () => {
