@@ -995,6 +995,65 @@ describe('computeFrame', () => {
     assert.equal(count(frames({ weather: 'Rain' })), 0, 'none under rain clouds');
   });
 
+  test('QA: the lamp pool at dusk is never darker than the ground around it', () => {
+    for (const over of [{ minutes: 17.5 * 60, weather: 'Rain' }, { minutes: 18 * 60, weather: 'Sunny' }]) {
+      const s = scene(over);
+      s.put(25, 10, '@', '0F', '00', true);
+      s.tag(25, 10, { t: 'grass', wx: 25, wy: 10, ent: 'player' });
+      const out = computeFrame(s, 0);
+      const ring = (r0: number, r1: number) => {
+        const cells = [];
+        for (let y = 2; y < 18; y++) for (let x = 2; x < 48; x++) {
+          const d = Math.hypot((x - 25) * 0.5, y - 10);
+          if (d >= r0 && d < r1) cells.push(lum(out[y][x].bg));
+        }
+        return cells.reduce((a, b) => a + b, 0) / cells.length;
+      };
+      assert.ok(ring(1, 4) >= ring(8, 14), `${over.weather}: lamp ring ${ring(1, 4).toFixed(1)} vs far ${ring(8, 14).toFixed(1)}`);
+    }
+  });
+
+  test('QA: every tool tier swings in its own colour, and a hit flash does not hide it', () => {
+    const swing = (tier: number, flash = false) => {
+      const fx: NonNullable<RenderCtx['fx']> = [{ kind: 'swing', x: 10, y: 5, age: 0.05, life: 0.2, dir: [1, 0], tier }];
+      if (flash) fx.push({ kind: 'flash', x: 10, y: 5, age: 0.05, life: 0.14 });
+      return computeFrame(scene({ fx }), 0)[5][10];
+    };
+    const cols = [0, 1, 2, 3, 4, 5, 6].map((t) => swing(t).fg);
+    assert.equal(new Set(cols).size, 7, cols.join(' '));
+    const hit = swing(3, true);
+    assert.equal(hit.ch, '╲', 'the slash is still drawn');
+    assert.equal(hit.fg, swing(3).fg, 'in its tier colour');
+  });
+
+  test('QA: a heavy hit shakes the view by a few pixels, not one or two', () => {
+    const [dx] = shakeOffset({ age: 0.02, strength: 2 });
+    assert.ok(Math.abs(dx) >= 3);
+    const [lx] = shakeOffset({ age: 0.02, strength: 1 });
+    assert.ok(Math.abs(lx) >= 1 && Math.abs(lx) <= 2);
+  });
+
+  test('QA: a lone one-cell tide pool gets no foam box', () => {
+    const s = scene();
+    s.put(20, 10, '~', '0D', '00');
+    s.tag(20, 10, { t: 'pond', wx: 20, wy: 10 });
+    assert.equal(computeFrame(s, 0)[10][20].foam, undefined);
+  });
+
+  test('QA: a prompt over the title screen keeps its punctuation as plain text', () => {
+    const s = new Screen(100, 30);
+    s.scene = 'title';
+    s.box(20, 10, 40, 6, '0D', '00', 'Name');
+    s.put(22, 12, "What's your name? (type, then enter)", '07', '00');
+    const out = computeFrame(s, 0);
+    const apos = out[12][22 + "What's".indexOf("'")];
+    const comma = out[12][22 + "What's your name? (type".length];
+    assert.equal(apos.ch, "'");
+    assert.equal(comma.ch, ',');
+    assert.equal(subPattern(apos, 16, 2), null, 'no texture swap');
+    assert.equal(subPattern(comma, 16, 2), null);
+  });
+
   test('hash is deterministic and in range', () => {
     for (let i = 0; i < 50; i++) {
       const v = hash(i, i * 3, 2);

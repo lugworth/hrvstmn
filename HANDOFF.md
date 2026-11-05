@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 152/152 tests pass, typecheck clean, production build passes.
+- **State:** working. 158/158 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** offscreen static-world cache/layered HUD, greenhouse, optional animated doors/windows and CRT mode. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 152 passed, 12 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 158 passed, 12 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -80,7 +80,7 @@ src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScri
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
 src/game/compact.ts            Compact (phone) layout constants + text wrap/reflow/message helpers
 src/game/viewport.ts           chooseGrid (font/grid per stage), D-pad direction, tap-to-walk BFS
-src/game/*.test.ts             node:test — 152 tests: renderer, engine, rules, mobile layout and integration coverage
+src/game/*.test.ts             node:test — 158 tests: renderer, engine, rules, mobile layout and integration coverage
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -155,6 +155,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #49: renderer QA fixes: lamp pools only ever brighten (never darker than the dusk sky around them), seven distinct tool-tier swing colours that survive the hit flash, sickle cuts blink each weed then scatter leaves, stronger screen shake (2px light, 4px heavy), brighter terrain edges, title-screen prompt punctuation stays plain, lone tide pools get no foam box; lighting accumulated per light over its bounding box plus cached tone/grey lookups cut town-at-night frame build ~20%.
 - #48: region looks: Skyline Ridge rock faces (lit brow, strata, dithered base, thin snow caps in winter), Willow Bend downstream current, Cedar Hollow under-canopy gloom with sun shafts, Lighthouse Point sweeping beam at night/storms and glinting tide pools; lamp flicker respects reduced motion.
 - #47: region layout fixes from visual QA: `sealUnreachable()` closes off unreachable pockets in the four outer regions (no forage/branches out of reach), the town's east exit joins the road, signs moved off trails, the sea runs off the map edge at the beach and Lighthouse Point.
 - #46: outer-region content: per-region seasonal forage pools (14 new forage items), river and sea catch tables with rare catches (Elder Sturgeon, Storm Marlin), landmarks (ridge lookout, lighthouse keeper's log, Mossy Pond offering, stone skipping); tide pools and the woods pond no longer count as Goddess Pond.
