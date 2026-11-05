@@ -66,6 +66,24 @@ describe('computeFrame', () => {
     assert.notEqual(out[5][5].bg, '#000000');
   });
 
+  test('player and NPC entities stamp composed 3x3 sprites', () => {
+    const s = scene();
+    s.put(5, 5, '@', '07', '00', true);
+    s.tag(5, 5, { t: 'grass', ent: 'player', dir: 'down', wx: 5, wy: 5 });
+    const out = computeFrame(s, 0);
+    assert.equal(out[3][5].ch, '@');
+    assert.equal(out[4][5].ch, '|');
+    assert.ok(out[4][4].accent);
+    assert.ok(out[5][5].ch !== ' ');
+  });
+
+  test('action effects render as transient accent glyphs', () => {
+    const s = scene({ fx: [{ kind: 'sparkle', x: 6, y: 6, age: 0, life: 1 }] });
+    const out = computeFrame(s, 0);
+    assert.equal(out[6][6].ch, '*');
+    assert.ok(out[6][6].glow);
+  });
+
   test('textures follow world coordinates, not screen position', () => {
     const a = scene();
     const b = scene();
@@ -97,12 +115,13 @@ describe('computeFrame', () => {
     assert.equal(out[3][2].ch, '│');
   });
 
-  test('the player is drawn as a glowing figure on the ground colour', () => {
+  test('the player is drawn as a glowing composed figure on the ground colour', () => {
     const s = scene();
     s.put(10, 10, '@', '07', '00', true);
     s.tag(10, 10, { t: 'grass', wx: 10, wy: 10, ent: 'player' });
-    const o = computeFrame(s, 0)[10][10];
-    assert.equal(o.ch, '☻');
+    const out = computeFrame(s, 0);
+    const o = out[10][10];
+    assert.equal(out[8][10].ch, '@');
     assert.ok(o.glow);
     assert.notEqual(o.bg, '#000000');
   });

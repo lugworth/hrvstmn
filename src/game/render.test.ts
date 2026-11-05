@@ -48,13 +48,15 @@ describe('engine + renderer', () => {
     assert.ok(tagged > 500);
   });
 
-  test('the player is tagged once and rendered as a single creature token', () => {
+  test('the player is tagged once and rendered as a composed sprite', () => {
     const { s } = farm();
     const p = findPlayer(s);
     assert.ok(p);
     const [x, y] = p!;
+    assert.equal(s.tags[y][x]?.ent, 'player');
     const out = computeFrame(s, 0);
-    assert.equal(out[y][x].ch, '☻');
+    assert.equal(out[y - 2][x].ch, '@');
+    assert.ok(out[y][x].ch !== ' ');
   });
 
   test('a dialog drawn over the map clears the map tags under it', () => {
