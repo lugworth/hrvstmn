@@ -258,6 +258,7 @@ export class Game {
   npc_pos: Record<string, [number, number]> = {};
   npc_face: Record<string, 'up' | 'down' | 'left' | 'right'> = {};
   fx: { kind: 'dust' | 'sparkle' | 'splash' | 'coin'; map: string; x: number; y: number; born: number; life: number }[] = [];
+  wetness: Record<string, number> = {};
   mine_type: 'spring' | 'lake' = 'spring';
   mine_floor: number = 0;
   max_spring_floor: number = 0;
@@ -411,6 +412,7 @@ export class Game {
     this.npc_pos = {};
     this.npc_face = {};
     this.fx = [];
+    this.wetness = { farm: 0, town: 0, mountain: 0, beach: 0 };
     this.mine_type = 'spring';
     this.mine_floor = 0;
     this.max_spring_floor = 0;
@@ -4382,6 +4384,10 @@ export class Game {
     }
 
     this.weather = this.tomorrow;
+    for (const map of ['farm', 'town', 'mountain', 'beach']) {
+      const wet = this.weather === 'Rain' || this.weather === 'Typhoon' ? 1 : (this.wetness[map] || 0) * 0.55;
+      this.wetness[map] = wet < 0.06 ? 0 : wet;
+    }
     let [nd, ns] = [this.day + 1, this.season];
     if (nd > 30) {
       nd = 1;
@@ -4669,6 +4675,7 @@ export class Game {
       minutes: this.minutes,
       season: this.season,
       weather: this.map.indoor ? 'Sunny' : this.weather,
+      wetness: this.wetness[this.mapname] || 0,
       zoom: 1,
       reducedMotion: s.reducedMotion,
       view: { x: 0, y: 1, w: vw, h: vh },

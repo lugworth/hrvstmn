@@ -54,6 +54,8 @@ export type RenderCtx = {
   /** 0 Spring, 1 Summer, 2 Fall, 3 Winter. */
   season: number;
   weather: string;
+  /** 0 = dry ground, 1 = fresh rain. Persists and fades after the rain stops. */
+  wetness?: number;
   /** Screen cells per map tile horizontally. Always 1 now that large tiles are gone. */
   zoom: number;
   /** OS-level or user-chosen reduced motion. Freezes ambient animation. */
