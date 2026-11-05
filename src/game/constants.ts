@@ -2512,6 +2512,7 @@ export const HELP: string[] = [
   "RUCKSACK  i   hold/eat/wrap items, equip Gems, blow Whistle",
   "SUMMARY   m   Ranch Summary, Memo, Sprites, Fish & Collectibles",
   "TODAY     y   daily checklist: crops, animals, shipping, events",
+  "MINIMAP   n   toggle the corner map overlay",
   "VILLAGERS r   hearts, favourite gifts and usual whereabouts",
   "DIARY     esc Save/Load anywhere (2 slots), Teleport, Status",
   "",

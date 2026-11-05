@@ -264,6 +264,7 @@ export class Game {
   max_lake_floor: number = 0;
   ladder: [number, number] | null = null;
   mapname: string = 'house';
+  show_minimap: boolean = false;
   px: number = 1;
   py: number = 2;
   face: [number, number] = [0, -1];
@@ -417,6 +418,7 @@ export class Game {
     this.max_lake_floor = 0;
     this.ladder = null;
     this.mapname = 'house';
+    this.show_minimap = false;
     [this.px, this.py] = HOUSE_WAKE;
     this.face = [0, -1];
     this.cam_x = null;
@@ -801,6 +803,9 @@ export class Game {
       }
     } else if (k === 'y' || k === 'Y') {
       await this.today_panel();
+    } else if (k === 'n' || k === 'N') {
+      this.show_minimap = !this.show_minimap;
+      this.msg(`Minimap ${this.show_minimap ? 'shown' : 'hidden'}.`, '0C');
     } else if (k === 'r' || k === 'R') {
       await this.relationships();
     } else if (k === '?') {
@@ -4671,6 +4676,7 @@ export class Game {
     };
     this.draw_topbar(W);
     this.draw_map(0, 1, vw, vh);
+    if (this.show_minimap) this.draw_minimap(vw, vh);
     for (let y = 1; y < H - 4; y++) {
       s.put(vw, y, '|', '01');
     }
@@ -4858,6 +4864,56 @@ export class Game {
         }
       }
     }
+  }
+
+  draw_minimap(vw: number, vh: number): void {
+    if (vw < 30 || vh < 12) return;
+    const s = this.scr;
+    const m = this.map;
+    const gw = Math.min(19, vw - 4);
+    const gh = Math.min(7, vh - 6);
+    const bx = vw - gw - 3;
+    const by = 2;
+    if (bx < 0 || by + gh + 2 > s.h) return;
+    s.box(bx, by, gw + 2, gh + 2, '0C', '00', 'Map');
+    // Keep the map's aspect ratio and include its outer edges. Small interiors stay
+    // 1:1; large outdoor maps sample the full extent without dropping the last row/column.
+    const drawW = Math.min(gw, m.w);
+    const drawH = Math.min(gh, m.h);
+    const offX = Math.floor((gw - drawW) / 2);
+    const offY = Math.floor((gh - drawH) / 2);
+    const atX = (gx: number) => (m.w <= 1 ? 0 : Math.round((gx * (m.w - 1)) / Math.max(1, drawW - 1)));
+    const atY = (gy: number) => (m.h <= 1 ? 0 : Math.round((gy * (m.h - 1)) / Math.max(1, drawH - 1)));
+    const glyph = (t: string | undefined): [string, string] => {
+      if (!t || t === 'void') return [' ', '00'];
+      if (t === 'water' || t === 'fountain' || t === 'spring' || t === 'pond') return ['≈', '0A'];
+      if (t === 'path' || t === 'bridge') return ['·', '03'];
+      if (t === 'tree') return ['♣', '0B'];
+      if (t === 'field') return ['▒', '04'];
+      if (t === 'cliff') return ['▲', '08'];
+      if (t === 'door' || t === 'exit') return ['+', '09'];
+      if (t === 'roof' || t === 'wall' || t === 'iwall' || t === 'mwall') return ['▮', '09'];
+      if (t === 'flower') return ['*', '0A'];
+      return [' ', '02'];
+    };
+    for (let gy = 0; gy < drawH; gy++) {
+      for (let gx = 0; gx < drawW; gx++) {
+        const tx = atX(gx);
+        const ty = atY(gy);
+        const [ch, col] = glyph(m.t[ty]?.[tx]);
+        s.put(bx + 1 + offX + gx, by + 1 + offY + gy, ch, col, '00');
+      }
+    }
+    const mark = (wx: number, wy: number, ch: string, col: string) => {
+      const gx = offX + Math.round((wx * (drawW - 1)) / Math.max(1, m.w - 1));
+      const gy = offY + Math.round((wy * (drawH - 1)) / Math.max(1, m.h - 1));
+      if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) return;
+      s.put(bx + 1 + gx, by + 1 + gy, ch, col, '00', true);
+    };
+    for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
+      if (NPCS[n]?.where?.[0] === this.mapname) mark(x, y, 'o', '0C');
+    }
+    mark(this.px, this.py, '@', '0D');
   }
 
   draw_side(x: number, y: number, w: number): void {

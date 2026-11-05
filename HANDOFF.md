@@ -97,7 +97,7 @@ Inside `computeFrame`: style each tagged cell -> Isotope neon-on-black pass -> g
 5. **Reuse existing passes.** Don't add a parallel system when a pass already does the job.
 6. **The renderer is pure presentation.** `enhanced.ts` must never change game state.
 7. **Every visual feature gets a `computeFrame` test**, including negative cases. Engine bugs get a regression test.
-8. **Hotkeys:** arrows/WASD/hjkl move; `space/z` use tool; `x/e/enter` interact; `tab`/Shift+Tab cycle tools; `1-6` pick tools; `i` rucksack; `m` memo; `y` Today; `r` Villager Notes; `H` horse whistle; `b` bell; `t` teleport stone if owned; `?` help; `esc` diary/pause; `Q` quit. `v` is intentionally unbound now that styles are fixed.
+8. **Hotkeys:** arrows/WASD/hjkl move; `space/z` use tool; `x/e/enter` interact; `tab`/Shift+Tab cycle tools; `1-6` pick tools; `i` rucksack; `m` memo; `y` Today; `n` minimap; `r` Villager Notes; `H` horse whistle; `b` bell; `t` teleport stone if owned; `?` help; `esc` diary/pause; `Q` quit. `v` is intentionally unbound now that styles are fixed.
 9. **Commit/PR style:** conventional lower-case titles (`feat: ...`, `fix: ...`), PR title = commit title, bullet body describing player-visible changes.
 
 ## Decisions and constraints
