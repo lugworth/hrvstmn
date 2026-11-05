@@ -16,6 +16,8 @@ export type OutCell = {
   bold: boolean;
   glow?: string;
   glowR?: number;
+  /** A small second glyph in its own colour on the upper right of the cell (fruit on a tree): a two-tone tile. */
+  detail?: { ch: string; fg: string };
   /** Lettering: always drawn as its own glyph, never swapped for a high-res texture. */
   plain?: boolean;
   /** Soft round backing disc behind a creature: fill and rim colours. */
@@ -136,6 +138,7 @@ function snapFrame(frame: OutCell[][]) {
       if (o.token) o.token = toIsotope(o.token);
       if (o.rim) o.rim = toIsotope(o.rim);
       if (o.foamCol) o.foamCol = toIsotope(o.foamCol);
+      if (o.detail) o.detail = { ch: o.detail.ch, fg: toIsotope(o.detail.fg) };
     }
   }
 }
@@ -243,6 +246,7 @@ function monochrome(out: OutCell[][], boxes: Screen['boxes'], tone?: Tone) {
         }
       }
       o.bg = toned(o.bg, t);
+      if (o.detail) o.detail = { ch: o.detail.ch, fg: neon(o.detail.fg, 0.35) };
       if (o.token) o.token = toned(o.token, t);
       if (o.foamCol) o.foamCol = toned(o.foamCol, t);
       if (o.accent) {
@@ -605,8 +609,9 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       else if (!dn || dn.t !== 'tree') fgc = mix(fgc, '#000000', 0.32);
       // seasonal accents: spring blossom, summer fruit, winter snow on the tips
       const acc = hash(wx * 2, wy, 41);
-      if (th.blossom && acc < 0.12) return { ch: '❀', fg: pick(th.blossom, hash(wx, wy, 42)), bg, bold: true, accent: true };
-      if (th.fruit && acc < 0.05) return { ch: '•', fg: th.fruit, bg, bold: true, accent: true };
+      // two-tone canopies: the tree stays grey, the blossom or fruit is a small colour detail
+      if (th.blossom && acc < 0.12) return { ch, fg: fgc, bg, bold: true, detail: { ch: '✿', fg: pick(th.blossom, hash(wx, wy, 42)) } };
+      if (th.fruit && acc < 0.07) return { ch, fg: fgc, bg, bold: true, detail: { ch: '●', fg: th.fruit } };
       if (th.leaves && acc < 0.18) return { ch, fg: fgc, bg, bold: true, accent: true }; // a few turning leaves
       if (th.snow && acc < 0.3) fgc = '#eef4fc';
       // summer canopies are fuller: an extra leafy glyph now and then
@@ -1477,31 +1482,99 @@ export function lightning(t: number): boolean {
 
 const GROUND = new Set(['grass', 'field', 'path', 'sand', 'flower']);
 
+// ---- shape-matched edge glyphs
+// After Alex Harri's "ASCII characters are not pixels": a glyph is described by how much ink
+// falls in six sampling circles (two staggered columns of three), and an edge cell picks the
+// glyph whose ink best matches how far the neighbouring ground reaches into it.
+const EDGE_SAMPLES: [number, number][] = [[0.27, 0.22], [0.73, 0.18], [0.27, 0.52], [0.73, 0.48], [0.27, 0.82], [0.73, 0.78]];
+const EDGE_SHAPES: Record<string, (u: number, v: number) => boolean> = {
+  '▀': (u, v) => v < 0.5, '▄': (u, v) => v >= 0.5, '▌': (u) => u < 0.5, '▐': (u) => u >= 0.5,
+  '▘': (u, v) => u < 0.5 && v < 0.5, '▝': (u, v) => u >= 0.5 && v < 0.5, '▖': (u, v) => u < 0.5 && v >= 0.5, '▗': (u, v) => u >= 0.5 && v >= 0.5,
+  '▛': (u, v) => !(u >= 0.5 && v >= 0.5), '▜': (u, v) => !(u < 0.5 && v >= 0.5), '▙': (u, v) => !(u >= 0.5 && v < 0.5), '▟': (u, v) => !(u < 0.5 && v < 0.5),
+  '◤': (u, v) => u + v < 1, '◥': (u, v) => v < u, '◣': (u, v) => v > u, '◢': (u, v) => u + v > 1,
+};
+/** Shape vectors: the share of each sampling circle (radius 0.2) covered by the glyph's ink. */
+const EDGE_VECTORS: [string, number[]][] = Object.entries(EDGE_SHAPES).map(([ch, inside]) => [
+  ch,
+  EDGE_SAMPLES.map(([cu, cv]) => {
+    let hit = 0;
+    let n = 0;
+    for (let a = -1; a <= 1; a += 0.25) {
+      for (let b = -1; b <= 1; b += 0.25) {
+        if (a * a + b * b > 1) continue;
+        n++;
+        if (inside(cu + a * 0.2, cv + b * 0.2)) hit++;
+      }
+    }
+    return hit / n;
+  }),
+]);
+EDGE_VECTORS.push(['░', EDGE_SAMPLES.map(() => 0.25)], [' ', EDGE_SAMPLES.map(() => 0)]);
+
+/**
+ * Best glyph for an edge cell, given which of its eight neighbours ([dy+1][dx+1]) are the
+ * other ground. Coverage falls off with distance from each neighbour; a contrast curve
+ * sharpens it before the nearest-shape match.
+ */
+export function edgeGlyph(occ: boolean[][]): string {
+  const want = EDGE_SAMPLES.map(([u, v]) => {
+    let f = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if ((dx || dy) && occ[dy + 1][dx + 1]) {
+          const d = Math.hypot(u - (0.5 + dx), v - (0.5 + dy));
+          f = Math.max(f, Math.min(1, Math.max(0, (1.4 - d) / 0.6)));
+        }
+      }
+    }
+    return f;
+  });
+  const top = Math.max(...want);
+  if (top <= 0) return ' ';
+  const sharp = want.map((w) => (w / top) ** 1.6 * top); // global contrast enhancement
+  let best = ' ';
+  let bestD = Infinity;
+  for (const [ch, vec] of EDGE_VECTORS) {
+    let d = 0;
+    for (let k = 0; k < 6; k++) d += (vec[k] - sharp[k]) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = ch;
+    }
+  }
+  return best;
+}
+
 function blendGroundEdges(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number) {
-  // A 16-colour palette has no in-between hues, so borders are dithered (the classic
-  // limited-palette technique): the softer ground (grass over soil, soil over path)
-  // creeps into its neighbour as a light shade pattern in its own colour.
+  // A 16-colour palette has no in-between hues, so where two grounds meet, the softer one
+  // (grass over soil, soil over path) reaches into its neighbour as a shape-matched block glyph
+  // in its own colour: straight edges get half blocks, corners get quadrants or diagonals.
   const rank: Record<string, number> = { grass: 3, flower: 3, field: 2, sand: 1, path: 0 };
   const base = out.map((r) => r.map((o) => o.bg));
-  const dirs: [number, number, string][] = [
-    [0, -1, '▀'],
-    [0, 1, '▄'],
-    [-1, 0, '▌'],
-    [1, 0, '▐'],
-  ];
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !GROUND.has(tag.t) || tag.k || out[y][x].ch !== ' ') continue;
-      if (hash((tag.wx ?? x) * 2, tag.wy ?? y, 61) > 0.55) continue; // ragged, not a solid band
-      for (const [dx, dy, edge] of dirs) {
-        const n = tags[y + dy]?.[x + dx];
-        if (n && n.t !== 'ui' && GROUND.has(n.t) && !n.k && rank[n.t] > rank[tag.t]) {
-          const solid = hash((tag.wx ?? x) * 2 + dx, (tag.wy ?? y) + dy, 62) < 0.34;
-          out[y][x] = { ...out[y][x], ch: solid ? edge : '░', fg: base[y + dy][x + dx] };
-          break;
+      if (hash((tag.wx ?? x) * 2, tag.wy ?? y, 61) > 0.7) continue; // ragged, not a solid band
+      const occ = [[false, false, false], [false, false, false], [false, false, false]];
+      let fg = '';
+      let fgRank = -1;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const n = (dx || dy) ? tags[y + dy]?.[x + dx] : null;
+          if (!n || n.t === 'ui' || !GROUND.has(n.t) || n.k || rank[n.t] <= rank[tag.t]) continue;
+          occ[dy + 1][dx + 1] = true;
+          // the colour comes from the strongest side neighbour (diagonals only if nothing else)
+          const r = rank[n.t] + (dx && dy ? 0 : 0.5);
+          if (r > fgRank) {
+            fgRank = r;
+            fg = base[y + dy][x + dx];
+          }
         }
       }
+      if (fgRank < 0) continue;
+      const ch = edgeGlyph(occ);
+      if (ch !== ' ') out[y][x] = { ...out[y][x], ch, fg };
     }
   }
 }
@@ -1758,7 +1831,7 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
         p.ch !== n.ch || p.fg !== n.fg || p.bg !== n.bg || p.bold !== n.bold ||
         p.glow !== n.glow || p.glowR !== n.glowR || p.token !== n.token || p.rim !== n.rim ||
         p.plain !== n.plain || p.ui !== n.ui || p.accent !== n.accent || p.seed !== n.seed ||
-        p.foam !== n.foam || p.foamCol !== n.foamCol
+        p.foam !== n.foam || p.foamCol !== n.foamCol || p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg
       ) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
@@ -1930,6 +2003,8 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
     const row = frame[y];
     for (let x = X0; x < X1; x++) {
       const o = row[x];
+      // two-tone cells: the detail glyph sits small on the upper right, drawn with the batch
+      if (o.detail) mini(x * cw + cw * 0.48, y * ch + ch * 0.3, o.detail.ch, o.detail.fg, 1, true);
       if (o.ch === ' ') continue;
       const px = x * cw;
       const py = y * ch;
@@ -2052,6 +2127,6 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
   // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '');
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '');
   return s;
 }

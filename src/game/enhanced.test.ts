@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -314,7 +314,7 @@ describe('computeFrame', () => {
     for (let y = 1; y < 20; y++) for (let x = 25; x < 50; x++) s.tag(x, y, { t: 'field', wx: x, wy: y });
     const out = computeFrame(s, 0);
     const edge = [5, 6, 7, 8, 9, 10, 11, 12].map((y) => out[y][25]);
-    assert.ok(edge.some((o) => o.ch === '░'), 'soil next to grass is dithered with the grass colour');
+    assert.ok(edge.some((o) => o.ch === '▌'), 'soil next to grass takes a shape-matched half block in the grass colour');
   });
 
   test('every output colour comes from the Isotope ramps', () => {
@@ -811,6 +811,36 @@ describe('computeFrame', () => {
     assert.deepEqual(shakeOffset({ age: 0.13, strength: 1 }), [0, 0], 'light hits are shorter');
     assert.deepEqual(shakeOffset({ age: 0.02, strength: 2 }, true), [0, 0]);
     assert.deepEqual(shakeOffset(undefined), [0, 0]);
+  });
+
+  test('edge cells pick the block glyph whose shape matches where the other ground lies', () => {
+    const occ = (p: string) => { const c = p.replace(/\s/g, ''); return [[c[0] === '#', c[1] === '#', c[2] === '#'], [c[3] === '#', false, c[5] === '#'], [c[6] === '#', c[7] === '#', c[8] === '#']]; };
+    assert.equal(edgeGlyph(occ('### ... ...')), '▀');
+    assert.equal(edgeGlyph(occ('... ... ###')), '▄');
+    assert.equal(edgeGlyph(occ('#.. #.. #..')), '▌');
+    assert.equal(edgeGlyph(occ('..# ..# ..#')), '▐');
+    assert.equal(edgeGlyph(occ('### #.. #..')), '▛', 'an inside corner');
+    assert.equal(edgeGlyph(occ('..# ..# ###')), '▟');
+    assert.equal(edgeGlyph(occ('#.. ... ...')), '▘', 'a diagonal neighbour only reaches a corner');
+    assert.equal(edgeGlyph(occ('... ... ...')), ' ');
+  });
+
+  test('two-tone trees: grey canopy with a small colour blossom or fruit', () => {
+    const trees = (season: number) => {
+      const s = scene({ season });
+      for (let y = 2; y < 18; y++) for (let x = 2; x < 48; x++) { s.put(x, y, 'T', '0B', '00', true); s.tag(x, y, { t: 'tree', wx: x, wy: y }); }
+      return computeFrame(s, 0).slice(2, 18).flatMap((r) => r.slice(2, 48));
+    };
+    const spring = trees(0).filter((o) => o.detail);
+    assert.ok(spring.length > 20);
+    for (const o of spring) {
+      assert.equal(o.detail!.ch, '✿');
+      assert.ok(!o.accent, 'the tree itself stays grey');
+    }
+    const pink = spring.filter((o) => { const [r, g, b] = hexToRgb(o.detail!.fg); return !(r === g && g === b); });
+    assert.ok(pink.length > spring.length / 2, 'most blossom keeps its colour (the palest is white)');
+    assert.ok(trees(1).some((o) => o.detail?.ch === '●'), 'summer fruit');
+    assert.equal(trees(3).filter((o) => o.detail).length, 0, 'bare in winter');
   });
 
   test('hash is deterministic and in range', () => {
