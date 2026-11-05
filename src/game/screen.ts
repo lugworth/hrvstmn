@@ -1,4 +1,5 @@
 // Terminal screen buffer and async input handling for HRVSTMN
+import { COMPACT_MIN_COLS, MIN_ROWS } from './compact';
 
 export type Cell = [char: string, fg: string, bg: string, bold: boolean];
 
@@ -108,8 +109,9 @@ export class Screen {
   }
 
   setSize(w: number, h: number) {
-    this.w = Math.max(80, Math.min(160, w));
-    this.h = Math.max(24, Math.min(50, h));
+    // Phones get the compact layout down to COMPACT_MIN_COLS (see compact.ts).
+    this.w = Math.max(COMPACT_MIN_COLS, Math.min(160, w));
+    this.h = Math.max(MIN_ROWS, Math.min(50, h));
     this.clear();
   }
 

@@ -209,6 +209,12 @@ describe('computeFrame', () => {
     assert.equal(computeFrame(s, 0)[5][60].ch, '♥');
   });
 
+  test('HUD icons stay hidden under dialogs drawn over them', () => {
+    const s = scene({ icons: [{ x: 60, y: 5, icon: 'stamina' }] });
+    s.box(55, 3, 20, 6, '0D', '00', 'Notes');
+    assert.equal(computeFrame(s, 0)[5][60].ch, ' ');
+  });
+
   test('tool target highlight survives styling', () => {
     const plain = computeFrame(scene(), 0)[6][6].bg;
     const s = scene();
