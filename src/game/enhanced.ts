@@ -796,6 +796,26 @@ export function computeFrame(
     out[y] = row;
   }
 
+  // ---- colourblind-safe state cues: shape as well as colour
+  if (ctx?.cues) {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const tag = tags[y][x];
+        const o = out[y][x];
+        if (!tag || tag.t === 'ui') continue;
+        if ((tag.k || '').startsWith('crop:ripe')) {
+          o.ch = '!';
+          o.plain = true;
+          o.seed = undefined;
+        } else if (tag.k === 'soil:wet') {
+          o.ch = '≈';
+          o.plain = true;
+          o.seed = undefined;
+        }
+      }
+    }
+  }
+
   // ---- Isotope Dark look: black-leaning grounds, neon glyphs (before lighting)
   if (ctx) {
     for (let y = 0; y < H; y++) {
