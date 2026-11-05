@@ -12,6 +12,7 @@ An ASCII tribute to *Harvest Moon: Friends of Mineral Town*, rendered in the bas
     - **Mineral Town Museum**: donate fish, ore, forage and crops, complete the collection book, and earn milestone rewards from the curator.
   - **Rose Square request board**: villagers post timed requests for seasonal crops, forage and fish; deliver them for gold and friendship.
   - **Achievements & Journal**: 14 milestone goals tied to shipping, fishing, mining, museum donations, requests, friendship, festivals, family and more.
+  - **Farm Mastery**: farming, foraging, fishing, mining and ranching earn XP and rank rewards from Novice to Legend.
   - Mountain & Mines: forage wild herbs, bamboo shoots, mushrooms, and delve through 10 mine floors for ores and precious gems.
   - House expansions: carpentry upgrades (kitchen, extension, bathroom, big bed, coop expansion) and cooking with utensils and recipes.
   - Seasonal festivals: New Year's Day, Goddess Festival, Chicken Sumo, Egg Hunt, Fireworks, Harvest Festival, and more.
