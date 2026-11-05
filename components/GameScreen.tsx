@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Screen, Cell } from '@/src/game/screen';
 import { Game } from '@/src/game/engine';
 import { PALETTE } from '@/src/game/constants';
-import { computeFrame, drawFrame, frameSignature } from '@/src/game/enhanced';
+import { computeFrame, drawFrame, frameSignature, frameDirtyRect, type OutCell } from '@/src/game/enhanced';
 
 const FONT = '"HRVSTMN Mono", "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace';
 const MIN_COLS = 80;
@@ -205,6 +205,7 @@ export default function GameScreen() {
     }
 
     let prevBuf: Cell[][] | null = null;
+    let prevFrame: OutCell[][] | null = null;
     let lastSig = '';
 
     const renderEnhanced = () => {
@@ -212,13 +213,17 @@ export default function GameScreen() {
       if (!prevBuf || prevBuf.length !== screen.h || (prevBuf[0] && prevBuf[0].length !== screen.w)) {
         sizeCanvas(screen.w, screen.h);
         prevBuf = screen.buf.map((row) => [...row]);
+        prevFrame = null;
         lastSig = '';
       }
       const frame = computeFrame(screen, screen.reducedMotion ? 0 : performance.now() / 1000);
       const sig = `${screen.hires ? 'h' : 'p'}:${frameSignature(frame)}`;
       if (sig === lastSig) return;
+      const dirty = frameDirtyRect(prevFrame, frame);
+      if (prevFrame && !dirty) return;
       lastSig = sig;
-      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1, hires: screen.hires });
+      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1, hires: screen.hires }, dirty ?? undefined);
+      prevFrame = frame;
     };
 
     screen.onRender = () => {
@@ -228,6 +233,7 @@ export default function GameScreen() {
         return;
       }
       lastSig = '';
+      prevFrame = null;
       if (!prevBuf || prevBuf.length !== screen.h || (prevBuf[0] && prevBuf[0].length !== screen.w)) {
         sizeCanvas(screen.w, screen.h);
         prevBuf = screen.buf.map((row) => [...row]);
@@ -269,6 +275,7 @@ export default function GameScreen() {
         .then(() => {
           layout();
           prevBuf = null;
+          prevFrame = null;
           lastSig = '';
           if (screen.onRender) screen.onRender();
         })
