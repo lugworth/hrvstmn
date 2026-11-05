@@ -2,7 +2,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, VisualStyle } from './screen';
-import { Game } from './engine';
+import { Game, MASTERY_DISCIPLINES } from './engine';
 import { computeFrame } from './enhanced';
 
 function farm(style?: VisualStyle) {
@@ -169,5 +169,24 @@ describe('engine + renderer', () => {
     assert.equal(updated.find((a) => a.name === 'Market Regular')?.done, true);
     assert.equal(updated.find((a) => a.name === 'Museum Patron')?.done, true);
     assert.equal(updated.find((a) => a.name === 'Good Neighbor')?.done, true);
+  });
+
+  test('mastery ranks grant one reward per tier', () => {
+    const { g } = farm();
+    assert.equal(g.mastery_level('farming'), 0);
+    const gold = g.gold;
+    g.mastery_add('farming', 25);
+    assert.equal(g.mastery_level('farming'), 1);
+    assert.equal(g.gold, gold + 250);
+    assert.ok(g.mastery_claimed.includes('farming:1'));
+    g.mastery_add('farming', 25);
+    assert.equal(g.gold, gold + 250);
+    assert.equal(g.mastery_level('farming'), 1);
+    g.mastery_add('farming', 25);
+    assert.equal(g.mastery_level('farming'), 2);
+    assert.equal(g.gold, gold + 750);
+    for (const discipline of MASTERY_DISCIPLINES) {
+      assert.ok(discipline in g.mastery_xp);
+    }
   });
 });

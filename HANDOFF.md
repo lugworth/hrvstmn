@@ -48,6 +48,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 - **Mineral Town Museum**: donate fish, ore, forage and crops; a collection book tracks each wing, and milestones pay gold/items. The Curator lives in the museum and can be talked to like any villager.
 - **Rose Square request board**: timed villager requests for seasonal crops, forage or fish. Deliver from the board for gold and +5 friendship; expired requests are cleared each morning.
 - **Achievements & Journal**: 14 derived milestone goals (shipping, fishing, mining, museum, requests, friendship, festivals, upgrades, family, animals, gems) with progress shown from the Diary menu.
+- **Farm Mastery**: five disciplines (farming, foraging, fishing, mining, ranching) earn XP from real actions; ranks run Novice → Adept → Expert → Master → Legend and pay one-time gold/item rewards.
 - Two save slots in `localStorage` (`hrvstmn-save`, `hrvstmn-save-2`), plus **JSON save export/import** from the Diary menu.
 - **Today's Plan (`Y`)**: date, weather, tomorrow's forecast, shipping-bin value and 5 PM cutoff, dry crops, hungry animals, ready milk/wool/eggs, birthdays, festivals, and a stamina-aware plan line.
 - **Villager Notes (`R`)**: every NPC's hearts, favourite gifts, and usual whereabouts, paginated safely without splitting a villager across pages.

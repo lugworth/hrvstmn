@@ -119,6 +119,30 @@ export interface VillagerRequest {
   deadline: number;
 }
 
+export const MASTERY_DISCIPLINES = ['farming', 'foraging', 'fishing', 'mining', 'ranching'] as const;
+export type MasteryDiscipline = (typeof MASTERY_DISCIPLINES)[number];
+export const MASTERY_RANKS = [
+  { name: 'Novice', xp: 0 },
+  { name: 'Adept', xp: 25 },
+  { name: 'Expert', xp: 75 },
+  { name: 'Master', xp: 175 },
+  { name: 'Legend', xp: 350 },
+] as const;
+export const MASTERY_LABELS: Record<MasteryDiscipline, string> = {
+  farming: 'Farming',
+  foraging: 'Foraging',
+  fishing: 'Fishing',
+  mining: 'Mining',
+  ranching: 'Ranching',
+};
+export const MASTERY_REWARD_ITEMS: Record<MasteryDiscipline, string> = {
+  farming: 'Turnip Seeds',
+  foraging: 'Black Grass',
+  fishing: 'Large Fish',
+  mining: 'Copper',
+  ranching: 'Chicken Feed',
+};
+
 export class Game {
   [key: string]: any;
 
@@ -224,6 +248,8 @@ export class Game {
   requests: VillagerRequest[] = [];
   next_request_id: number = 1;
   requests_done: number = 0;
+  mastery_xp: Record<string, number> = {};
+  mastery_claimed: string[] = [];
 
   prayed: boolean = false;
   fest_wins: string[] = [];
@@ -259,6 +285,7 @@ export class Game {
     'goddess_jewels', 'kappa_jewels', 'truth_jewels', 'vase_flower', 'makers',
     'museum', 'museum_rewards',
     'requests', 'next_request_id', 'requests_done',
+    'mastery_xp', 'mastery_claimed',
     'fest_wins', 'house_flags', 'project', 'max_spring_floor', 'max_lake_floor',
     // barn animals, and today's once-per-day flags (a mid-day save/load must not reset them)
     'animals', 'talked', 'gifted', 'honey_picked', 'prayed', 'bathed', 'fireplace_lit',
@@ -373,6 +400,8 @@ export class Game {
     this.requests = [];
     this.next_request_id = 1;
     this.requests_done = 0;
+    this.mastery_xp = Object.fromEntries(MASTERY_DISCIPLINES.map((d) => [d, 0]));
+    this.mastery_claimed = [];
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -830,6 +859,7 @@ export class Game {
       'Rucksack (i)',
       'Ranch Summary & Memo (m)',
       'Achievements & Journal',
+      'Farm Mastery',
       'Save Diary — Slot 1',
       'Save Diary — Slot 2',
       'Load Diary — Slot 1',
@@ -857,6 +887,8 @@ export class Game {
       await this.ranch_summary();
     } else if (choice === 'Achievements & Journal') {
       await this.achievements_page();
+    } else if (choice === 'Farm Mastery') {
+      await this.mastery_page();
     } else if (choice === 'Save Diary — Slot 1') {
       this.save(1);
       this.msg('Saved game in Diary Slot 1.', '0B');
@@ -1384,6 +1416,7 @@ export class Game {
       return;
     }
     const f = this.mine_floor;
+    this.mastery_add('mining');
     // Check if Lake Mine floor has a Cursed Tool
     if (this.mine_type === 'lake' && CURSED_TOOL_FLOORS[f]) {
       const cTool = CURSED_TOOL_FLOORS[f];
@@ -1550,6 +1583,7 @@ export class Game {
       this.give(caught);
       if (ITEMS[caught]?.[2] === 'fish') {
         this.fish_caught[caught] = (this.fish_caught[caught] || 0) + 1;
+        this.mastery_add('fishing');
       }
       this.msg(`You caught a ${caught}!`, '0C');
     } else if (result === 'early') {
@@ -1667,6 +1701,7 @@ export class Game {
         } else {
           delete this.crops[pKey];
         }
+        this.mastery_add('farming');
       } else {
         this.msg(`${crop}: ${days - age} more day${days - age > 1 ? 's' : ''} to go.${this.wet.has(pKey) ? '' : ' (needs water)'}`);
       }
@@ -1678,6 +1713,7 @@ export class Game {
     if (pKey in fr) {
       const item = py_pop(fr, pKey);
       this.give(item);
+      this.mastery_add('foraging');
       this.msg(`You picked up ${item}.`, '0B');
       return;
     }
@@ -2212,6 +2248,7 @@ export class Game {
           const eggType = getEggQuality(this.chicken_aff, this.chicken_fest_won, this.outdoor_hours, py_rng().random());
           this.give(eggType, this.eggs);
           this.msg(`Collected ${this.eggs} x ${eggType}!`, '07');
+          this.mastery_add('ranching');
           this.eggs = 0;
         } else {
           await this.say('No eggs waiting right now.', null);
@@ -2390,6 +2427,7 @@ export class Game {
           a.talked = true;
           a.aff = Math.min(100, a.aff + 2);
           const sound = a.kind === 'cow' ? 'Moooo!' : 'Baaaa!';
+          this.mastery_add('ranching');
           await this.say(`${sound} ${name} seems happy to see you.`, name);
         }
       } else if (act === 'Brush') {
@@ -2399,6 +2437,7 @@ export class Game {
           a.brushed = true;
           a.aff = Math.min(100, a.aff + 3);
           this.msg(`You brushed ${name}. ${name} looks pleased!`, '0B');
+          this.mastery_add('ranching');
           await this.spend(1);
         }
       } else if (act === 'Milk') {
@@ -2410,6 +2449,7 @@ export class Game {
           const item = getMilkQuality(a.aff, Boolean(a.wonFestival), this.outdoor_hours, py_rng().random());
           this.give(item);
           this.msg(`You milked ${name}: ${item}!`, '07');
+          this.mastery_add('ranching');
           await this.spend(2);
         }
       } else if (act === 'Shear') {
@@ -2422,6 +2462,7 @@ export class Game {
           const item = getWoolQuality(a.aff, Boolean(a.wonFestival), this.outdoor_hours, py_rng().random());
           this.give(item);
           this.msg(`You sheared ${name}: ${item}!`, '07');
+          this.mastery_add('ranching');
           await this.spend(2);
         }
       } else if (act.startsWith('Use Miracle Potion')) {
@@ -3553,6 +3594,56 @@ export class Game {
     }
     pages.push(page);
     await this.show_pages('Achievements & Journal', pages);
+  }
+
+  mastery_level(discipline: MasteryDiscipline): number {
+    const xp = this.mastery_xp[discipline] || 0;
+    let level = 0;
+    for (let i = 0; i < MASTERY_RANKS.length; i++) {
+      if (xp >= MASTERY_RANKS[i].xp) level = i;
+    }
+    return level;
+  }
+
+  mastery_add(discipline: MasteryDiscipline, amount: number = 1): void {
+    if (!MASTERY_DISCIPLINES.includes(discipline)) return;
+    const before = this.mastery_level(discipline);
+    this.mastery_xp[discipline] = (this.mastery_xp[discipline] || 0) + amount;
+    const after = this.mastery_level(discipline);
+    for (let level = before + 1; level <= after; level++) {
+      const key = `${discipline}:${level}`;
+      if (this.mastery_claimed.includes(key)) continue;
+      this.mastery_claimed.push(key);
+      this.mastery_reward(discipline, level);
+    }
+  }
+
+  mastery_reward(discipline: MasteryDiscipline, level: number): void {
+    const gold = [0, 250, 500, 1000, 2000][level] || 0;
+    const item = MASTERY_REWARD_ITEMS[discipline];
+    const qty = level >= 3 ? 2 : 1;
+    this.gold += gold;
+    this.give(item, qty);
+    this.msg(
+      `Mastery: ${MASTERY_LABELS[discipline]} reached ${MASTERY_RANKS[level].name}! +${gold}G and ${qty} × ${item}.`,
+      '0C'
+    );
+  }
+
+  async mastery_page(): Promise<void> {
+    const lines: string[] = ['  Keep doing a discipline to earn XP and rank rewards.'];
+    for (const discipline of MASTERY_DISCIPLINES) {
+      const level = this.mastery_level(discipline);
+      const xp = this.mastery_xp[discipline] || 0;
+      const next = MASTERY_RANKS[level + 1];
+      const progress = next ? `${Math.min(xp, next.xp)}/${next.xp} XP` : `${xp} XP (max)`;
+      lines.push(
+        `  ${MASTERY_LABELS[discipline].padEnd(9)} ${MASTERY_RANKS[level].name.padEnd(7)} ${progress}`
+      );
+    }
+    lines.push('');
+    lines.push('  Rewards: 250G / 500G / 1000G / 2000G plus seeds, forage, fish, ore or feed.');
+    await this.show_pages('Farm Mastery', [lines]);
   }
 
   async ranch_summary(): Promise<void> {
