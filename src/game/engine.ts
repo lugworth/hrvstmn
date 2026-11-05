@@ -1365,7 +1365,9 @@ export class Game {
         const qk = pkey(qx, qy);
         if (objs[qk] === 'weed') {
           delete objs[qk];
-          this.fx_add('debris', qx, qy, 0.45, { stuff: 'plant' });
+          // each cut weed blinks, then scatters leaves after a beat
+          this.fx_add('flash', qx, qy, 0.12);
+          this.fx_add('debris', qx, qy, 0.45, { stuff: 'plant', delay: 0.08 });
           cutCount += 1;
         } else if (this.mapname === 'farm' && this.crops[qk] && this.crops[qk][0] === 'Grass') {
           const [, age] = this.crops[qk];

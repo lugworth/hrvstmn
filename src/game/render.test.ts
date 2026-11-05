@@ -200,6 +200,20 @@ describe('engine + renderer', () => {
     assert.ok(out[cell![1]][cell![0]].accent, 'forage stays in colour on the black-and-white world');
   });
 
+  test('QA: cutting weeds with the sickle blinks each weed before the leaves fly', async () => {
+    const { g } = farm();
+    g.face = [0, 1];
+    const [tx, ty] = g.target();
+    g.objs.farm[`${tx},${ty}`] = 'weed';
+    g.tool = 'Sickle';
+    g.fx = [];
+    await g.use_tool();
+    const at = (k: string) => g.fx.filter((f: { kind: string; x: number; y: number }) => f.kind === k && f.x === tx && f.y === ty);
+    assert.equal(at('flash').length, 1, 'the weed blinks');
+    assert.ok(at('debris')[0]?.delay > 0, 'then scatters after a beat');
+    assert.equal(at('swing').length, 1, 'and the swing shows');
+  });
+
   test('an upgraded tool tags its area-of-effect cells', () => {
     const { s, g } = farm();
     g.levels['Hoe'] = 1;

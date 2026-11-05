@@ -165,10 +165,16 @@ export function hsv([r, g, b]: RGB): [number, number, number] {
 }
 
 /** Greyscale by perceived brightness. */
+const greyCache = new Map<string, string>();
 export function grey(hex: string): string {
+  const hit = greyCache.get(hex);
+  if (hit) return hit;
   const [r, g, b] = hexToRgb(hex);
   const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return rgbToHex([y, y, y]);
+  const out = rgbToHex([y, y, y]);
+  if (greyCache.size > 8192) greyCache.clear();
+  greyCache.set(hex, out);
+  return out;
 }
 
 // A 32x32 blue-noise threshold tile (void-and-cluster, generated offline). Unlike white
@@ -201,7 +207,12 @@ const toneHue = (code: string): RGB => {
 };
 const WARM_TONE = toneHue('09');
 const COOL_TONE = toneHue('0D');
-const tintGrey = (y: number, t: RGB): RGB => [y * (1 - TONE_S + TONE_S * t[0]), y * (1 - TONE_S + TONE_S * t[1]), y * (1 - TONE_S + TONE_S * t[2])];
+/** A grey of luminance `y` leaned toward hue `t`, keeping its luminance (the tint changes hue, not light). */
+const tintGrey = (y: number, t: RGB): RGB => {
+  const c: RGB = [1 - TONE_S + TONE_S * t[0], 1 - TONE_S + TONE_S * t[1], 1 - TONE_S + TONE_S * t[2]];
+  const k = y / (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+  return [Math.min(255, c[0] * k), Math.min(255, c[1] * k), Math.min(255, c[2] * k)];
+};
 // The neutral levels (palette black/white and the grey ramp) and their tinted twins.
 const TONE_LEVELS = [0, ...Array.from({ length: 23 }, (_, i) => ((i + 1) / 24) ** 1.4 * 255), 255];
 const tintHex = (level: number, t: RGB) => rgbToHex(tintGrey(level, t).map(Math.round) as RGB);
@@ -209,13 +220,23 @@ const TONE_HEXES = [...TONE_LEVELS.map((l) => tintHex(l, WARM_TONE)), ...TONE_LE
 const TONE_SET = new Set(TONE_HEXES);
 
 /** Grey, or the tinted twin of the nearest neutral level (an exact ramp colour, so snapping keeps it). */
+const toneCache = [new Map<string, string>(), new Map<string, string>()];
 function toned(hex: string, t: RGB | null): string {
   if (!t) return grey(hex);
+  const cache = toneCache[t === WARM_TONE ? 0 : 1];
+  const hit = cache.get(hex);
+  if (hit) return hit;
   const [r, g, b] = hexToRgb(hex);
   const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  let best = 0;
-  for (const l of TONE_LEVELS) if (Math.abs(l - y) < Math.abs(best - y)) best = l;
-  return tintHex(best, t);
+  // TONE_LEVELS[i] = (i / 24) ** 1.4 * 255, so the nearest level sits next to this index
+  const f = 24 * (y / 255) ** (1 / 1.4);
+  const lo = Math.max(0, Math.min(24, Math.floor(f)));
+  const hi = Math.min(24, lo + 1);
+  const best = Math.abs(TONE_LEVELS[hi] - y) < Math.abs(TONE_LEVELS[lo] - y) ? TONE_LEVELS[hi] : TONE_LEVELS[lo];
+  const out = tintHex(best, t);
+  if (cache.size > 8192) cache.clear();
+  cache.set(hex, out);
+  return out;
 }
 
 type Tone = { warm: number; cool: number; light: Float32Array | null; tags: (CellTag | null)[][] };
@@ -897,7 +918,9 @@ const CREATURE_GLYPH: Record<string, string> = { H: '♞', C: '♉', S: '☁' };
 const BOX: Record<string, string> = { 'box:h': '─', 'box:v': '│', 'box:tl': '╭', 'box:tr': '╮', 'box:bl': '╰', 'box:br': '╯' };
 
 /** Effect colour by tool tier (Cogmind's rule: colour shows strength). Basic to Blessed. */
-export const TIER_COLOURS = ['#d8d8d8', '#ff9933', '#c8d8f0', '#ffd700', '#33ffcc', '#cc00ff', '#ffffff'];
+// Each tier must stay distinct after the Isotope neon snap: dim grey, dim orange, bright white,
+// bright orange, cyan, purple, pink. Copper and gold share a hue, so they differ in brightness.
+export const TIER_COLOURS = ['#8a8a8a', '#a85a10', '#f4f4f4', '#ffb347', '#33ffcc', '#cc00ff', '#ff4db8'];
 const SWING: Record<string, string> = { '1,0': '╲', '-1,0': '╱', '0,-1': '╱', '0,1': '╲' };
 const DEBRIS: Record<string, string[]> = { stone: ['•', '·', '∙', ','], wood: ['╱', '`', '·', ','], plant: ['ʷ', ',', '`', '·'] };
 const DEBRIS_COL: Record<string, string> = { stone: '#b8b8c0', wood: '#c58a4a', plant: '#7ad04a' };
@@ -913,7 +936,9 @@ function drawFx(
   const glyph: Record<string, string> = { dust: '·', sparkle: '*', splash: '≈', coin: '$' };
   const colour: Record<string, string> = { dust: '#d8c8a8', sparkle: '#fff0a0', splash: '#9cc8ff', coin: '#ffd45a' };
   const inView = (x: number, y: number) => x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h && x < W && y < H;
-  for (const f of fx) {
+  // flashes go down first, so the tier-coloured slash and the reward still show over them
+  const ordered = [...fx.filter((f) => f.kind === 'flash'), ...fx.filter((f) => f.kind !== 'flash')];
+  for (const f of ordered) {
     const delay = f.delay ?? 0;
     const p = (f.age - delay) / Math.max(0.01, f.life - delay);
     if (p >= 1 || (p < 0 && f.kind !== 'flash')) continue;
@@ -931,7 +956,7 @@ function drawFx(
       if (!inView(f.x, f.y)) continue;
       const col = TIER_COLOURS[Math.max(0, Math.min(6, f.tier ?? 0))];
       const o = out[f.y][f.x];
-      out[f.y][f.x] = { ...o, ch: SWING[`${f.dir?.[0] ?? 0},${f.dir?.[1] ?? 1}`] ?? '╲', fg: mix(o.bg, col, 1 - p * 0.6), bold: true, glow: col, glowR: 4, accent: true, plain: true };
+      out[f.y][f.x] = { ...o, ch: SWING[`${f.dir?.[0] ?? 0},${f.dir?.[1] ?? 1}`] ?? '╲', fg: mix(col, '#000000', p * 0.5), bold: true, glow: col, glowR: 4, accent: true, plain: true }; // fades on its own, whatever is under it
       continue;
     }
     if (f.kind === 'debris') {
@@ -943,9 +968,10 @@ function drawFx(
       for (let i = 0; i < n; i++) {
         const a = hash(i, f.seed ?? 0, 91) * Math.PI * 2;
         const sp = 0.8 + hash(i, f.seed ?? 0, 92) * 1.4;
-        const x = Math.round(f.x + Math.cos(a) * sp * 2 * p);
-        const y = Math.round(f.y + Math.sin(a) * sp * 0.6 * p - 0.8 * p + 2.2 * p * p);
-        if (!inView(x, y) || out[y][x].token) continue;
+        const r = 0.7 + sp * 2 * p; // bits start just outside the struck cell, so the burst reads at once
+        const x = Math.round(f.x + Math.cos(a) * r);
+        const y = Math.round(f.y + Math.sin(a) * r * 0.6 - 0.8 * p + 2.2 * p * p);
+        if (!inView(x, y) || out[y][x].token || (x === f.x && y === f.y)) continue; // the struck cell keeps its slash
         const o = out[y][x];
         out[y][x] = { ...o, ch: pool[i % pool.length], fg: mix(o.bg, col, 0.95 - p * 0.6), bold: true, glow: undefined, accent: true, plain: true };
       }
@@ -986,9 +1012,10 @@ export function shakeOffset(shake: RenderCtx['shake'], reducedMotion = false): [
   if (!shake || reducedMotion) return [0, 0];
   const life = shake.strength > 1 ? 0.25 : 0.12;
   if (shake.age >= life) return [0, 0];
-  const amp = (shake.strength > 1 ? 4 : 2) * (1 - shake.age / life);
+  // a quick back-and-forth that holds most of its size until the end, then settles
+  const amp = (shake.strength > 1 ? 4 : 2) * (1 - shake.age / life) ** 0.6;
   const k = Math.floor(shake.age * 60);
-  return [Math.round(Math.sin(k * 2.3) * amp), Math.round(Math.cos(k * 1.7) * amp * 0.5)];
+  return [Math.round(amp * (k % 2 ? 1 : -1)), Math.round(amp * 0.5 * ((k >> 1) % 2 ? 1 : -1))];
 }
 
 /**
@@ -1101,7 +1128,9 @@ export function computeFrame(
 
   if (!ctx) {
     if (scr.scene === 'title') {
-      for (const row of out) for (const o of row) o.ui = false;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) out[y][x].ui = boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h); // prompts stay plain text
+      }
       titleScene(out, buf, tags, boxes, t, W, H);
       monochrome(out, boxes);
     }
@@ -1321,35 +1350,51 @@ export function computeFrame(
       const w0 = lr / ls / 255;
       const w1 = lg / ls / 255;
       const w2 = lb / ls / 255;
-      return rgbToHex([
-        n0 + (c[0] * (0.55 + 0.45 * w0) - n0) * s,
-        n1 + (c[1] * (0.55 + 0.45 * w1) - n1) * s,
-        n2 + (c[2] * (0.55 + 0.45 * w2) - n2) * s,
-      ]);
+      // light only ever adds: aim for the brighter of the ambient (which carries the sunset
+      // tint at dusk) and the lamp-lit colour, plus a little of the lamp's own warmth
+      const t0 = Math.max(n0, c[0] * (0.55 + 0.45 * w0)) + 14 * w0;
+      const t1 = Math.max(n1, c[1] * (0.55 + 0.45 * w1)) + 14 * w1;
+      const t2 = Math.max(n2, c[2] * (0.55 + 0.45 * w2)) + 14 * w2;
+      return rgbToHex([n0 + (t0 - n0) * s, n1 + (t1 - n1) * s, n2 + (t2 - n2) * s]);
     };
+    // Each light only touches the cells within its radius (columns count half, cells are tall),
+    // so a town full of lit windows costs lights x area, not lights x screen.
+    const LR = new Float32Array(W * H);
+    const LG = new Float32Array(W * H);
+    const LB = new Float32Array(W * H);
+    const LS = new Float32Array(W * H);
+    for (const L of lights) {
+      // flames flicker a little; each light has its own rhythm
+      const flick = 0.9 + 0.1 * Math.sin(Math.floor(F.t * 8) * 0.9 + L.x * 1.7 + L.y * 2.3);
+      const y0 = Math.max(v.y, Math.floor(L.y - L.r));
+      const y1 = Math.min(v.y + v.h, H, Math.ceil(L.y + L.r) + 1);
+      const x0 = Math.max(v.x, Math.floor(L.x - L.r * 2));
+      const x1 = Math.min(v.x + v.w, W, Math.ceil(L.x + L.r * 2) + 1);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const dx = (x - L.x) * 0.5;
+          const dy = y - L.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d >= L.r) continue;
+          const k = (1 - d / L.r) ** 1.1 * L.k * flick;
+          const i = y * W + x;
+          LR[i] += L.col[0] * k;
+          LG[i] += L.col[1] * k;
+          LB[i] += L.col[2] * k;
+          LS[i] += k;
+        }
+      }
+    }
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
         const o = out[y][x];
-        let lr = 0;
-        let lg = 0;
-        let lb = 0;
-        let ls = 0;
-        for (const L of lights) {
-          const dx = (x - L.x) * 0.5;
-          const dy = y - L.y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d < L.r) {
-            // flames flicker a little; each light has its own rhythm
-            const flick = 0.9 + 0.1 * Math.sin(Math.floor(F.t * 8) * 0.9 + L.x * 1.7 + L.y * 2.3);
-            const k = (1 - d / L.r) ** 1.1 * L.k * flick;
-            lr += L.col[0] * k;
-            lg += L.col[1] * k;
-            lb += L.col[2] * k;
-            ls += k;
-          }
-        }
+        const li = y * W + x;
+        let lr = LR[li];
+        let lg = LG[li];
+        let lb = LB[li];
+        let ls = LS[li];
         // Entities stay a little brighter so the player can always find them.
         const entBoost = tag.ent ? 0.35 : 0;
         const bn = blueNoise(tag.wx ?? x, tag.wy ?? y);
@@ -1513,7 +1558,7 @@ function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['v
       if (land(tags[y][x + 1])) m |= 2;
       if (land(tags[y + 1]?.[x])) m |= 4;
       if (land(tags[y][x - 1])) m |= 8;
-      if (!m) continue;
+      if (!m || m === 15) continue; // a lone tide pool gets no foam box
       // the foam laps: each stretch of shore brightens, fades and breaks on its own beat,
       // so the waterline reads as moving foam rather than a stone kerb
       const lap = 0.5 + 0.5 * Math.sin(T * 2.2 + (tg.wx ?? x) * 0.8 + (tg.wy ?? y) * 1.3);
@@ -1728,7 +1773,7 @@ function blendGroundEdges(out: OutCell[][], tags: (CellTag | null)[][], v: Rende
       }
       if (fgRank < 0) continue;
       const ch = edgeGlyph(occ);
-      if (ch !== ' ') out[y][x] = { ...out[y][x], ch, fg };
+      if (ch !== ' ') out[y][x] = { ...out[y][x], ch, fg: mix(fg, '#ffffff', 0.07) }; // a touch lighter, so the shape reads
     }
   }
 }
