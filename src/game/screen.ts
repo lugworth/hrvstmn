@@ -77,7 +77,9 @@ export class Screen {
   /** Special full-screen scenes the renderer can dress up (currently 'title'). */
   scene: string | null = null;
   /** Rectangles of boxes (dialogs, menus) drawn this frame, top-most last. */
-  boxes: { x: number; y: number; w: number; h: number }[] = [];
+  boxes: { x: number; y: number; w: number; h: number; born?: number }[] = [];
+  /** When each panel first appeared, so menus can ease in once. */
+  private boxAges = new Map<string, number>();
   style: VisualStyle = 'enhanced';
   reducedMotion: boolean = false;
   /** Whether texture cells may use half-size 2x2/3x3 detail glyphs. */
@@ -101,6 +103,10 @@ export class Screen {
   }
 
   clear() {
+    const live = new Set(this.boxes.map((b) => `${b.x},${b.y},${b.w},${b.h}`));
+    for (const key of this.boxAges.keys()) {
+      if (!live.has(key)) this.boxAges.delete(key);
+    }
     const blank: Cell = [' ', '05', '00', false];
     this.buf = Array.from({ length: this.h }, () =>
       Array.from({ length: this.w }, () => [...blank] as Cell)
@@ -154,7 +160,13 @@ export class Screen {
     for (let j = 0; j < h; j++) {
       this.put(x, y + j, ' '.repeat(w), fg, bg);
     }
-    this.boxes.push({ x, y, w, h });
+    const key = `${x},${y},${w},${h}`;
+    let born = this.boxAges.get(key);
+    if (born === undefined) {
+      born = performance.now() / 1000;
+      this.boxAges.set(key, born);
+    }
+    this.boxes.push({ x, y, w, h, born });
     const edge = '+' + '-'.repeat(Math.max(0, w - 2)) + '+';
     this.put(x, y, edge, fg, bg);
     this.put(x, y + h - 1, edge, fg, bg);

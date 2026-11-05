@@ -819,7 +819,7 @@ export function computeFrame(
       titleScene(out, buf, tags, boxes, t, W, H);
       monochrome(out, boxes);
     }
-    decorateBoxes(out, boxes, W, H);
+    decorateBoxes(out, boxes, W, H, t);
     snapFrame(out);
     return out;
   }
@@ -1075,7 +1075,7 @@ export function computeFrame(
   if (!ctx.indoor) worldMargin(out, tags, buf, v, ctx.divX, ctx.divY, boxes);
 
   monochrome(out, boxes);
-  decorateBoxes(out, boxes, W, H);
+  decorateBoxes(out, boxes, W, H, t);
   snapFrame(out);
   return out;
 }
@@ -1499,8 +1499,19 @@ function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][],
 }
 
 /** Dialogs and menus: a raised panel and a soft drop shadow. */
-function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: number) {
+function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: number, t = 0) {
   for (const b of boxes) {
+    const p = t <= 0 || b.born === undefined ? 1 : Math.min(1, Math.max(0, (t - b.born) / 0.11));
+    if (p < 1) {
+      // a short top-down reveal: the panel wipes in instead of popping
+      const reveal = b.y + Math.ceil(b.h * p);
+      for (let y = reveal; y < b.y + b.h && y < H; y++) {
+        for (let x = b.x; x < b.x + b.w && x < W; x++) {
+          if (x < 0 || y < 0) continue;
+          out[y][x] = { ch: ' ', fg: '#000000', bg: '#000000', bold: false };
+        }
+      }
+    }
     for (let y = b.y; y < b.y + b.h && y < H; y++) {
       for (let x = b.x; x < b.x + b.w && x < W; x++) {
         if (y < 0 || x < 0) continue;
