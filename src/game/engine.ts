@@ -113,6 +113,9 @@ import {
   WON_EXCLUSIVE_CROPS,
   BASKET_CAPACITY,
   getBasketTotal,
+  MINE_ELEVATOR_CHECKPOINTS,
+  getMineElevatorFloors,
+  getMineElevatorFee,
 } from './rules';
 
 export interface VillagerRequest {
@@ -1199,16 +1202,29 @@ export class Game {
     }
   }
 
+  mine_elevator_floors(mineType: 'spring' | 'lake'): number[] {
+    const maxF = mineType === 'lake' ? this.max_lake_floor : this.max_spring_floor;
+    return getMineElevatorFloors(maxF, this.goddess_gifts);
+  }
+
   async prompt_mine_entry(mineType: 'spring' | 'lake'): Promise<void> {
     const maxF = mineType === 'lake' ? this.max_lake_floor : this.max_spring_floor;
-    if (maxF >= 10 || this.goddess_gifts >= 30) {
-      const floors = [1, 10, 29, 50, 100, 200, 255].filter((f) => f === 1 || f <= maxF + 20 || this.goddess_gifts >= 30);
+    const floors = this.mine_elevator_floors(mineType);
+    if (floors.length > 1) {
       const sel = await this.menu(
-        `${mineType === 'lake' ? 'Lake Mine' : 'Spring Mine'} Elevator`,
-        floors.map((f) => `Floor B${f}F`)
+        `${mineType === 'lake' ? 'Lake Mine' : 'Spring Mine'} Elevator (Deepest: B${maxF}F)`,
+        floors.map((f) => {
+          const fee = getMineElevatorFee(f);
+          return fee > 0 ? `Floor B${f}F (-${fee} Stamina)` : `Floor B${f}F (Entrance)`;
+        })
       );
       if (sel !== null) {
-        this.enter_mine(floors[sel], mineType);
+        const target = floors[sel];
+        const fee = getMineElevatorFee(target);
+        this.enter_mine(target, mineType);
+        if (fee > 0) {
+          await this.spend(fee);
+        }
       }
     } else {
       this.enter_mine(1, mineType);
@@ -1217,6 +1233,7 @@ export class Game {
 
   enter_mine(floor: number, mineType: 'spring' | 'lake' = 'spring'): void {
     this.mine_type = mineType;
+    const prevMax = mineType === 'spring' ? this.max_spring_floor : this.max_lake_floor;
     this.mine_floor = Math.min(255, floor);
     if (mineType === 'spring') {
       this.max_spring_floor = Math.max(this.max_spring_floor, this.mine_floor);
@@ -1240,7 +1257,15 @@ export class Game {
     this.px = 3;
     this.py = 3;
     this.face = [1, 0];
-    this.msg(`${m.title}. Smash rocks with Hammer or dig soil with Hoe!`, '0C');
+    const isNewCheckpoint =
+      this.mine_floor > prevMax &&
+      this.mine_floor > 1 &&
+      (MINE_ELEVATOR_CHECKPOINTS as readonly number[]).includes(this.mine_floor);
+    if (isNewCheckpoint) {
+      this.msg(`${m.title} — Elevator checkpoint B${this.mine_floor}F unlocked!`, '0A');
+    } else {
+      this.msg(`${m.title}. Smash rocks with Hammer or dig soil with Hoe!`, '0C');
+    }
   }
 
   tool_list(): string[] {
@@ -1855,6 +1880,46 @@ export class Game {
         return;
       }
       await this.say(text, 'Sign');
+    } else if (this.mapname === 'mine' && tile === 'up') {
+      const floors = this.mine_elevator_floors(this.mine_type);
+      if (floors.length > 1) {
+        const opts = [
+          'Exit Mine to Surface',
+          ...floors
+            .filter((f) => f !== this.mine_floor)
+            .map((f) => {
+              const fee = getMineElevatorFee(f);
+              return fee > 0 ? `Elevator to B${f}F (-${fee} Stamina)` : `Elevator to B${f}F (Entrance)`;
+            }),
+        ];
+        const sel = await this.menu(
+          `${this.mine_type === 'lake' ? 'Lake Mine' : 'Spring Mine'} Ladder / Elevator (B${this.mine_floor}F)`,
+          opts
+        );
+        if (sel === 0) {
+          if (this.mine_type === 'lake') {
+            this.warp('mountain', 15, 9, [0, 1]);
+          } else {
+            this.warp('mountain', 52, 5, [0, 1]);
+          }
+          this.msg('You climb back out into the fresh air.');
+        } else if (sel !== null) {
+          const targetFloors = floors.filter((f) => f !== this.mine_floor);
+          const target = targetFloors[sel - 1];
+          const fee = getMineElevatorFee(target);
+          this.enter_mine(target, this.mine_type);
+          if (fee > 0) {
+            await this.spend(fee);
+          }
+        }
+      } else {
+        if (this.mine_type === 'lake') {
+          this.warp('mountain', 15, 9, [0, 1]);
+        } else {
+          this.warp('mountain', 52, 5, [0, 1]);
+        }
+        this.msg('You climb back out into the fresh air.');
+      }
     } else if (this.held) {
       this.msg(`You're holding ${this.held}. Face someone and press X to give it.`);
     }
@@ -3453,6 +3518,12 @@ export class Game {
     if (tile === 'bed') return { key: 'x', label: 'SLEEP' };
     if (tile === 'tv') return { key: 'x', label: 'WATCH' };
     if (tile === 'cal') return { key: 'x', label: 'CALENDAR' };
+    if (this.mapname === 'mine' && tile === 'up') {
+      return {
+        key: 'x',
+        label: this.mine_elevator_floors(this.mine_type).length > 1 ? 'ELEVATOR' : 'EXIT',
+      };
+    }
     if (['counter', 'bookcase', 'kitchen', 'bath', 'shelf', 'vase', 'fireplace', 'sign', 'doghouse', 'stable', 'mill', 'trash', 'phone'].includes(tile)) {
       return { key: 'x', label: 'USE' };
     }

@@ -257,4 +257,40 @@ describe('engine + renderer', () => {
       assert.ok(discipline in g.mastery_xp);
     }
   });
+
+  test('mine elevator checkpoints unlock at 25-floor intervals and support ladder interaction', async () => {
+    const { g } = farm();
+    assert.deepEqual(g.mine_elevator_floors('spring'), [1]);
+    g.enter_mine(1, 'spring');
+    assert.equal(g.mine_floor, 1);
+    assert.equal(g.max_spring_floor, 1);
+
+    // Face the 'up' ladder at (3,2) from (3,3)
+    g.face = [0, -1];
+    assert.deepEqual(g.context_action(), { key: 'x', label: 'EXIT' });
+
+    // Reach checkpoint 25
+    g.enter_mine(25, 'spring');
+    assert.equal(g.max_spring_floor, 25);
+    assert.deepEqual(g.mine_elevator_floors('spring'), [1, 25]);
+    assert.match(g.msgs[g.msgs.length - 1][0], /Elevator checkpoint B25F unlocked!/);
+
+    // Facing the 'up' ladder now offers ELEVATOR
+    g.face = [0, -1];
+    assert.deepEqual(g.context_action(), { key: 'x', label: 'ELEVATOR' });
+
+    // Prompt mine entry uses discovered checkpoints and deducts stamina fee
+    g.max_lake_floor = 60;
+    assert.deepEqual(g.mine_elevator_floors('lake'), [1, 25, 50]);
+    const st0 = g.stamina;
+    g.menu = async (_title: string, opts: string[]) => {
+      assert.equal(opts.length, 3);
+      assert.match(opts[2], /Floor B50F \(-4 Stamina\)/);
+      return 2; // select B50F
+    };
+    await g.prompt_mine_entry('lake');
+    assert.equal(g.mine_type, 'lake');
+    assert.equal(g.mine_floor, 50);
+    assert.equal(g.stamina, st0 - 4);
+  });
 });

@@ -15,6 +15,9 @@ import {
   checkSecretCropUnlock,
   getBasketTotal,
   BASKET_CAPACITY,
+  MINE_ELEVATOR_CHECKPOINTS,
+  getMineElevatorFloors,
+  getMineElevatorFee,
 } from './rules';
 
 describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
@@ -132,6 +135,22 @@ describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
 
     assert.equal(BASKET_CAPACITY, 30);
     assert.equal(getBasketTotal({ Turnip: 12, Copper: 8, Bamboo_Shoot: 5 }), 25);
+  });
+
+  test('Mine elevator unlocks every 25 floors and only for discovered checkpoints', () => {
+    assert.deepEqual(getMineElevatorFloors(0), [1]);
+    assert.deepEqual(getMineElevatorFloors(24), [1]);
+    assert.deepEqual(getMineElevatorFloors(25), [1, 25]);
+    assert.deepEqual(getMineElevatorFloors(49), [1, 25]);
+    assert.deepEqual(getMineElevatorFloors(50), [1, 25, 50]);
+    assert.deepEqual(getMineElevatorFloors(105), [1, 25, 50, 75, 100]);
+    assert.deepEqual(getMineElevatorFloors(255), [...MINE_ELEVATOR_CHECKPOINTS]);
+    assert.deepEqual(getMineElevatorFloors(5, 30), [...MINE_ELEVATOR_CHECKPOINTS]);
+
+    assert.equal(getMineElevatorFee(1), 0);
+    assert.equal(getMineElevatorFee(25), 2);
+    assert.equal(getMineElevatorFee(100), 8);
+    assert.equal(getMineElevatorFee(255), 20);
   });
 });
 

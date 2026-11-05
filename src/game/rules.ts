@@ -364,3 +364,27 @@ export function getBasketTotal(basket: Record<string, number>): number {
   return Object.values(basket).reduce((sum, n) => sum + n, 0);
 }
 
+export const MINE_ELEVATOR_CHECKPOINTS = [
+  1, 25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 255,
+] as const;
+
+export function getMineElevatorFloors(
+  maxFloorReached: number,
+  goddessGifts: number = 0
+): number[] {
+  if (goddessGifts >= 30) {
+    return [...MINE_ELEVATOR_CHECKPOINTS];
+  }
+  const clamped = Math.max(0, maxFloorReached);
+  if (clamped < 25) {
+    return [1];
+  }
+  return MINE_ELEVATOR_CHECKPOINTS.filter((f) => f === 1 || f <= clamped);
+}
+
+export function getMineElevatorFee(targetFloor: number): number {
+  if (targetFloor <= 1) return 0;
+  return Math.min(20, Math.max(2, Math.floor(targetFloor / 25) * 2));
+}
+
+
