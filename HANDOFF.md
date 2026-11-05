@@ -155,6 +155,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #47: region layout fixes from visual QA: `sealUnreachable()` closes off unreachable pockets in the four outer regions (no forage/branches out of reach), the town's east exit joins the road, signs moved off trails, the sea runs off the map edge at the beach and Lighthouse Point.
 - #46: outer-region content: per-region seasonal forage pools (14 new forage items), river and sea catch tables with rare catches (Elder Sturgeon, Storm Marlin), landmarks (ridge lookout, lighthouse keeper's log, Mossy Pond offering, stone skipping); tide pools and the woods pond no longer count as Goddess Pond.
 - #45: mobile support: compact phone layout (`src/game/compact.ts`, `draw_status`, wrapped text, `p` panel overlay), `chooseGrid()` font/grid sizing (`src/game/viewport.ts`), slide D-pad with hold-to-repeat, tap-to-walk, touch text entry, safe-area viewport.
 - #43: eight project subagents in `.claude/agents/` (renderer-artist, gameplay-engineer, test-guardian, visual-qa, mobile-ux, pr-shepherd, web-researcher, handoff-keeper).

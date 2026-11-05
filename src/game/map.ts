@@ -137,7 +137,7 @@ export function build_town(): GameMap {
   // Add Harvest Sprite Hut behind the Church in NE area (below Church at y=9..12 so Church at y=2..6 is untouched)
   m.building(61, 9, 9, 4, 4, 'sprites', 'SPRITES', '0A');
   m.rect(61, 7, 2, 2, 'path');
-  m.rect(61, 13, 5, 1, 'path');
+  m.rect(61, 13, 10, 1, 'path'); // also the road out to Willow Bend
   // Add Aja Winery in NW area with cobblestone alley to the street
   m.building(3, 9, 9, 4, 4, 'winery', 'WINERY', '0E');
   m.rect(15, 7, 1, 13, 'path');
@@ -190,6 +190,8 @@ export function build_beach(): GameMap {
   }
   // Ocean water along bottom
   m.rect(1, 17, 62, 6, 'water');
+  m.rect(1, 23, 62, 1, 'water'); // the sea runs off the map edge
+  m.rect(63, 17, 1, 6, 'water');
   // Wooden Fishing & Fireworks Pier jutting into the sea
   m.rect(31, 4, 3, 16, 'bridge');
   m.set(30, 12, 'sign');
@@ -257,8 +259,8 @@ export function build_woods(): GameMap {
   for (let y = 17; y < 24; y++) for (let x = 40; x < 58; x++) if (m.tile(x, y) === 'grass' && layoutNoise(x, y, 2) < 0.08) m.set(x, y, 'flower');
   m.set(50, 18, 'sign');
   m.signs[pkey(50, 18)] = 'Mossy Pond — Folk drop in a gift that grew wild (hold it, face the water, press X) for a lucky day of foraging.';
-  m.set(33, 2, 'sign');
-  m.signs[pkey(33, 2)] = 'Cedar Hollow — Fallen branches gather here every morning. Bring an Axe!';
+  m.set(36, 2, 'sign');
+  m.signs[pkey(36, 2)] = 'Cedar Hollow — Fallen branches gather here every morning. Bring an Axe!';
   return m;
 }
 
@@ -344,9 +346,38 @@ export function build_point(): GameMap {
   m.rect(46, 5, 4, 6, 'wall');
   m.deco[pkey(47, 7)] = ['=', '0C'];
   m.rect(1, 11, 52, 3, 'path');
-  m.set(45, 12, 'sign');
-  m.signs[pkey(45, 12)] = 'lighthouse_log';
+  m.set(45, 10, 'sign');
+  m.signs[pkey(45, 10)] = 'lighthouse_log';
+  // the sea runs off the map edge instead of stopping at a treeline
+  m.rect(63, 1, 1, 22, 'water');
+  m.rect(1, 23, 62, 1, 'water');
+  m.rect(0, 17, 1, 6, 'water');
   return m;
+}
+
+/**
+ * Close off open ground the player can never reach from the map's exits (pockets walled in by
+ * trees, cliffs or water), so nothing spawns there: grass grows over into trees, sand into rocks.
+ */
+function sealUnreachable(m: GameMap): void {
+  const open = (x: number, y: number) => m.inside(x, y) && !!TILES[m.tile(x, y)]?.[3];
+  const seen = new Set<string>();
+  const queue = Object.keys(m.warps).map((k) => k.split(',').map(Number) as [number, number]);
+  while (queue.length) {
+    const [x, y] = queue.pop()!;
+    const k = pkey(x, y);
+    if (seen.has(k) || !open(x, y)) continue;
+    seen.add(k);
+    queue.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+  for (let y = 0; y < m.h; y++) {
+    for (let x = 0; x < m.w; x++) {
+      const t = m.tile(x, y);
+      if (seen.has(pkey(x, y)) || !open(x, y)) continue;
+      if (t === 'grass' || t === 'flower') m.set(x, y, 'tree');
+      else if (t === 'sand') m.set(x, y, 'cliff');
+    }
+  }
 }
 
 /** Open the edges between the first four maps and the outer regions. */
@@ -355,6 +386,7 @@ export function link_regions(maps: Record<string, GameMap>): void {
   link(maps.mountain, maps.ridge, 'n', 20, 20);
   link(maps.town, maps.river, 'e', 11, 11);
   link(maps.beach, maps.point, 'e', 11, 11);
+  for (const name of ['woods', 'ridge', 'river', 'point']) sealUnreachable(maps[name]);
 }
 
 export function build_house(): GameMap {
