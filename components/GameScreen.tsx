@@ -585,6 +585,14 @@ export default function GameScreen() {
     // Initialize Game engine
     const game = new Game(screen, autostart);
     gameRef.current = game;
+    // Focus the name field (touch only; it stays mounted) inside the tap that opened the prompt,
+    // so the phone keyboard comes up without a second tap.
+    game.onTyping = () => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      setHud((prev) => (prev.typing ? prev : { label: 'DONE', modal: true, typing: true }));
+    };
 
     const hudTimer = setInterval(() => {
       const a = game.context_action();
@@ -688,10 +696,12 @@ export default function GameScreen() {
           style={{ imageRendering: 'pixelated' }}
         />
 
-        {/* Name entry: a real text field so the phone keyboard can type into the engine prompt */}
-        {isTouch && hud.typing && (
+        {/* Name entry: a real text field so the phone keyboard can type into the engine prompt.
+            Mounted (but hidden) whenever touch is on, so it can take focus the moment a prompt opens. */}
+        {isTouch && (
           <form
-            className="type-bar"
+            className={hud.typing ? 'type-bar' : 'type-bar type-off'}
+            aria-hidden={!hud.typing}
             onSubmit={(e) => {
               e.preventDefault();
               submitDraft();
@@ -708,10 +718,11 @@ export default function GameScreen() {
               autoCapitalize="words"
               spellCheck={false}
               enterKeyHint="done"
-              placeholder="Tap to type (blank = default)"
+              placeholder="Type here (blank = default)"
               aria-label="Type your answer"
+              tabIndex={hud.typing ? 0 : -1}
             />
-            <button type="submit" className="pad-btn type-done">
+            <button type="submit" className="pad-btn type-done" tabIndex={hud.typing ? 0 : -1}>
               DONE
             </button>
           </form>

@@ -276,4 +276,28 @@ describe('touch context action', () => {
     assert.equal(await p, 'A B');
     assert.equal(g.typing, false);
   });
+
+  test('a name prompt opens inside the tap that asked for it, so the phone keyboard can come up', async () => {
+    const s = new Screen(53, 28);
+    const g = new Game(s, false) as any;
+    g.intro = async () => {};
+    let opened = 0;
+    g.onTyping = () => opened++;
+    // Promise steps only: no timer may run between the key and the prompt (iOS ends the tap there).
+    const promiseSteps = async () => {
+      for (let i = 0; i < 100; i++) await Promise.resolve();
+    };
+    const done = g.title();
+    await new Promise((r) => setTimeout(r, 5)); // the title menu is up, waiting for a key
+    s.pushKey('enter'); // New Game
+    await promiseSteps();
+    assert.equal(opened, 1, 'the name prompt opened within the tap');
+    assert.equal(g.typing, true);
+    s.pushKey('enter'); // keep the default name
+    await promiseSteps();
+    assert.equal(opened, 2, 'the farm-name prompt opened within the DONE tap');
+    s.pushKey('enter');
+    await done;
+    assert.equal(g.typing, false);
+  });
 });

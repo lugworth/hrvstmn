@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 158/158 tests pass, typecheck clean, production build passes.
+- **State:** working. 159/159 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** offscreen static-world cache/layered HUD, greenhouse, optional animated doors/windows and CRT mode. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 158 passed, 12 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 159 passed, 12 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -54,7 +54,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 - **Villager Notes (`R`)**: every NPC's hearts, favourite gifts, and usual whereabouts, paginated safely without splitting a villager across pages.
 - **Tool previews:** the HUD shows the current tool's stamina cost (`-2st`, etc.) and a faint warning `!`; the map highlights the primary target and expanded area-of-effect cells.
 - **Context-sensitive touch action:** one large button becomes `USE HOE`, `WATER` (watering can facing a dry growing crop), `TALK`, `ENTER`, `HARVEST`, `SHIP`, `SLEEP`, etc. It becomes `OK` while a modal/menu is open and `DONE` (enter) during text entry.
-- **Phones and tablets:** `chooseGrid()` (`src/game/viewport.ts`) picks the font/grid. Desktop keeps 16px shrunk to fit 80x24. Touch screens keep the full layout (side panel) when 80x24 fits at >= 12px (tablets), otherwise use the **compact layout** (50-79 columns, 12-14px on phones): no side panel, tool/stamina in the divider row (`draw_status`), wrapped messages/pages/menu info (`src/game/compact.ts`), shorter title/top bar, and `p`/INFO overlays the side panel. Touch UI: slide D-pad with hold-to-repeat (220 ms, then 100 ms; repeats pause if a dialog pops up), USE/TOOL/MENU-BACK, utility row, a ••• sheet (Memo, Bell, previous tool, Help, Detail, Motion, haptics `hrvstmn-haptics`, full screen), tap-to-walk on the map, and a real text field for name prompts (`game.typing`). Layout is CSS grid in `globals.css` (`.touch-ui`; portrait stacks, `orientation: landscape and max-height: 540px` splits the controls either side). `viewport-fit=cover` + `env(safe-area-inset-*)`, `100dvh`, no pinch/double-tap zoom, bounce or long-press menus. A ResizeObserver re-lays out on rotation/toolbar changes.
+- **Phones and tablets:** `chooseGrid()` (`src/game/viewport.ts`) picks the font/grid. Desktop keeps 16px shrunk to fit 80x24. Touch screens keep the full layout (side panel) when 80x24 fits at >= 12px (tablets), otherwise use the **compact layout** (50-79 columns, 12-14px on phones): no side panel, tool/stamina in the divider row (`draw_status`), wrapped messages/pages/menu info (`src/game/compact.ts`), shorter title/top bar, and `p`/INFO overlays the side panel. Touch UI: slide D-pad with hold-to-repeat (220 ms, then 100 ms; repeats pause if a dialog pops up), USE/TOOL/MENU-BACK, utility row, a ••• sheet (Memo, Bell, previous tool, Help, Detail, Motion, haptics `hrvstmn-haptics`, full screen), tap-to-walk on the map, and a real text field for name prompts (`game.typing`; it stays mounted and hidden, and `game.onTyping` focuses it inside the tap that opened the prompt, because iOS only raises the keyboard for a focus() made during a tap, so keep every path to `text_input()` free of timers). In phone landscape the 24-row minimum makes height the limit: about 10px text in Safari with its toolbar, 12px when installed to the Home Screen. The bottom safe-area inset is kept on purpose, because the message log sits on the bottom rows. Layout is CSS grid in `globals.css` (`.touch-ui`; portrait stacks, `orientation: landscape and max-height: 540px` splits the controls either side). `viewport-fit=cover` + `env(safe-area-inset-*)`, `100dvh`, no pinch/double-tap zoom, bounce or long-press menus. A ResizeObserver re-lays out on rotation/toolbar changes.
 - **Visual polish:** eased camera follow, longer dawn/dusk shadows, directional terrain-edge glyphs, a quieter HUD, interaction pulse, short menu reveal wipes, and `prefers-reduced-motion` support with a desktop Motion toggle. A Detail button (also in the Diary menu) switches the half-size ground textures between High and Plain; the choice is saved in `hrvstmn-hires`. The Enhanced canvas repaints only changed cells (`frameDirtyRect`). **Accessible Cues** replaces ripe crops with `!` and wet soil with `≈` for colourblind-safe state reading.
   - **Action feedback:** tool use, harvests, fishing and deliveries add dust, sparkles, splashes and coin glyphs. Characters remain single full-size tokens for readability.
   - **Living world:** rain puddles persist into the following fair day, contact shadows swing with the sun, and water edges add reeds, lily pads, beach crabs, farm rabbits and town cats.
@@ -80,7 +80,7 @@ src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScri
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
 src/game/compact.ts            Compact (phone) layout constants + text wrap/reflow/message helpers
 src/game/viewport.ts           chooseGrid (font/grid per stage), D-pad direction, tap-to-walk BFS
-src/game/*.test.ts             node:test — 158 tests: renderer, engine, rules, mobile layout and integration coverage
+src/game/*.test.ts             node:test — 159 tests: renderer, engine, rules, mobile layout and integration coverage
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -155,6 +155,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #50: mobile name entry: the phone keyboard opens with the name prompt, no extra tap on the field.
 - #49: renderer QA fixes: lamp pools only ever brighten (never darker than the dusk sky around them), seven distinct tool-tier swing colours that survive the hit flash, sickle cuts blink each weed then scatter leaves, stronger screen shake (2px light, 4px heavy), brighter terrain edges, title-screen prompt punctuation stays plain, lone tide pools get no foam box; lighting accumulated per light over its bounding box plus cached tone/grey lookups cut town-at-night frame build ~20%.
 - #48: region looks: Skyline Ridge rock faces (lit brow, strata, dithered base, thin snow caps in winter), Willow Bend downstream current, Cedar Hollow under-canopy gloom with sun shafts, Lighthouse Point sweeping beam at night/storms and glinting tide pools; lamp flicker respects reduced motion.
 - #47: region layout fixes from visual QA: `sealUnreachable()` closes off unreachable pockets in the four outer regions (no forage/branches out of reach), the town's east exit joins the road, signs moved off trails, the sea runs off the map edge at the beach and Lighthouse Point.

@@ -265,6 +265,11 @@ html, body {
   border-radius: 10px;
   background: var(--base00);
 }
+/* Hidden but focusable: the field must already be in the page when a prompt opens. */
+.type-bar.type-off {
+  opacity: 0;
+  pointer-events: none;
+}
 .type-bar input {
   flex: 1;
   min-width: 0;
