@@ -185,6 +185,12 @@ export class Game {
   modal_depth: number = 0;
   /** True while text_input() waits for typed text (touch UI shows a keyboard field). */
   typing: boolean = false;
+  /**
+   * Called the moment a text prompt opens. The key that opens a prompt reaches it through promise
+   * steps only, so this still runs inside the player's tap: iOS opens the keyboard only for a
+   * focus() made there.
+   */
+  onTyping: (() => void) | null = null;
   /** Compact (phone) layout only: show the status panel as an overlay ('p'). */
   show_panel: boolean = false;
 
@@ -5585,6 +5591,7 @@ export class Game {
 
   async text_input(prompt: string, py_default: string = ''): Promise<string> {
     this.typing = true;
+    this.onTyping?.();
     try {
       return await this.read_text(prompt, py_default);
     } finally {
