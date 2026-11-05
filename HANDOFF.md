@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 107/107 tests pass, typecheck clean, production build passes.
+- **State:** working. 134/134 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** offscreen static-world cache/layered HUD, greenhouse, optional animated doors/windows and CRT mode. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 107 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 134 passed, 10 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -53,7 +53,8 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 - **Today's Plan (`Y`)**: date, weather, tomorrow's forecast, shipping-bin value and 5 PM cutoff, dry crops, hungry animals, ready milk/wool/eggs, birthdays, festivals, and a stamina-aware plan line.
 - **Villager Notes (`R`)**: every NPC's hearts, favourite gifts, and usual whereabouts, paginated safely without splitting a villager across pages.
 - **Tool previews:** the HUD shows the current tool's stamina cost (`-2st`, etc.) and a faint warning `!`; the map highlights the primary target and expanded area-of-effect cells.
-- **Context-sensitive touch action:** one large button becomes `USE HOE`, `TALK`, `ENTER`, `HARVEST`, `SHIP`, `SLEEP`, etc. It becomes `OK` while a modal/menu is open.
+- **Context-sensitive touch action:** one large button becomes `USE HOE`, `WATER` (watering can facing a dry growing crop), `TALK`, `ENTER`, `HARVEST`, `SHIP`, `SLEEP`, etc. It becomes `OK` while a modal/menu is open and `DONE` (enter) during text entry.
+- **Phones and tablets:** `chooseGrid()` (`src/game/viewport.ts`) picks the font/grid. Desktop keeps 16px shrunk to fit 80x24. Touch screens keep the full layout (side panel) when 80x24 fits at >= 12px (tablets), otherwise use the **compact layout** (50-79 columns, 12-14px on phones): no side panel, tool/stamina in the divider row (`draw_status`), wrapped messages/pages/menu info (`src/game/compact.ts`), shorter title/top bar, and `p`/INFO overlays the side panel. Touch UI: slide D-pad with hold-to-repeat (220 ms, then 100 ms; repeats pause if a dialog pops up), USE/TOOL/MENU-BACK, utility row, a ••• sheet (Memo, Bell, previous tool, Help, Detail, Motion, haptics `hrvstmn-haptics`, full screen), tap-to-walk on the map, and a real text field for name prompts (`game.typing`). Layout is CSS grid in `globals.css` (`.touch-ui`; portrait stacks, `orientation: landscape and max-height: 540px` splits the controls either side). `viewport-fit=cover` + `env(safe-area-inset-*)`, `100dvh`, no pinch/double-tap zoom, bounce or long-press menus. A ResizeObserver re-lays out on rotation/toolbar changes.
 - **Visual polish:** eased camera follow, longer dawn/dusk shadows, directional terrain-edge glyphs, a quieter HUD, interaction pulse, short menu reveal wipes, and `prefers-reduced-motion` support with a desktop Motion toggle. A Detail button (also in the Diary menu) switches the half-size ground textures between High and Plain; the choice is saved in `hrvstmn-hires`. The Enhanced canvas repaints only changed cells (`frameDirtyRect`). **Accessible Cues** replaces ripe crops with `!` and wet soil with `≈` for colourblind-safe state reading.
   - **Action feedback:** tool use, harvests, fishing and deliveries add dust, sparkles, splashes and coin glyphs. Characters remain single full-size tokens for readability.
   - **Living world:** rain puddles persist into the following fair day, contact shadows swing with the sun, and water edges add reeds, lily pads, beach crabs, farm rabbits and town cats.
@@ -77,7 +78,9 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 107 tests: renderer, engine, rules and integration coverage
+src/game/compact.ts            Compact (phone) layout constants + text wrap/reflow/message helpers
+src/game/viewport.ts           chooseGrid (font/grid per stage), D-pad direction, tap-to-walk BFS
+src/game/*.test.ts             node:test — 134 tests: renderer, engine, rules, mobile layout and integration coverage
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -97,8 +100,9 @@ Inside `computeFrame`: style each tagged cell -> Isotope neon-on-black pass -> g
 5. **Reuse existing passes.** Don't add a parallel system when a pass already does the job.
 6. **The renderer is pure presentation.** `enhanced.ts` must never change game state.
 7. **Every visual feature gets a `computeFrame` test**, including negative cases. Engine bugs get a regression test.
-8. **Hotkeys:** arrows/WASD/hjkl move; `space/z` use tool; `x/e/enter` interact; `tab`/Shift+Tab cycle tools; `1-6` pick tools; `i` rucksack; `m` memo; `y` Today; `n` minimap; `r` Villager Notes; `H` horse whistle; `b` bell; `t` teleport stone if owned; `?` help; `esc` diary/pause; `Q` quit. `v` is intentionally unbound now that styles are fixed.
+8. **Hotkeys:** arrows/WASD/hjkl move; `space/z` use tool; `x/e/enter` interact; `tab`/Shift+Tab cycle tools; `1-6` pick tools; `i` rucksack; `m` memo; `y` Today; `n` minimap; `r` Villager Notes; `H` horse whistle; `b` bell; `t` teleport stone if owned; `p` status panel overlay (compact layout only); `?` help; `esc` diary/pause; `Q` quit. `v` is intentionally unbound now that styles are fixed.
 9. **Commit/PR style:** conventional lower-case titles (`feat: ...`, `fix: ...`), PR title = commit title, bullet body describing player-visible changes.
+10. **Compact layout:** anything new drawn by the engine must also work at 50 columns (`isCompact(W)`); wrap rather than truncate there, and keep desktop (>= 80 columns) output unchanged.
 
 ## Decisions and constraints
 
@@ -151,6 +155,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #45: mobile support: compact phone layout (`src/game/compact.ts`, `draw_status`, wrapped text, `p` panel overlay), `chooseGrid()` font/grid sizing (`src/game/viewport.ts`), slide D-pad with hold-to-repeat, tap-to-walk, touch text entry, safe-area viewport.
 - #43: eight project subagents in `.claude/agents/` (renderer-artist, gameplay-engineer, test-guardian, visual-qa, mobile-ux, pr-shepherd, web-researcher, handoff-keeper).
 - #42: shape-matched terrain edges (`edgeGlyph()`: 6 staggered sampling circles, geometric glyph vectors, contrast curve, nearest match) and two-tone cells (`OutCell.detail`, drawn small top-right; used for blossom/fruit on trees).
 - #41: four new original outdoor regions (`woods` Cedar Hollow, `ridge` Skyline Ridge, `river` Willow Bend, `point` Lighthouse Point) built in `map.ts` and joined by `link_regions()`; `OUTDOOR_MAPS`/`FORAGE_TARGET` in engine; daily branches in the woods; sea surf/no lilies via `SEA_MAPS`.

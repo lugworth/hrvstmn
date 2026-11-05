@@ -1,6 +1,7 @@
 // Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
 import { Screen, CellTag, FxExtra, FxKind } from './screen';
+import { COMPACT_MIN_COLS, MIN_ROWS, isCompact, fitMessages, fitText, reflowPages, wrapLines } from './compact';
 import {
   GameMap,
   build_farm,
@@ -171,6 +172,10 @@ export class Game {
   indoor_npcs: Record<string, any> = {};
   _fest_saved: Record<string, any> | null = null;
   modal_depth: number = 0;
+  /** True while text_input() waits for typed text (touch UI shows a keyboard field). */
+  typing: boolean = false;
+  /** Compact (phone) layout only: show the status panel as an overlay ('p'). */
+  show_panel: boolean = false;
 
   name: string = 'Pete';
   farm: string = 'Moon';
@@ -823,6 +828,9 @@ export class Game {
     } else if (k === 'n' || k === 'N') {
       this.show_minimap = !this.show_minimap;
       this.msg(`Minimap ${this.show_minimap ? 'shown' : 'hidden'}.`, '0C');
+    } else if (k === 'p') {
+      // Narrow screens hide the side panel; 'p' (touch INFO) overlays it. Wide screens always show it.
+      if (isCompact(this.scr.w)) this.show_panel = !this.show_panel;
     } else if (k === 'r' || k === 'R') {
       await this.relationships();
     } else if (k === '?') {
@@ -3431,7 +3439,8 @@ export class Game {
   }
 
   /** What the big touch button should do for the tile the player is facing. */
-  context_action(): { key: 'x' | 'space'; label: string } {
+  context_action(): { key: 'x' | 'space' | 'enter'; label: string } {
+    if (this.typing) return { key: 'enter', label: 'DONE' };
     if (this.modal_depth > 0) return { key: 'space', label: 'OK' };
     const [tx, ty] = this.target();
     const pKey = pkey(tx, ty);
@@ -3446,6 +3455,7 @@ export class Game {
     if (tile === 'pond') return { key: 'x', label: 'OFFER' };
     if (this.mapname === 'farm' && pKey in this.crops) {
       const [crop, age] = this.crops[pKey];
+      if (age < CROPS[crop][2] && this.tool === 'Watering Can' && !this.wet.has(pKey)) return { key: 'space', label: 'WATER' };
       return { key: 'x', label: age >= CROPS[crop][2] ? 'HARVEST' : 'CHECK' };
     }
     if (pKey in (this.forage[this.mapname] || {})) return { key: 'x', label: 'PICK' };
@@ -4720,12 +4730,15 @@ export class Game {
       return;
     }
     const [W, H] = [s.w, s.h];
-    if (W < 80 || H < 24) {
-      s.put(0, 0, `Terminal too small: need 80x24, have ${W}x${H}`, '08');
+    if (W < COMPACT_MIN_COLS || H < MIN_ROWS) {
+      s.put(0, 0, `Terminal too small: need ${COMPACT_MIN_COLS}x${MIN_ROWS}, have ${W}x${H}`, '08');
       return;
     }
-    const side = 29;
-    const [vw, vh] = [W - side - 1, H - 5];
+    // Narrow (phone) grids drop the side panel: the map takes the full width and the
+    // panel's essentials move into the divider row (draw_status); 'p' overlays the panel.
+    const compact = isCompact(W);
+    const side = compact ? 0 : 29;
+    const [vw, vh] = [compact ? W : W - side - 1, H - 5];
     s.ctx = {
       mapName: this.mapname,
       indoor: !!this.map.indoor,
@@ -4744,6 +4757,17 @@ export class Game {
     this.draw_topbar(W);
     this.draw_map(0, 1, vw, vh);
     if (this.show_minimap) this.draw_minimap(vw, vh);
+    if (compact) {
+      s.put(0, H - 4, '-'.repeat(W), '01');
+      this.draw_status(H - 4, W);
+      if (this.show_panel) {
+        const rows = 16 + (this.chickens ? 1 : 0) + (this.animals.length ? 1 : 0);
+        s.box(W - 29, 1, 29, Math.min(H - 4, rows), '0C', '00', 'Status');
+        this.draw_side(W - 27, 2, 25, false);
+      }
+      this.draw_msgs(H - 3);
+      return;
+    }
     for (let y = 1; y < H - 4; y++) {
       s.put(vw, y, '|', '01');
     }
@@ -4756,21 +4780,25 @@ export class Game {
     const s = this.scr;
     s.put(0, 0, ' '.repeat(W), '05', '01');
     const sn = this.season_name;
+    const compact = isCompact(W);
+    const sep = compact ? ' ' : '  ';
     let x = 1;
     const segments: [string, string][] = [
       [`${sn} ${this.day}`, SEASON_COL[sn]],
       [` ${WEEKDAYS[this.weekday]}`, '05'],
-      [`  Yr ${this.year}`, '04'],
-      [`  ${fmt_time(this.minutes)}`, '07'],
+      [compact ? ` Y${this.year}` : `  Yr ${this.year}`, '04'],
+      [`${sep}${fmt_time(this.minutes)}`, '07'],
       [`  ${this.weather}`, WEATHER_COL[this.weather] || '09'],
-      [`  ${this.gold}G`, '09'],
+      [`${sep}${this.gold}G`, '09'],
     ];
     for (const [text, fg] of segments) {
       s.put(x, 0, text, fg, '01', true);
       if (text === `  ${this.weather}`) s.ctx?.icons.push({ x: x + 1, y: 0, icon: 'weather' });
       x += text.length;
     }
-    const loc = this.map.title + (this.map.indoor ? ' (indoors)' : '');
+    let loc = this.map.title + (this.map.indoor && !compact ? ' (indoors)' : '');
+    // Narrow screens: shorten the place name rather than let it run off the edge.
+    if (compact && x + 1 + loc.length > W - 1) loc = loc.slice(0, Math.max(0, W - x - 3)) + '…';
     s.put(Math.max(x + 1, W - loc.length - 2), 0, loc, '0C', '01');
   }
 
@@ -4984,7 +5012,60 @@ export class Game {
     mark(this.px, this.py, '@', '0D');
   }
 
-  draw_side(x: number, y: number, w: number): void {
+  /**
+   * Compact layout status line, drawn into the divider row: tool (+cost, can level or seed
+   * bags), stamina bar, and fatigue/held item when there is room.
+   */
+  draw_status(y: number, W: number): void {
+    const s = this.scr;
+    const t = this.tool;
+    const preview = this.action_preview();
+    let x = 1;
+    const seg = (text: string, fg: string, bold = false): boolean => {
+      if (x + text.length > W - 1) return false;
+      s.put(x, y, text, fg, '00', bold);
+      // tag as UI so the divider pass doesn't turn hyphens ("-2st") into rule lines
+      for (let i = 0; i < text.length; i++) if (text[i] !== ' ') s.tag(x + i, y, { t: 'ui' });
+      x += text.length;
+      return true;
+    };
+    const idx = TOOLS.includes(t) ? `[${TOOLS.indexOf(t) + 1}] ` : '';
+    s.ctx?.icons.push({ x, y, icon: 'tool' });
+    seg(' ', '02');
+    seg(`${idx}${t} `, '07', true);
+    if (t === 'Watering Can') seg(`${this.water}/${CAN_CAP[this.levels[t] || 0]} `, '0D');
+    else if (t.endsWith(' Seeds')) {
+      const crop = t.slice(0, -6);
+      const ok = crop === 'Grass' || CROPS[crop]?.[0] === this.season_name;
+      seg(`x${this.inv[t] || 0}${ok ? '' : ' off-season'} `, ok ? '0B' : '08');
+    }
+    if (preview.cost > 0) seg(`-${preview.cost}st${preview.faint ? '!' : ''} `, preview.faint ? '08' : '03');
+    x += 1;
+    const frac = this.stamina / this.max_stamina;
+    const col = frac > 0.5 ? '0B' : frac > 0.2 ? '09' : '08';
+    const num = ` ${this.stamina}`;
+    const bw = Math.max(4, Math.min(10, W - x - num.length - 4));
+    const filled = Math.round(frac * bw);
+    s.ctx?.icons.push({ x, y, icon: 'stamina' });
+    seg(' ', '02');
+    s.put(x, y, '#'.repeat(filled), col, '00', true);
+    s.put(x + filled, y, '.'.repeat(bw - filled), '01');
+    for (let i = 0; i < bw; i++) s.tag(x + i, y, { t: 'ui', k: i < filled ? 'bar' : 'bar:empty' });
+    x += bw;
+    seg(`${num} `, col);
+    if (this.fatigue >= 50) {
+      x += 1;
+      seg(` Fatg ${this.fatigue} `, this.fatigue < 80 ? '09' : '08');
+    }
+    const bCount = getBasketTotal(this.basket);
+    const held = this.held === 'Basket' ? `Basket ${bCount}/${BASKET_CAPACITY}` : this.held ? `${this.held} x${this.inv[this.held] || 0}` : '';
+    if (held) {
+      x += 1;
+      if (!seg(` ${held} `, '0A')) seg(` ${held.slice(0, Math.max(0, W - x - 3))} `, '0A');
+    }
+  }
+
+  draw_side(x: number, y: number, w: number, hints = true): void {
     const s = this.scr;
     const sn = this.season_name;
     s.put(x, y, 'H R V S T M N', SEASON_COL[sn], '00', true);
@@ -5104,7 +5185,7 @@ export class Game {
       ['?', 'help'],
     ];
     for (const [k, d] of help_lines) {
-      if (y >= s.h - 4) break;
+      if (!hints || y >= s.h - 4) break;
       s.put(x, y, k, '0D', '00', true);
       s.put(x + 4, y, d, '02');
       y += 1;
@@ -5114,6 +5195,15 @@ export class Game {
   draw_msgs(y0: number): void {
     const cols = ['02', '03', null];
     const recent = this.msgs.slice(-3);
+    if (isCompact(this.scr.w)) {
+      // Narrow screens wrap messages instead of cutting them off; the newest always shows.
+      const lines = fitMessages(recent.map(([text]) => text), this.scr.w - 2, 3);
+      lines.forEach(({ text, age }, i) => {
+        const fg = age === 0 ? recent[recent.length - 1][1] : age === 1 ? cols[1]! : cols[0]!;
+        this.scr.put(1, y0 + i, text, fg);
+      });
+      return;
+    }
     for (let i = 0; i < recent.length; i++) {
       const [text, col] = recent[i];
       const age = recent.length - 1 - i;
@@ -5133,10 +5223,11 @@ export class Game {
       s.put(x0, 2 + i, LOGO[i], cols[i], '00', true);
       for (let j = 0; j < LOGO[i].length; j++) if (LOGO[i][j] !== ' ') s.tag(x0 + j, 2 + i, { t: 'ui', k: 'logo' });
     }
-    const sub = '~ Harvest Moon: Friends of Mineral Town (Complete ASCII Edition) ~';
+    const sub = fitText(W, '~ Harvest Moon: Friends of Mineral Town (Complete ASCII Edition) ~', '~ Harvest Moon: Friends of Mineral Town ~');
     s.put(Math.max(0, Math.floor((W - sub.length) / 2)), 8, sub, '04');
     const scene_y = 10;
-    const hills = '   T   T  .-^-.   T   [Hot Spring]   T   .-^-.   T   ';
+    const hillsFull = '   T   T  .-^-.   T   [Hot Spring]   T   .-^-.   T   ';
+    const hills = fitText(W, hillsFull, hillsFull.trim());
     s.put(Math.max(0, Math.floor((W - hills.length) / 2)), scene_y, hills, '0B');
     const field = ' o * j o Y * o v d o * j O o * A o v * o j ';
     const fx = Math.max(0, Math.floor((W - field.length) / 2));
@@ -5146,7 +5237,11 @@ export class Game {
       s.put(fx + i, scene_y + 1, ch, ch !== ' ' ? palette[i % palette.length] : '00', '00', true);
     }
     s.put(fx, scene_y + 2, '='.repeat(field.length), '09');
-    const tag = 'base16 isotope dark · 255-floor mines · 7 sprites · 20+ festivals · 108 recipes';
+    const tag = fitText(
+      W,
+      'base16 isotope dark · 255-floor mines · 7 sprites · 20+ festivals · 108 recipes',
+      '255-floor mines · 7 sprites · 20+ festivals',
+    );
     s.put(Math.max(0, Math.floor((W - tag.length) / 2)), H - 2, tag, '02');
   }
 
@@ -5220,6 +5315,7 @@ export class Game {
   async show_pages(title: string, pages: string[][]): Promise<void> {
     const [W, H] = [this.scr.w, this.scr.h];
     if (!pages.length) pages.push([]);
+    if (isCompact(W)) pages = reflowPages(pages, W - 6, Math.max(4, H - 5));
     const maxLn = Math.max(
       title.length + 6,
       ...pages.flat().map((ln) => ln.length + 4),
@@ -5252,7 +5348,8 @@ export class Game {
     if (n === 0) return null;
     while (true) {
       const [W, H] = [this.scr.w, this.scr.h];
-      const info_lines = typeof info === 'function' ? info(sel) : info || [];
+      const info_raw = typeof info === 'function' ? info(sel) : info || [];
+      const info_lines = isCompact(W) ? wrapLines(info_raw, W - 6) : info_raw;
       const maxvis = Math.max(3, H - 8 - info_lines.length);
       const vis = Math.min(n, maxvis);
       const top = clamp(sel - Math.floor(vis / 2), 0, Math.max(0, n - vis));
@@ -5343,6 +5440,15 @@ export class Game {
   }
 
   async text_input(prompt: string, py_default: string = ''): Promise<string> {
+    this.typing = true;
+    try {
+      return await this.read_text(prompt, py_default);
+    } finally {
+      this.typing = false;
+    }
+  }
+
+  async read_text(prompt: string, py_default: string = ''): Promise<string> {
     let text = '';
     while (true) {
       const [W] = [this.scr.w, this.scr.h];
