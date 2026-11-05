@@ -92,6 +92,17 @@ describe('computeFrame', () => {
     assert.ok(out[6][6].glow);
   });
 
+  test('accessible cues replace ripe crops and wet soil with shape glyphs', () => {
+    const s = scene({ cues: true });
+    s.put(7, 7, 'T', '09', '00', true);
+    s.tag(7, 7, { t: 'field', wx: 7, wy: 7, k: 'crop:ripe' });
+    s.put(8, 7, '≡', '0B', '00');
+    s.tag(8, 7, { t: 'field', wx: 8, wy: 7, k: 'soil:wet' });
+    const out = computeFrame(s, 0);
+    assert.equal(out[7][7].ch, '!');
+    assert.equal(out[7][8].ch, '≈');
+  });
+
   test('textures follow world coordinates, not screen position', () => {
     const a = scene();
     const b = scene();

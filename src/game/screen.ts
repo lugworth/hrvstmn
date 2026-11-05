@@ -54,6 +54,8 @@ export type RenderCtx = {
   weather: string;
   /** 0 = dry ground, 1 = fresh rain. Persists and fades after the rain stops. */
   wetness?: number;
+  /** Colourblind-safe state glyphs (ripe !, wet ≈). */
+  cues?: boolean;
   /** Screen cells per map tile horizontally. Always 1 now that large tiles are gone. */
   zoom: number;
   /** OS-level or user-chosen reduced motion. Freezes ambient animation. */
@@ -84,6 +86,8 @@ export class Screen {
   reducedMotion: boolean = false;
   /** Whether texture cells may use half-size 2x2/3x3 detail glyphs. */
   hires: boolean = true;
+  /** Colourblind-safe state cues: ripe/ wet/ ready markers in addition to colour. */
+  accessibleCues: boolean = false;
   onHiresChange?: (hires: boolean) => void;
   keyQueue: string[] = [];
   private keyWaiters: Array<{
