@@ -42,6 +42,17 @@ npm test     # unit + integration tests (game rules, renderer, engine rendering)
 
 ### Colour
 
+**Contour Farm UI (`expirimental-ui`):** world-anchored contour glyphs replace the outdoor
+ground and roof stipple, with bright conifer detail and flowing water. The right-hand HUD
+groups the date, equipped tool, stamina, fatigue, shipping and held items on a black surface.
+It keeps tool-cost/fainting warnings, watering-can capacity and seasonal seed warnings.
+The cyan action footer uses the existing keyboard controls, and touch controls retain their
+context-sensitive action. HUD headings stay in the bundled monospace font; actors, obstacles
+and crops keep their full-size glyphs. Enhanced remains the only visible style.
+
+`npm run dev` also accepts `--host` / `--port` preview flags. `npm test` uses Node's test
+runner with the `tsx` import hook, avoiding the CLI's extra IPC server.
+
 Every colour the Enhanced renderer draws is snapped to ramps built only from the 16 base16
 Isotope Dark colours (`toIsotope` in `src/game/enhanced.ts`). Each hue gets a value ramp with hue
 shifting: shadows lean toward the palette's indigo, highlights toward its orange and white. Where

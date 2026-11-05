@@ -3,6 +3,9 @@ import { COMPACT_MIN_COLS, MIN_ROWS } from './compact';
 
 export type Cell = [char: string, fg: string, bg: string, bold: boolean];
 
+/** A larger HUD heading, still drawn with the bundled monospace font. */
+export type HudLabel = { text: string; scale: number; w: number; h: number };
+
 /** Visual style used by the canvas renderer. 'classic' is kept for tests and development. */
 export type VisualStyle = 'enhanced' | 'classic';
 
@@ -32,6 +35,8 @@ export type CellTag = {
   zw?: number;
   /** Entity standing on this cell: 'player', 'npc', 'animal', 'pet'. */
   ent?: string;
+  /** A heading anchored in this UI cell; its reserved rectangle contains no other text. */
+  label?: HudLabel;
 };
 
 export type FxKind = 'dust' | 'sparkle' | 'splash' | 'coin' | 'swing' | 'flash' | 'debris' | 'text';

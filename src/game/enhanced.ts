@@ -6,8 +6,9 @@
 // lighting with lanterns and lit windows, and animated weather. It never
 // changes game state, so 'classic' and 'enhanced' are pure presentation.
 
-import type { Cell, CellTag, RenderCtx, Screen } from './screen';
+import type { Cell, CellTag, HudLabel, RenderCtx, Screen } from './screen';
 import { PALETTE } from './constants';
+import { contourPattern, type ContourTexture } from './contour';
 
 export type OutCell = {
   ch: string;
@@ -32,6 +33,11 @@ export type OutCell = {
   /** Shoreline foam on these sides (bitmask: 1 top, 2 right, 4 bottom, 8 left). */
   foam?: number;
   foamCol?: string;
+  texture?: ContourTexture;
+  /** Later weather/particle passes can replace the glyph without inheriting its texture. */
+  textureGlyph?: string;
+  label?: HudLabel;
+  meter?: boolean;
 };
 
 // ---------------------------------------------------------------- colour math
@@ -897,6 +903,26 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
   return { ch: g, fg: pal(fg), bg: F.indoor || cell[2] === '01' ? '#3a2818' : groundBg(F, tag), bold, accent: INTEREST.has(tag.t) };
 }
 
+/** Contour Farm treatment: only scenery changes; sprites, crops and cues stay full size. */
+function contourTile(F: Frame, tag: CellTag, o: OutCell): OutCell {
+  if (F.indoor || tag.ent || o.accent || o.glow || o.ch === '˙' || o.ch === '✧' || tag.k?.startsWith('obj:') || tag.k?.startsWith('crop:') || tag.k?.startsWith('soil')) return o;
+  const x = tag.wx ?? 0;
+  const y = tag.wy ?? 0;
+  if (['grass', 'field', 'sand'].includes(tag.t) && o.ch !== '╿' && o.ch !== '◦' && !F.theme.snow) {
+    const texture: ContourTexture = { x, y, kind: 'ground' };
+    return { ...o, ch: contourPattern(texture, 1), fg: '#808080', bold: false, texture };
+  }
+  if (tag.t === 'roof') {
+    const texture: ContourTexture = { x, y, kind: 'roof' };
+    if ('▄◢◣'.includes(o.ch)) return { ...o, ch: o.ch === '◢' ? '╱' : o.ch === '◣' ? '╲' : '─', fg: '#d0d0d0' };
+    return { ...o, ch: contourPattern(texture, 1), fg: '#d0d0d0', bg: mix(o.bg, '#000000', 0.6), texture };
+  }
+  if (tag.t === 'tree') return { ...o, fg: mix(o.fg, '#ffffff', 0.4), texture: { x, y, kind: 'tree' } };
+  if (tag.t === 'wall' && tag.k !== 'deco') return { ...o, ch: o.ch === '▀' ? '─' : o.ch, fg: mix(o.fg, '#ffffff', 0.55) };
+  if (WATERY.has(tag.t)) return { ...o, texture: { x: x + (Math.floor(F.t * 1.5) % 8) * 0.15, y, kind: 'water' } };
+  return o;
+}
+
 // ---------------------------------------------------------------- frame
 
 const ICONS: Record<string, [string, string]> = {
@@ -1062,7 +1088,8 @@ export function computeFrame(
             accent: true,
           };
         } else {
-          o = styleTile(F, x, y, tag, cell);
+          o = contourTile(F, tag, styleTile(F, x, y, tag, cell));
+          if (o.texture) o.textureGlyph = o.ch;
         }
         if (tag.hl) {
           const pulse = 0.26 + 0.05 * Math.sin(F.t * 5);
@@ -1079,6 +1106,13 @@ export function computeFrame(
         else if (k === 'bar') o = { ch: '█', fg: pal(cell[1]), bg: '#0c0c11', bold: false };
         else if (k === 'bar:empty') o = { ch: '░', fg: '#2c2c36', bg: '#0c0c11', bold: false };
         else o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
+        if (tag.label) {
+          const label = tag.label;
+          const covered = boxes.some((b) => x < b.x + b.w && x + label.w > b.x && y < b.y + b.h && y + label.h > b.y);
+          if (covered) o.ch = ' ';
+          else o.label = label;
+        }
+        if (k.startsWith('hud:meter')) o = { ...o, ch: '━', meter: true };
       } else {
         o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
       }
@@ -1141,12 +1175,12 @@ export function computeFrame(
 
   // ---- HUD chrome
   for (let x = 0; x < W; x++) {
-    if (buf[0][x][2] === '01') out[0][x].bg = '#1a1a22';
+    if (buf[0][x][2] === '01') out[0][x].bg = '#000000';
   }
-  for (let y = 1; y < Math.min(ctx.divY, H); y++) {
-    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: '#3a3a48', bg: '#0c0c11', bold: false };
+  for (let y = 0; y < Math.min(ctx.divY, H); y++) {
+    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: '#404040', bg: '#000000', bold: false, ui: true };
     for (let x = ctx.divX + 1; x < W; x++) {
-      if (!tags[y][x] && buf[y][x][2] === '00') out[y][x].bg = '#0c0c11';
+      if (!tags[y][x] && buf[y][x][2] === '00') out[y][x].bg = '#000000';
       else if (tags[y][x]?.t === 'ui' && (tags[y][x]?.k || '').startsWith('bar')) {
         // fade the bar slightly toward its tip
         if (tags[y][x]?.k === 'bar') out[y][x].fg = mix(out[y][x].fg, '#ffffff', ((x - ctx.divX) / Math.max(1, W - ctx.divX)) * 0.35);
@@ -2019,6 +2053,7 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
   let minY = Infinity;
   let maxX = -1;
   let maxY = -1;
+  const labels: DirtyRect[] = [];
   for (let y = 0; y < next.length; y++) {
     const a = prev[y];
     const b = next[y];
@@ -2026,11 +2061,20 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
     for (let x = 0; x < b.length; x++) {
       const p = a[x];
       const n = b[x];
+      if (p.label || n.label) {
+        for (const label of [p.label, n.label]) {
+          if (label) labels.push({ x0: x, y0: y, x1: x + label.w, y1: y + label.h });
+        }
+      }
       if (
         p.ch !== n.ch || p.fg !== n.fg || p.bg !== n.bg || p.bold !== n.bold ||
         p.glow !== n.glow || p.glowR !== n.glowR || p.token !== n.token || p.rim !== n.rim ||
         p.plain !== n.plain || p.ui !== n.ui || p.accent !== n.accent || p.seed !== n.seed ||
-        p.foam !== n.foam || p.foamCol !== n.foamCol || p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg
+        p.foam !== n.foam || p.foamCol !== n.foamCol || p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg ||
+        p.texture?.kind !== n.texture?.kind || p.texture?.x !== n.texture?.x || p.texture?.y !== n.texture?.y ||
+        p.textureGlyph !== n.textureGlyph || p.meter !== n.meter ||
+        p.label?.text !== n.label?.text || p.label?.scale !== n.label?.scale ||
+        p.label?.w !== n.label?.w || p.label?.h !== n.label?.h
       ) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
@@ -2040,12 +2084,30 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
     }
   }
   if (maxX < 0) return null;
-  return {
+  const dirty = {
     x0: Math.max(0, minX - 1),
     y0: Math.max(0, minY - 1),
     x1: Math.min(next[0]?.length ?? 0, maxX + 2),
     y1: Math.min(next.length, maxY + 2),
   };
+  // A heading paints beyond its anchor cell. Repaint its whole old/new rectangle whenever
+  // it changes or a neighbouring update clears part of it (including dialog open/close).
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const label of labels) {
+      if (dirty.x0 >= label.x1 || dirty.x1 <= label.x0 || dirty.y0 >= label.y1 || dirty.y1 <= label.y0) continue;
+      const x0 = Math.min(dirty.x0, Math.max(0, label.x0 - 1));
+      const y0 = Math.min(dirty.y0, Math.max(0, label.y0 - 1));
+      const x1 = Math.max(dirty.x1, Math.min(next[0].length, label.x1 + 1));
+      const y1 = Math.max(dirty.y1, Math.min(next.length, label.y1 + 1));
+      if (x0 !== dirty.x0 || y0 !== dirty.y0 || x1 !== dirty.x1 || y1 !== dirty.y1) {
+        Object.assign(dirty, { x0, y0, x1, y1 });
+        expanded = true;
+      }
+    }
+  }
+  return dirty;
 }
 
 /** Paint a computed frame. Block shapes are drawn as rects/paths so they tile without seams. */
@@ -2135,6 +2197,7 @@ export function effectiveHiresLevel(fontPx: number, dpr = 1, hires = true): numb
 /** The n x n high-resolution pattern for a cell (n*n glyphs, row by row), or null for a plain glyph. */
 export function subPattern(o: OutCell, fontPx: number, n = 2): string | null {
   if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.plain || o.token || o.glow) return null;
+  if (o.texture && o.ch === o.textureGlyph) return contourPattern(o.texture, n);
   const v = SUBPIX[o.ch];
   if (!v) return null;
   const seed = o.seed ?? 0;
@@ -2204,9 +2267,24 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       const o = row[x];
       // two-tone cells: the detail glyph sits small on the upper right, drawn with the batch
       if (o.detail) mini(x * cw + cw * 0.48, y * ch + ch * 0.3, o.detail.ch, o.detail.fg, 1, true);
-      if (o.ch === ' ') continue;
+      if (o.ch === ' ' && !(o.texture && o.ch === o.textureGlyph)) continue;
       const px = x * cw;
       const py = y * ch;
+      if (o.label) {
+        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
+        const label = o.label;
+        g.font = `${o.bold ? 'bold ' : ''}${fontPx * label.scale}px ${font}`;
+        curFont = '';
+        g.fillStyle = o.fg;
+        g.fillText(label.text, px, py + label.h * ch / 2, label.w * cw);
+        continue;
+      }
+      if (o.meter) {
+        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
+        g.fillStyle = o.fg;
+        g.fillRect(Math.floor(px), Math.floor(py + ch * 0.4), Math.ceil(cw) + 1, Math.max(2, Math.round(ch * 0.2)));
+        continue;
+      }
       if (o.ch === '▄' || o.ch === '▀' || o.ch === '█') {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
         g.fillStyle = o.fg;
@@ -2245,7 +2323,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       if (pat) {
         if (level === 2) {
           for (let k = 0; k < 4; k++) {
-            if (pat[k] !== ' ') mini(px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5, pat[k], o.fg, subAlpha(o.ch, o.seed ?? 0, k), o.bold);
+            if (pat[k] !== ' ') mini(px + (k & 1) * (cw / 2), py + (k >> 1) * (ch / 2) + ch / 4 + 0.5, pat[k], o.fg, o.texture ? 1 : subAlpha(o.ch, o.seed ?? 0, k), o.bold);
           }
         } else {
           // one call per row: a monospace font at size fontPx/n advances exactly cw/n per glyph
@@ -2326,6 +2404,6 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
   // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '');
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '') + (o.texture ? `t${o.texture.kind}:${o.texture.x}:${o.texture.y}:${o.textureGlyph}` : '') + (o.label ? `l${o.label.text}:${o.label.scale}:${o.label.w}:${o.label.h}` : '') + (o.meter ? 'm' : '');
   return s;
 }

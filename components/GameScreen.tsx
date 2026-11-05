@@ -19,6 +19,12 @@ import {
 
 const FONT = '"HRVSTMN Mono", "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace';
 
+const QUICK_ACTIONS = [
+  ['space', 'SPACE', 'USE TOOL'], ['x', 'X', 'ACT'], ['tab', 'TAB', 'TOOL'],
+  ['i', 'I', 'BAG'], ['H', 'Shift+H', 'HORSE'], ['b', 'B', 'BELL'], ['m', 'M', 'MEMO'],
+  ['y', 'Y', 'TODAY'], ['n', 'N', 'MAP'], ['r', 'R', 'NOTES'], ['esc', 'ESC', 'DIARY'],
+] as const;
+
 const KEYMAP: Record<string, string> = {
   ArrowUp: 'up',
   ArrowDown: 'down',
@@ -390,7 +396,7 @@ export default function GameScreen() {
       return ctx.measureText('M').width;
     }
 
-    // Desktop: 16px, shrunk to fit 80x24. Touch: the full layout down to 12px, else the compact
+    // Desktop: readable Contour grid, shrunk to fit 80x24. Touch: the full layout down to 12px, else the compact
     // phone layout (no side panel, >= 50 columns) at the largest readable size. See viewport.ts.
     function layout() {
       if (!stage) return;
@@ -456,7 +462,8 @@ export default function GameScreen() {
       const frame = computeFrame(screen, screen.reducedMotion ? 0 : performance.now() / 1000);
       const sig = `${screen.hires ? 'h' : 'p'}:${frameSignature(frame)}`;
       if (sig === lastSig) return;
-      const dirty = frameDirtyRect(prevFrame, frame);
+      const detailChanged = lastSig[0] !== sig[0];
+      const dirty = frameDirtyRect(detailChanged ? null : prevFrame, frame);
       if (prevFrame && !dirty) return;
       lastSig = sig;
       drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1, hires: screen.hires }, dirty ?? undefined);
@@ -692,6 +699,9 @@ export default function GameScreen() {
           ref={canvasRef}
           id="term"
           aria-label="HRVSTMN game screen"
+          aria-description="Move with WASD or arrow keys. Space uses the tool. X interacts. Question mark opens keyboard help."
+          aria-busy={!ready}
+          tabIndex={0}
           className="block"
           style={{ imageRendering: 'pixelated' }}
         />
@@ -779,114 +789,30 @@ export default function GameScreen() {
         )}
       </div>
 
-      {/* Interactive Quick-Action Toolbar for Desktop Users */}
+      {/* Contour controls retain the newer map, detail, and motion actions. */}
       {inputMode === 'desktop' && (
-        <div
-          id="hint"
-          className="flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 border-t border-[#404040]/50 bg-[#080808] text-xs font-mono"
-        >
-          <span className="text-[#808080] mr-2 hidden sm:inline">WASD/Arrows: Move</span>
-          <button
-            type="button"
-            onClick={() => sendKey('space')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
-          >
-            [SPC] Use Tool
+        <nav id="hint" className="game-toolbar" aria-label="Game controls">
+          {QUICK_ACTIONS.map(([key, shortcut, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => sendKey(key)}
+              className={`game-control${key === 'space' ? ' game-control-primary' : ''}`}
+              aria-keyshortcuts={key === 'space' ? 'Space' : key === 'esc' ? 'Escape' : shortcut}
+            >
+              <span className="game-shortcut">[{shortcut}]</span> {label}
+            </button>
+          ))}
+          <button type="button" onClick={toggleHires} className="game-control game-detail" aria-pressed={hires}
+            title="Toggle half-size high-resolution ground textures">
+            DETAIL: {hires ? 'HIGH' : 'PLAIN'}
           </button>
-          <button
-            type="button"
-            onClick={() => sendKey('x')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff0099] cursor-pointer"
-          >
-            [X] Act/Talk
+          <button type="button" onClick={toggleMotion} className="game-control" aria-pressed={!reducedMotion}
+            title="Toggle ambient animation (also honors prefers-reduced-motion)">
+            MOTION: {reducedMotion ? 'OFF' : 'ON'}
           </button>
-          <button
-            type="button"
-            onClick={() => sendKey('tab')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#d0d0d0] cursor-pointer"
-          >
-            [TAB] Next Tool
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('i')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#d0d0d0] cursor-pointer"
-          >
-            [I] Rucksack
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('H')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff9900] cursor-pointer"
-          >
-            [Shift+H] Horse
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('b')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
-          >
-            [B] Bell
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('m')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
-          >
-            [M] Memo
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('y')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#33ff00] cursor-pointer"
-          >
-            [Y] Today
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('n')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
-          >
-            [N] Map
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('r')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff0099] cursor-pointer"
-          >
-            [R] Villagers
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('esc')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#c0c0c0] cursor-pointer"
-          >
-            [ESC] Diary
-          </button>
-          <button
-            type="button"
-            onClick={() => sendKey('?')}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
-          >
-            [?] Help
-          </button>
-          <button
-            type="button"
-            onClick={toggleHires}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#cc00ff] cursor-pointer"
-            title="Toggle half-size high-resolution ground textures"
-          >
-            Detail: {hires ? 'High' : 'Plain'}
-          </button>
-          <button
-            type="button"
-            onClick={toggleMotion}
-            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#cc00ff] cursor-pointer"
-            title="Toggle ambient animation (also honors prefers-reduced-motion)"
-          >
-            Motion: {reducedMotion ? 'Off' : 'On'}
-          </button>
-        </div>
+          <button type="button" onClick={() => sendKey('?')} className="game-control" aria-label="Keyboard help">[?]</button>
+        </nav>
       )}
 
       {/* Touch controls: utility row, D-pad (left thumb) and action cluster (right thumb).
