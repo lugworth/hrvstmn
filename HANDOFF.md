@@ -23,7 +23,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
 - **State:** working. 88/88 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
-- **Next up:** roadmap release 3 (offscreen/layered renderer), then composed character sprites and greenhouse. See `docs/feature-research.md`.
+- **Next up:** roadmap release 3 (offscreen/layered renderer), then greenhouse and accessibility settings. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
 
 ## Quick start
@@ -55,7 +55,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 - **Tool previews:** the HUD shows the current tool's stamina cost (`-2st`, etc.) and a faint warning `!`; the map highlights the primary target and expanded area-of-effect cells.
 - **Context-sensitive touch action:** one large button becomes `USE HOE`, `TALK`, `ENTER`, `HARVEST`, `SHIP`, `SLEEP`, etc. It becomes `OK` while a modal/menu is open.
 - **Visual polish:** eased camera follow, longer dawn/dusk shadows, directional terrain-edge glyphs, a quieter HUD, interaction pulse, and `prefers-reduced-motion` support with a desktop Motion toggle. A Detail button (also in the Diary menu) switches the half-size ground textures between High and Plain; the choice is saved in `hrvstmn-hires`.
-  - **Composed character sprites:** the player and villagers render as 3×3 ASCII figures with four facing directions and a two-frame walk cycle; action feedback adds dust, sparkles, splashes and coin glyphs.
+  - **Action feedback:** tool use, harvests, fishing and deliveries add dust, sparkles, splashes and coin glyphs. Characters remain single full-size tokens for readability.
   - **Living world:** rain puddles persist into the following fair day, contact shadows swing with the sun, and water edges add reeds, lily pads, beach crabs, farm rabbits and town cats.
 - Three styles are no longer a user-facing feature. Do not reintroduce a style switch without asking.
 

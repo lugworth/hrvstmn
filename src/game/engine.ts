@@ -256,7 +256,6 @@ export class Game {
   fest_attended: boolean = false;
   fest_declined: boolean = false;
   npc_pos: Record<string, [number, number]> = {};
-  npc_face: Record<string, 'up' | 'down' | 'left' | 'right'> = {};
   fx: { kind: 'dust' | 'sparkle' | 'splash' | 'coin'; map: string; x: number; y: number; born: number; life: number }[] = [];
   wetness: Record<string, number> = {};
   mine_type: 'spring' | 'lake' = 'spring';
@@ -410,7 +409,6 @@ export class Game {
     this.fest_attended = false;
     this.fest_declined = false;
     this.npc_pos = {};
-    this.npc_face = {};
     this.fx = [];
     this.wetness = { farm: 0, town: 0, mountain: 0, beach: 0 };
     this.mine_type = 'spring';
@@ -1069,21 +1067,9 @@ export class Game {
       if (Math.abs(nx - ax) > 4 || Math.abs(ny - ay) > 3) continue;
       if (this.walkable(mp, nx, ny, true) && !this.npc_at(nx, ny) && !(nx === this.px && ny === this.py)) {
         this.npc_pos[n] = [nx, ny];
-        if (dx > 0) this.npc_face[n] = 'right';
-        else if (dx < 0) this.npc_face[n] = 'left';
-        else if (dy > 0) this.npc_face[n] = 'down';
-        else if (dy < 0) this.npc_face[n] = 'up';
       }
     }
     this.move_indoor_npcs();
-  }
-
-  face_dir(): 'up' | 'down' | 'left' | 'right' {
-    const [dx, dy] = this.face;
-    if (dx > 0) return 'right';
-    if (dx < 0) return 'left';
-    if (dy > 0) return 'down';
-    return 'up';
   }
 
   fx_add(kind: 'dust' | 'sparkle' | 'splash' | 'coin', x: number, y: number, life: number = 0.55): void {
@@ -4795,14 +4781,14 @@ export class Game {
         s.tag(px, oy + sy, tag);
       }
     }
-    const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc', dir?: 'up' | 'down' | 'left' | 'right') => {
+    const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc') => {
       const [sx, sy] = [x - cx, y - cy];
       if (0 <= sx && sx < Math.min(vw, m.w) && 0 <= sy && sy < Math.min(vh, m.h)) {
         const px = ox + sx;
         const bg = s.buf[oy + sy][px][2];
         const under = s.tags[oy + sy][px];
         s.put(px, oy + sy, ch, fg, bg, bold);
-        if (under) s.tag(px, oy + sy, { ...under, ent, ...(dir ? { dir } : {}) });
+        if (under) s.tag(px, oy + sy, { ...under, ent });
       }
     };
     // Draw outdoor Dog, Horse, and grazing Chickens/Cows/Sheep on the Farm
@@ -4830,12 +4816,12 @@ export class Game {
     }
     for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
       if (NPCS[n]?.where?.[0] === this.mapname) {
-        at(x, y, NPCS[n].g, NPCS[n].col, true, 'npc', this.npc_face[n] || 'down');
+        at(x, y, NPCS[n].g, NPCS[n].col);
       }
     }
     for (const [n, d] of Object.entries(this.indoor_npcs)) {
       if (d.map === this.mapname && n !== this.married) {
-        at(d.pos[0], d.pos[1], NPCS[n].g, NPCS[n].col, true, 'npc', this.npc_face[n] || 'down');
+        at(d.pos[0], d.pos[1], NPCS[n].g, NPCS[n].col);
       }
     }
     if (this.mapname === 'house' && this.married) {
@@ -4855,7 +4841,7 @@ export class Game {
             : this.riding_horse
               ? '0A'
               : '07';
-    at(this.px, this.py, '@', playerCol, true, 'player', this.face_dir());
+    at(this.px, this.py, '@', playerCol, true, 'player');
 
     if (classic && !m.indoor && m.name !== 'mine' && this.weather !== 'Sunny' && !s.reducedMotion) {
       const rng = py_rng(Math.floor((Date.now() / 1000) * 8));

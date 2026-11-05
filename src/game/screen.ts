@@ -31,8 +31,6 @@ export type CellTag = {
   zw?: number;
   /** Entity standing on this cell: 'player', 'npc', 'animal', 'pet'. */
   ent?: string;
-  /** Facing for composed character sprites. */
-  dir?: 'up' | 'down' | 'left' | 'right';
 };
 
 export type RenderFx = {
