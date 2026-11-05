@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 94/94 tests pass, typecheck clean, production build passes.
+- **State:** working. 95/95 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** roadmap release 3 (offscreen/layered renderer), then greenhouse and accessibility settings. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 94 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 95 passed, 5 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -54,7 +54,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 - **Villager Notes (`R`)**: every NPC's hearts, favourite gifts, and usual whereabouts, paginated safely without splitting a villager across pages.
 - **Tool previews:** the HUD shows the current tool's stamina cost (`-2st`, etc.) and a faint warning `!`; the map highlights the primary target and expanded area-of-effect cells.
 - **Context-sensitive touch action:** one large button becomes `USE HOE`, `TALK`, `ENTER`, `HARVEST`, `SHIP`, `SLEEP`, etc. It becomes `OK` while a modal/menu is open.
-- **Visual polish:** eased camera follow, longer dawn/dusk shadows, directional terrain-edge glyphs, a quieter HUD, interaction pulse, short menu reveal wipes, and `prefers-reduced-motion` support with a desktop Motion toggle. A Detail button (also in the Diary menu) switches the half-size ground textures between High and Plain; the choice is saved in `hrvstmn-hires`.
+- **Visual polish:** eased camera follow, longer dawn/dusk shadows, directional terrain-edge glyphs, a quieter HUD, interaction pulse, short menu reveal wipes, and `prefers-reduced-motion` support with a desktop Motion toggle. A Detail button (also in the Diary menu) switches the half-size ground textures between High and Plain; the choice is saved in `hrvstmn-hires`. The Enhanced canvas repaints only changed cells (`frameDirtyRect`).
   - **Action feedback:** tool use, harvests, fishing and deliveries add dust, sparkles, splashes and coin glyphs. Characters remain single full-size tokens for readability.
   - **Living world:** rain puddles persist into the following fair day, contact shadows swing with the sun, and water edges add reeds, lily pads, beach crabs, farm rabbits and town cats.
 - Three styles are no longer a user-facing feature. Do not reintroduce a style switch without asking.
@@ -77,7 +77,7 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 94 tests: enhanced 70, render 14, rules 7, engine 3
+src/game/*.test.ts             node:test — 95 tests: enhanced 71, render 14, rules 7, engine 3
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -136,7 +136,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
-- #35: doors swing open with warm light when the player stands at them; windows go dark one by one after 10 PM; surf rolls onto the beach; storm whitecaps and wind-driven ripples; one lily-pad/reed system (none on the sea or in winter).
+- #36: doors swing open with warm light when the player stands at them; windows go dark one by one after 10 PM; surf rolls onto the beach; storm whitecaps and wind-driven ripples; one lily-pad/reed system (none on the sea or in winter).
 - #28 `fba5983`: Farm Mastery; five disciplines, XP from real actions, one-time rank rewards, Diary page.
 - #26 `98ee873`: Achievements & Journal; 14 derived milestones with progress, Diary menu page, persisted request completion count.
 - #24 `ae42356`: Rose Square request board; timed villager requests, delivery rewards, overnight expiry, Today's Plan integration.

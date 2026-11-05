@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, windowLit, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, windowLit, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -61,6 +61,17 @@ describe('skyFor', () => {
 });
 
 describe('computeFrame', () => {
+  test('dirty rectangles bound changed cells with glyph overhang', () => {
+    const cell = (ch: string) => ({ ch, fg: '#ffffff', bg: '#000000', bold: false });
+    const a = Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => cell('a')));
+    const b = a.map((row) => row.map((o) => ({ ...o })));
+    b[2][2].ch = 'b';
+    assert.deepEqual(frameDirtyRect(a, b), { x0: 1, y0: 1, x1: 4, y1: 4 });
+    const same = a.map((row) => row.map((o) => ({ ...o })));
+    assert.equal(frameDirtyRect(a, same), null);
+    assert.deepEqual(frameDirtyRect(null, a), { x0: 0, y0: 0, x1: 5, y1: 5 });
+  });
+
   test('tagged grass gets a coloured ground instead of black', () => {
     const out = computeFrame(scene(), 0);
     assert.notEqual(out[5][5].bg, '#000000');
