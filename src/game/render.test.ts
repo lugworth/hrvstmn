@@ -163,6 +163,15 @@ describe('engine + renderer', () => {
       for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) if (pass(m, x + dx, y + dy)) queue.push([name, x + dx, y + dy]);
     }
     assert.deepEqual([...maps].sort(), [...outdoor].sort());
+    // inside the new regions every patch of open ground is reachable, so nothing spawns out of reach
+    for (const name of ['woods', 'ridge', 'river', 'point']) {
+      const m = g.maps[name];
+      for (let y = 0; y < m.h; y++) {
+        for (let x = 0; x < m.w; x++) if (pass(m, x, y)) assert.ok(seen.has(`${name}:${x},${y}`), `${name} ${x},${y} is unreachable`);
+      }
+    }
+    // the road out of town to Willow Bend joins the town's paths
+    for (let x = 61; x <= 71; x++) assert.ok(pass(g.maps.town, x, 13), `town ${x},13`);
   });
 
   test('the outer regions get forage, and fallen branches gather in the woods each day', () => {

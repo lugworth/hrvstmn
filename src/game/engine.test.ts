@@ -173,8 +173,8 @@ describe('outer-region content', () => {
   test("Lighthouse Point: the keeper's log reads one page a day and leaves Sea Glass at the end", async () => {
     const g = fresh();
     const said = quiet(g);
-    assert.equal(g.maps.point.signs['45,12'], 'lighthouse_log');
-    g.warp('point', 44, 12, [1, 0]);
+    assert.equal(g.maps.point.signs['45,10'], 'lighthouse_log');
+    g.warp('point', 45, 11, [0, -1]);
     await g.interact();
     assert.equal(g.lighthouse_log, 1);
     assert.ok(said[0].includes(LIGHTHOUSE_LOG[0]));
