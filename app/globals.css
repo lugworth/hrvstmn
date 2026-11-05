@@ -41,46 +41,252 @@ html, body {
   color: var(--base05);
   font-family: "HRVSTMN Mono", ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
   overflow: hidden;
+  overscroll-behavior: none;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   touch-action: manipulation;
 }
 
-.game-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 4px 10px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--base01);
+/* ---- App shell: fill the dynamic viewport (tracks mobile browser toolbars) inside the safe areas */
+.app-shell {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   background: var(--base00);
-  font-size: 16px;
-  line-height: 1.4;
+}
+.game-root {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
 }
 
-.game-control {
-  padding: 8px 6px;
+/* ---- Touch layout. Portrait: map on top, then a utility row, D-pad (left thumb) and actions
+   (right thumb). Short landscape screens (phones) put the controls in columns either side. */
+.touch-ui {
+  --u: clamp(40px, 12.5vw, 56px);
+  --gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "stage stage"
+    "util util"
+    "move act";
+  touch-action: none;
+  overscroll-behavior: none;
+}
+.touch-ui .t-stage {
+  grid-area: stage;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.touch-ui .t-util {
+  grid-area: util;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--gap);
+  padding: 6px 12px 0;
+}
+.touch-ui .t-util-a,
+.touch-ui .t-util-b {
+  display: contents;
+}
+.touch-ui .t-move {
+  grid-area: move;
+  align-self: end;
+  padding: 10px 0 12px 12px;
+}
+.touch-ui .t-act {
+  grid-area: act;
+  align-self: end;
+  padding: 10px 12px 12px 0;
+}
+
+@media (orientation: landscape) and (max-height: 540px) {
+  .touch-ui {
+    --u: clamp(36px, 11.5vh, 52px);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "util-a stage util-b"
+      "move stage act";
+  }
+  .touch-ui .t-util {
+    display: contents;
+  }
+  .touch-ui .t-util-a,
+  .touch-ui .t-util-b {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: var(--gap);
+    padding-top: 8px;
+  }
+  .touch-ui .t-util-a {
+    grid-area: util-a;
+    padding-left: 10px;
+    padding-right: 8px;
+  }
+  .touch-ui .t-util-b {
+    grid-area: util-b;
+    padding-left: 8px;
+    padding-right: 10px;
+  }
+  .touch-ui .t-move {
+    padding: 8px 8px 10px 10px;
+  }
+  .touch-ui .t-act {
+    padding: 8px 10px 10px 8px;
+  }
+}
+
+.pad-btn,
+.dpad-arm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 4px;
+  border-radius: 8px;
+  border: 1px solid var(--base02);
+  background: var(--base01);
   color: var(--base05);
-  background: transparent;
-  border: 0;
-  border-radius: 0;
+  font: 700 clamp(11px, calc(var(--u, 44px) * 0.24), 14px)/1.1 "HRVSTMN Mono", ui-monospace, "DejaVu Sans Mono", Menlo, monospace;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 0 var(--base00);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   cursor: pointer;
-  white-space: nowrap;
 }
-.game-control:hover { color: var(--base0C); }
-.game-control-primary { padding-inline: 16px; background: var(--base0C); color: var(--base00); font-weight: 700; }
-.game-control-primary:hover { background: var(--base07); color: var(--base00); }
-.game-shortcut { color: var(--base07); }
-.game-control-primary .game-shortcut { color: inherit; }
-.game-motion { margin-left: auto; border-left: 1px solid var(--base01); padding-left: 16px; color: var(--base04); }
-.game-control:focus-visible, .touch-key:focus-visible, #term:focus-visible { outline: 2px solid var(--base0C); outline-offset: 2px; }
-.touch-key { min-height: 44px; border: 1px solid var(--base01); background: var(--base00); color: var(--base05); border-radius: 0; touch-action: none; }
-.touch-key:active { border-color: var(--base0C); background: var(--base01); }
-.touch-key-primary { background: var(--base0C); border-color: var(--base0C); color: var(--base00); }
+.pad-btn:active,
+.dpad-arm[data-on="1"] {
+  background: var(--base02);
+  border-color: var(--base03);
+}
+.pad-btn[aria-pressed="true"] {
+  border-color: currentColor; /* toggles that are on wear their own colour */
+}
+.dpad-arm[data-on="1"] {
+  color: var(--base07);
+}
+.pad-btn:active,
+.dpad-arm[data-on="1"] {
+  transform: translateY(1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pad-btn:active,
+  .dpad-arm[data-on="1"] {
+    transform: none;
+  }
+}
 
-@media (min-width: 1450px) { .game-toolbar { font-size: 18px; } }
-@media (max-width: 700px) {
-  .game-toolbar { gap: 2px 6px; padding: 6px; font-size: 11px; }
-  .game-control { padding: 6px; }
+.dpad {
+  display: grid;
+  width: max-content; /* the box must hug the arms: directions are measured from its centre */
+  grid-template-columns: repeat(3, var(--u));
+  grid-template-rows: repeat(3, var(--u));
+  gap: var(--gap);
+  touch-action: none;
+}
+.dpad-arm {
+  font-size: calc(var(--u) * 0.36);
+  pointer-events: none; /* the D-pad surface tracks the thumb */
+}
+.dpad-up { grid-area: 1 / 2; }
+.dpad-left { grid-area: 2 / 1; }
+.dpad-right { grid-area: 2 / 3; }
+.dpad-down { grid-area: 3 / 2; }
+.dpad-hub {
+  grid-area: 2 / 2;
+  margin: 22%;
+  border-radius: 50%;
+  border: 1px solid var(--base01);
+}
+
+.act-grid {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 1.35) calc(var(--u) * 1.65);
+  grid-template-rows: calc(var(--u) * 1.15) calc(var(--u) * 1.85);
+  gap: var(--gap);
+}
+.act-grid .pad-btn {
+  font-size: clamp(10px, calc(var(--u) * 0.24), 13px);
+}
+.act-tool,
+.act-use {
+  color: var(--base05);
+}
+.act-menu {
+  color: var(--base04);
+}
+.act-grid .act-a {
+  color: var(--base0B);
+  border-color: var(--base0B);
+  font-size: clamp(11px, calc(var(--u) * 0.28), 15px);
+  word-spacing: 100vw; /* one word per line: "USE / HAMMER" */
+}
+
+.more-sheet {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--base02);
+  border-radius: 10px;
+  background: var(--base00);
+}
+.type-bar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 30;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--base0D);
+  border-radius: 10px;
+  background: var(--base00);
+}
+/* Hidden but focusable: the field must already be in the page when a prompt opens. */
+.type-bar.type-off {
+  opacity: 0;
+  pointer-events: none;
+}
+.type-bar input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--base02);
+  border-radius: 6px;
+  background: var(--base00);
+  color: var(--base07);
+  font: 16px "HRVSTMN Mono", ui-monospace, "DejaVu Sans Mono", Menlo, monospace; /* >= 16px: no iOS focus zoom */
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: manipulation;
+}
+.type-bar input::placeholder {
+  color: var(--base03);
+}
+.type-bar .type-done {
+  padding: 0 14px;
+  color: var(--base0B);
 }

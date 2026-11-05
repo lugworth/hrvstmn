@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
 import { SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameSignature, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -61,9 +62,46 @@ describe('skyFor', () => {
 });
 
 describe('computeFrame', () => {
+  test('dirty rectangles bound changed cells with glyph overhang', () => {
+    const cell = (ch: string) => ({ ch, fg: '#ffffff', bg: '#000000', bold: false });
+    const a = Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => cell('a')));
+    const b = a.map((row) => row.map((o) => ({ ...o })));
+    b[2][2].ch = 'b';
+    assert.deepEqual(frameDirtyRect(a, b), { x0: 1, y0: 1, x1: 4, y1: 4 });
+    const same = a.map((row) => row.map((o) => ({ ...o })));
+    assert.equal(frameDirtyRect(a, same), null);
+    assert.deepEqual(frameDirtyRect(null, a), { x0: 0, y0: 0, x1: 5, y1: 5 });
+  });
+
   test('tagged grass gets a coloured ground instead of black', () => {
     const out = computeFrame(scene(), 0);
     assert.notEqual(out[5][5].bg, '#000000');
+  });
+
+  test('entities render as single creature tokens', () => {
+    const s = scene();
+    s.put(5, 5, '@', '07', '00', true);
+    s.tag(5, 5, { t: 'grass', ent: 'player', wx: 5, wy: 5 });
+    const out = computeFrame(s, 0);
+    assert.equal(out[5][5].ch, '☻');
+  });
+
+  test('action effects render as transient accent glyphs', () => {
+    const s = scene({ fx: [{ kind: 'sparkle', x: 6, y: 6, age: 0, life: 1 }] });
+    const out = computeFrame(s, 0);
+    assert.equal(out[6][6].ch, '*');
+    assert.ok(out[6][6].glow);
+  });
+
+  test('accessible cues replace ripe crops and wet soil with shape glyphs', () => {
+    const s = scene({ cues: true });
+    s.put(7, 7, 'T', '09', '00', true);
+    s.tag(7, 7, { t: 'field', wx: 7, wy: 7, k: 'crop:ripe' });
+    s.put(8, 7, '≡', '0B', '00');
+    s.tag(8, 7, { t: 'field', wx: 8, wy: 7, k: 'soil:wet' });
+    const out = computeFrame(s, 0);
+    assert.equal(out[7][7].ch, '!');
+    assert.equal(out[7][8].ch, '≈');
   });
 
   test('textures follow world coordinates, not screen position', () => {
@@ -172,6 +210,12 @@ describe('computeFrame', () => {
     assert.equal(computeFrame(s, 0)[5][60].ch, '♥');
   });
 
+  test('HUD icons stay hidden under dialogs drawn over them', () => {
+    const s = scene({ icons: [{ x: 60, y: 5, icon: 'stamina' }] });
+    s.box(55, 3, 20, 6, '0D', '00', 'Notes');
+    assert.equal(computeFrame(s, 0)[5][60].ch, ' ');
+  });
+
   test('tool target highlight survives styling', () => {
     const plain = computeFrame(scene(), 0)[6][6].bg;
     const s = scene();
@@ -277,7 +321,7 @@ describe('computeFrame', () => {
     for (let y = 1; y < 20; y++) for (let x = 25; x < 50; x++) s.tag(x, y, { t: 'field', wx: x, wy: y });
     const out = computeFrame(s, 0);
     const edge = [5, 6, 7, 8, 9, 10, 11, 12].map((y) => out[y][25]);
-    assert.ok(edge.some((o) => o.ch === '░'), 'soil next to grass is dithered with the grass colour');
+    assert.ok(edge.some((o) => o.ch === '▌'), 'soil next to grass takes a shape-matched half block in the grass colour');
   });
 
   test('every output colour comes from the Isotope ramps', () => {
@@ -295,11 +339,79 @@ describe('computeFrame', () => {
     }
   });
 
-  test('water is deeper (darker) away from the shore', () => {
-    const s = scene();
+  const lake = (over: Partial<RenderCtx> = {}) => {
+    const s = scene(over);
     for (let y = 2; y < 18; y++) for (let x = 5; x < 40; x++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
-    const out = computeFrame(s, 0);
-    assert.ok(lum(out[10][20].bg) < lum(out[3][20].bg));
+    return s;
+  };
+  const rowLum = (row: { bg: string }[]) => row.slice(12, 33).reduce((a, o) => a + lum(o.bg), 0) / 21;
+
+  test('water is deeper (darker) away from the shore, through a graded middle', () => {
+    const out = computeFrame(lake(), 0);
+    assert.ok(rowLum(out[2]) > rowLum(out[3]), 'shallows are lightest');
+    assert.ok(rowLum(out[3]) > rowLum(out[10]), 'the middle is darkest');
+  });
+
+  test('ripples drift across the water together, and hold still with reduced motion', () => {
+    const ripples = (s: Screen, t: number) => computeFrame(s, t).slice(4, 16).map((r) => r.slice(10, 35).map((o) => o.ch).join('')).join('|');
+    const s = lake();
+    assert.notEqual(ripples(s, 0), ripples(s, 4), 'the surface moves');
+    const streaks = ripples(s, 0).match(/[≈∼]{3,}/g) ?? [];
+    assert.ok(streaks.length > 10, 'ripples run in streaks, not single specks');
+    const still = lake({ reducedMotion: true });
+    assert.equal(ripples(still, 0), ripples(still, 4));
+  });
+
+  test('lily pads and reeds keep a touch of colour on ponds, but not on the sea or in winter', () => {
+    const pads = (over: Partial<RenderCtx>) => computeFrame(lake(over), 0).flat().filter((o) => '◡⌓'.includes(o.ch));
+    const reeds = (over: Partial<RenderCtx>) => computeFrame(lake(over), 0).flat().filter((o) => '¦ʸ╽'.includes(o.ch));
+    const summer = pads({ season: 1 });
+    assert.ok(summer.length > 3);
+    assert.ok(summer.every((o) => o.accent && grey(o.fg) !== o.fg));
+    assert.ok(pads({ season: 0 }).length > 3, 'spring too');
+    assert.ok(reeds({ season: 1 }).length > 0, 'reeds along the bank');
+    assert.equal(pads({ season: 1, mapName: 'beach' }).length, 0, 'no pads on the sea');
+    assert.equal(pads({ season: 1, mapName: 'point' }).length, 0, 'nor off Lighthouse Point');
+    assert.equal(reeds({ season: 1, mapName: 'beach' }).length, 0, 'no reeds on the beach');
+    assert.equal(pads({ season: 3 }).length, 0, 'bare in winter');
+  });
+
+  test('surf rolls in toward the beach in lines', () => {
+    const surf = (s: Screen, t: number) => computeFrame(s, t).slice(2, 7).map((r) => r.slice(5, 40).filter((o) => o.ch === '≈' && o.bold).length);
+    const beach = lake({ mapName: 'beach' });
+    const frames = [0, 0.4, 0.8, 1.2, 1.6, 2].map((t) => surf(beach, t));
+    assert.ok(frames.some((rows) => rows.some((n) => n > 8)), 'a breaker spans the shore');
+    assert.notDeepEqual(frames[0], frames[2], 'and moves');
+    assert.ok([0, 0.4, 0.8, 1.2].every((t) => surf(lake(), t).every((n) => n === 0)), 'ponds have no surf');
+  });
+
+  test('storms whip up whitecaps on open water', () => {
+    const caps = (weather: string) => computeFrame(lake({ weather }), 0).flat().filter((o) => o.ch === '≋').length;
+    assert.ok(caps('Typhoon') > 5);
+    assert.equal(caps('Sunny'), 0);
+  });
+
+  test('a door swings open while the player stands at it', () => {
+    const s = scene();
+    s.put(10, 5, '+', '09', '00');
+    s.tag(10, 5, { t: 'door', wx: 10, wy: 5 });
+    assert.equal(computeFrame(s, 0)[5][10].ch, '▮', 'closed');
+    s.put(10, 6, '@', '0F', '00', true);
+    s.tag(10, 6, { t: 'grass', wx: 10, wy: 6, ent: 'player' });
+    const open = computeFrame(s, 0)[5][10];
+    assert.equal(open.ch, '▯');
+    assert.ok(open.glow, 'warm light from inside');
+  });
+
+  test('late at night households go to bed one by one', () => {
+    const lit = (m: number) => Array.from({ length: 200 }, (_, i) => windowLit(m, i, 3)).filter(Boolean).length;
+    assert.equal(lit(21 * 60), 200, 'all lit in the evening');
+    assert.ok(lit(23 * 60) < 160 && lit(23 * 60) > 80);
+    assert.ok(lit(60) < lit(23 * 60), 'fewer after midnight');
+    const s = scene({ minutes: 60 });
+    for (let x = 0; x < 50; x++) { s.put(x, 3, '=', '0C', '01'); s.tag(x, 3, { t: 'wall', wx: x, wy: 3, k: 'deco', dch: '=', dfg: '0C' }); }
+    const row = computeFrame(s, 0)[3];
+    assert.ok(row.some((o) => o.glow) && row.some((o) => !o.glow), 'some windows lit, some dark');
   });
 
   test('walls under the eaves are shaded and building ends get corner posts', () => {
@@ -344,11 +456,51 @@ describe('computeFrame', () => {
 
   test('monochrome world: plain terrain is pure grey', () => {
     const isGrey = (h: string) => { const [r, g, b] = hexToRgb(h); return r === g && g === b; };
-    for (const s of [scene(), scene({ season: 2 }), scene({ minutes: 22 * 60 })]) {
+    for (const s of [scene(), scene({ season: 2 }), scene({ minutes: 13 * 60, weather: 'Rain' })]) {
       for (const o of computeFrame(s, 0).slice(1, 20).flatMap((r) => r.slice(0, 50))) {
         if (!o.accent) assert.ok(isGrey(o.fg) && isGrey(o.bg), `${o.ch} ${o.fg}/${o.bg}`);
       }
     }
+  });
+
+  test('the grey world leans sepia at golden hour and moonlit blue at night, lamplight stays warm', () => {
+    const lean = (over: Partial<RenderCtx>, pick = (o: { bg: string }) => o) => {
+      const cells = computeFrame(scene(over), 0).slice(2, 18).flatMap((r) => r.slice(2, 48)).filter((o) => !o.accent).map(pick);
+      let warm = 0;
+      let cool = 0;
+      for (const o of cells) {
+        const [r, , b] = hexToRgb(o.bg);
+        if (r > b) warm++;
+        else if (b > r) cool++;
+      }
+      return { warm: warm / cells.length, cool: cool / cells.length };
+    };
+    assert.deepEqual(toneFor(12 * 60, 'Sunny', false, 'farm'), { warm: 0, cool: 0 });
+    assert.equal(toneFor(17.6 * 60, 'Sunny', false, 'farm').warm, 1);
+    assert.equal(toneFor(17.6 * 60, 'Rain', false, 'farm').warm, 0, 'no golden hour under cloud');
+    assert.equal(toneFor(23 * 60, 'Sunny', true, 'house').cool, 0, 'rooms are not tinted');
+    assert.ok(lean({ minutes: 17.6 * 60 }).warm > 0.6, 'golden hour');
+    assert.ok(lean({ minutes: 23 * 60 }).cool > 0.6, 'night');
+    // the player's lantern keeps a warm pool in the blue night
+    const s = scene({ minutes: 23 * 60 });
+    s.put(25, 10, '@', '0F', '00', true);
+    s.tag(25, 10, { t: 'grass', wx: 25, wy: 10, ent: 'player' });
+    const near = computeFrame(s, 0)[10].slice(22, 29).filter((o) => !o.accent);
+    assert.ok(near.every((o) => { const [r, , b] = hexToRgb(o.bg); return r >= b; }), 'lamplight is warm');
+  });
+
+  test('blue noise: every level once per 4 cells of the tile, no clumps', () => {
+    const vals: number[] = [];
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) vals.push(blueNoise(x, y));
+    const counts = new Map<number, number>();
+    for (const v of vals) counts.set(v, (counts.get(v) ?? 0) + 1);
+    assert.equal(counts.size, 256);
+    assert.ok([...counts.values()].every((n) => n === 4));
+    assert.equal(blueNoise(3, 5), blueNoise(35, 37), 'tiles every 32 cells');
+    // neighbours differ more than white noise would (mean |diff| of uniform noise is 1/3)
+    let diff = 0;
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) diff += Math.abs(blueNoise(x, y) - blueNoise(x + 1, y));
+    assert.ok(diff / 1024 > 0.36);
   });
 
   test('things of interest keep their colour as accents', () => {
@@ -484,8 +636,10 @@ describe('computeFrame', () => {
     const s = scene();
     for (let x = 0; x < 50; x++) for (let y = 8; y < 14; y++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
     const out = computeFrame(s, 0);
-    assert.ok((out[8][20].foam ?? 0) & 1, 'top shore');
-    assert.ok((out[13][20].foam ?? 0) & 4, 'bottom shore');
+    const shore = (y: number, bit: number) => out[y].slice(5, 45).filter((o) => (o.foam ?? 0) & bit).length;
+    assert.ok(shore(8, 1) > 25, 'top shore');
+    assert.ok(shore(13, 4) > 25, 'bottom shore');
+    assert.ok(shore(8, 1) < 40, 'broken here and there where the foam has drawn back');
     assert.equal(out[10][20].foam, undefined, 'open water has none');
   });
 
@@ -494,6 +648,8 @@ describe('computeFrame', () => {
     assert.equal(hiresLevel(16, 1), 2);
     assert.equal(hiresLevel(13, 3), 2, 'needs a 14px font for 3x3');
     assert.equal(hiresLevel(8, 3), 1);
+    assert.equal(effectiveHiresLevel(16, 2, false), 1, 'player preference can turn high-res detail off');
+    assert.equal(effectiveHiresLevel(16, 2, true), 3);
   });
 
   test('3x3 patterns: nine glyphs drawn from the texture pool, deterministic, density kept', () => {
@@ -511,16 +667,16 @@ describe('computeFrame', () => {
   });
 
   test('small objects become clusters across their tile, denser in the middle', () => {
-    const weed = { ch: '✿', fg: '#0f0', bg: '#000', bold: false, dx: 0.5, seed: 0.21 };
+    const weed = { ch: '✿', fg: '#0f0', bg: '#000', bold: false, seed: 0.21 };
     const rows = spritePattern(weed, 16, 3)!;
     assert.equal(rows.length, 3);
-    assert.ok(rows.every((r) => [...r].length === 6), 'spans the 2-cell tile');
+    assert.ok(rows.every((r) => [...r].length === 3), 'one glyph per detail step across the tile');
     let mid = 0;
     let edge = 0;
     for (let i = 0; i < 300; i++) {
       const rr = spritePattern({ ...weed, seed: i / 300 }, 16, 3)!;
-      mid += rr[1].slice(2, 4).replace(/ /g, '').length;
-      edge += (rr[0][0] + rr[2][5]).replace(/ /g, '').length;
+      mid += rr[1][1].replace(/ /g, '').length;
+      edge += (rr[0][0] + rr[2][2]).replace(/ /g, '').length / 2;
     }
     assert.ok(mid > edge * 1.5);
     assert.equal(spritePattern({ ...weed, glow: '#fff' }, 16, 3), null, 'glowing ripe crops stay single');
@@ -528,7 +684,7 @@ describe('computeFrame', () => {
     assert.equal(spritePattern(weed, 16, 1), null, 'off on small screens');
     assert.ok(SPRITE_KEEP.has('ψ') && SPRITE_KEEP.has('•'), 'weeds and stones keep a full-size glyph');
     const w3 = spritePattern({ ...weed, ch: 'ψ' }, 16, 3)!;
-    assert.equal(w3[1].slice(2, 4), '  ', 'centre left clear for the full-size weed');
+    assert.equal(w3[1][1], ' ', 'centre left clear for the full-size weed');
   });
 
   test('meadows carry a faint stipple between the tufts', () => {
@@ -560,6 +716,343 @@ describe('computeFrame', () => {
     const dew = (minutes: number) => [0, 0.5, 1, 1.5].reduce((n, tt) => n + computeFrame(scene({ minutes }), tt).flat().filter((o) => o.ch === '✧').length, 0);
     assert.ok(dew(7 * 60) > 0);
     assert.equal(dew(13 * 60), 0);
+  });
+
+  test('meadow shading comes in soft patches rather than per-cell speckle', () => {
+    const out = computeFrame(scene({ weather: 'Rain' }), 0);
+    let near = 0;
+    let far = 0;
+    for (let y = 2; y < 19; y++) {
+      for (let x = 0; x < 40; x++) {
+        if (out[y][x].bg !== out[y][x + 1].bg) near++;
+        if (out[y][x].bg !== out[y][x + 7].bg) far++;
+      }
+    }
+    assert.ok(near < far * 0.7, `neighbours mostly match (${near} vs ${far})`);
+  });
+
+  test('a map narrower than its window fades into the margin instead of a black frame', () => {
+    const narrow = (over: Partial<RenderCtx> = {}) => {
+      const s = new Screen(80, 24);
+      s.ctx = { mapName: 'farm', indoor: false, minutes: 12 * 60, season: 0, weather: 'Sunny', zoom: 1, view: { x: 15, y: 1, w: 20, h: 19 }, divX: 50, divY: 20, icons: [], ...over };
+      for (let y = 1; y < 20; y++) {
+        for (let x = 15; x < 35; x++) {
+          const tree = x < 17 || x > 32;
+          s.put(x, y, tree ? 'T' : ' ', '0B', '00', tree);
+          s.tag(x, y, { t: tree ? 'tree' : 'grass', wx: x - 15, wy: y });
+        }
+      }
+      return s;
+    };
+    const out = computeFrame(narrow(), 0);
+    const near = out[10][14];
+    const far = out[10][3];
+    assert.ok(!near.ui && lum(near.bg) > 0, 'the margin next to the map is not black');
+    assert.ok(lum(near.bg) <= lum(out[10][15].bg), 'and no brighter than the map edge');
+    assert.ok(lum(far.bg) < lum(near.bg) || far.bg === '#000000', 'it fades with distance');
+    assert.ok(out[10].slice(10, 15).some((o) => '♣♠'.includes(o.ch)), 'the treeline carries on');
+    assert.ok(out[10][36].bg !== '#000000', 'on both sides');
+    const indoor = computeFrame(narrow({ indoor: true }), 0);
+    assert.equal(indoor[10][14].bg, '#000000', 'rooms stay framed by black');
+    const d = narrow();
+    d.box(0, 6, 12, 6, '03', '00', 'Hi');
+    assert.ok(computeFrame(d, 0)[8][4].ui, 'a dialog over the margin stays a dialog');
+  });
+
+  test('sign lettering stays a plain glyph, even an apostrophe', () => {
+    const s = scene();
+    s.put(10, 5, "'", '07', '00');
+    s.tag(10, 5, { t: 'wall', k: 'deco', dch: "'", wx: 10, wy: 5 });
+    const out = computeFrame(s, 0);
+    assert.equal(out[5][10].ch, "'");
+    assert.equal(subPattern(out[5][10], 16, 2), null, 'not turned into grass texture');
+    const grassTick = out.flat().find((o) => o.ch === "'" && o !== out[5][10]);
+    assert.ok(grassTick && subPattern(grassTick, 16, 2), 'grass ticks still get their texture');
+  });
+
+  test('shoreline foam laps: its brightness changes over time', () => {
+    const s = lake();
+    const foam = (t: number) => computeFrame(s, t)[2].slice(10, 35).map((o) => o.foamCol).join();
+    assert.notEqual(foam(0), foam(1.5));
+  });
+
+  test('a tool swing flashes a slash in the swing direction, coloured by tool tier', () => {
+    const swing = (tier: number, dir: [number, number]) => computeFrame(scene({ fx: [{ kind: 'swing', x: 10, y: 5, age: 0.05, life: 0.2, dir, tier }] }), 0)[5][10];
+    assert.equal(swing(0, [1, 0]).ch, '╲');
+    assert.equal(swing(0, [-1, 0]).ch, '╱');
+    assert.ok(swing(3, [1, 0]).accent);
+    assert.notEqual(swing(0, [1, 0]).fg, swing(3, [1, 0]).fg, 'gold is not basic');
+    assert.equal(TIER_COLOURS.length, 7);
+  });
+
+  test('a struck object flashes, then debris bursts out after a short hit-pause', () => {
+    const at = (age: number, reducedMotion = false) => computeFrame(scene({ reducedMotion, fx: [
+      { kind: 'flash', x: 20, y: 10, age: Math.min(age, 0.13), life: 0.14 },
+      { kind: 'debris', x: 20, y: 10, age, life: 0.67, delay: 0.12, stuff: 'stone', seed: 5 },
+    ] }), 0);
+    const plain = computeFrame(scene(), 0);
+    const flash = at(0.05)[10][20];
+    assert.equal(flash.fg, '#ffffff');
+    assert.ok(lum(flash.bg) > lum(plain[10][20].bg));
+    const bits = (out: ReturnType<typeof computeFrame>) => out.flat().filter((o) => '•∙'.includes(o.ch)).length;
+    assert.equal(bits(at(0.05)), 0, 'nothing flies during the hit-pause');
+    assert.ok(bits(at(0.35)) >= 2, 'then a burst');
+    assert.equal(bits(at(0.35, true)), 0, 'no debris with reduced motion');
+  });
+
+  test('rewards float up off the spot', () => {
+    const row = (age: number) => {
+      const out = computeFrame(scene({ fx: [{ kind: 'text', x: 20, y: 10, age, life: 1.22, delay: 0.12, text: '+6' }] }), 0);
+      return out.findIndex((r) => r.slice(18, 22).map((o) => o.ch).join('').includes('+6'));
+    };
+    assert.equal(row(0.05), -1, 'waits for the hit-pause');
+    assert.equal(row(0.2), 9, 'starts just above');
+    assert.ok(row(0.9) < 9, 'and rises');
+  });
+
+  test('screen shake is a few pixels that die away, never with reduced motion', () => {
+    const mag = (s: { age: number; strength: number }) => Math.hypot(...shakeOffset(s));
+    assert.ok(mag({ age: 0.02, strength: 2 }) > 0);
+    assert.ok(mag({ age: 0.02, strength: 2 }) <= 4.5);
+    assert.deepEqual(shakeOffset({ age: 0.3, strength: 2 }), [0, 0], 'over within a quarter second');
+    assert.deepEqual(shakeOffset({ age: 0.13, strength: 1 }), [0, 0], 'light hits are shorter');
+    assert.deepEqual(shakeOffset({ age: 0.02, strength: 2 }, true), [0, 0]);
+    assert.deepEqual(shakeOffset(undefined), [0, 0]);
+  });
+
+  test('edge cells pick the block glyph whose shape matches where the other ground lies', () => {
+    const occ = (p: string) => { const c = p.replace(/\s/g, ''); return [[c[0] === '#', c[1] === '#', c[2] === '#'], [c[3] === '#', false, c[5] === '#'], [c[6] === '#', c[7] === '#', c[8] === '#']]; };
+    assert.equal(edgeGlyph(occ('### ... ...')), '▀');
+    assert.equal(edgeGlyph(occ('... ... ###')), '▄');
+    assert.equal(edgeGlyph(occ('#.. #.. #..')), '▌');
+    assert.equal(edgeGlyph(occ('..# ..# ..#')), '▐');
+    assert.equal(edgeGlyph(occ('### #.. #..')), '▛', 'an inside corner');
+    assert.equal(edgeGlyph(occ('..# ..# ###')), '▟');
+    assert.equal(edgeGlyph(occ('#.. ... ...')), '▘', 'a diagonal neighbour only reaches a corner');
+    assert.equal(edgeGlyph(occ('... ... ...')), ' ');
+  });
+
+  test('two-tone trees: grey canopy with a small colour blossom or fruit', () => {
+    const trees = (season: number) => {
+      const s = scene({ season });
+      for (let y = 2; y < 18; y++) for (let x = 2; x < 48; x++) { s.put(x, y, 'T', '0B', '00', true); s.tag(x, y, { t: 'tree', wx: x, wy: y }); }
+      return computeFrame(s, 0).slice(2, 18).flatMap((r) => r.slice(2, 48));
+    };
+    const spring = trees(0).filter((o) => o.detail);
+    assert.ok(spring.length > 20);
+    for (const o of spring) {
+      assert.equal(o.detail!.ch, '✿');
+      assert.ok(!o.accent, 'the tree itself stays grey');
+    }
+    const pink = spring.filter((o) => { const [r, g, b] = hexToRgb(o.detail!.fg); return !(r === g && g === b); });
+    assert.ok(pink.length > spring.length / 2, 'most blossom keeps its colour (the palest is white)');
+    assert.ok(trees(1).some((o) => o.detail?.ch === '●'), 'summer fruit');
+    assert.equal(trees(3).filter((o) => o.detail).length, 0, 'bare in winter');
+  });
+
+  type Row = ReturnType<typeof computeFrame>[number];
+  const avgLum = (row: Row, of: 'fg' | 'bg') => row.reduce((a, o) => a + lum(o[of]), 0) / row.length;
+
+  test('Skyline Ridge cliffs are rock faces lit from above, snow-capped in winter', () => {
+    const band = (over: Partial<RenderCtx>) => {
+      const s = scene({ mapName: 'ridge', ...over });
+      for (let x = 0; x < 50; x++) for (const y of [8, 9]) { s.put(x, y, '^', '03', '00'); s.tag(x, y, { t: 'cliff', wx: x, wy: y }); }
+      const out = computeFrame(s, 0);
+      return { brow: out[8].slice(0, 50), base: out[9].slice(0, 50) };
+    };
+    const spring = band({});
+    assert.ok(spring.brow.every((o) => o.ch === '▀'), 'a lit brow along the top');
+    assert.ok(avgLum(spring.brow, 'fg') > avgLum(spring.base, 'fg') + 30, 'the brow is brighter than the face');
+    assert.ok(avgLum(spring.brow, 'bg') > avgLum(spring.base, 'bg'), 'the face darkens toward its base');
+    assert.ok(new Set(spring.base.map((o) => o.ch).filter((c) => '─═≡'.includes(c))).size >= 2, 'bedded strata');
+    const dither = spring.base.filter((o) => '░▒'.includes(o.ch)).length;
+    assert.ok(dither > 3 && dither < 25, `a dithered base (${dither})`);
+    assert.ok(!spring.base.some((o) => lum(o.fg) > 200), 'no snow on the ledges in spring');
+    const winter = band({ season: 3 });
+    assert.ok(avgLum(winter.brow, 'fg') > avgLum(spring.brow, 'fg') + 40, 'snow caps the brow in winter');
+    assert.ok(winter.base.some((o) => '─═≡'.includes(o.ch) && lum(o.fg) > 200), 'and lies on some ledges');
+    // other maps keep their plain cliff rows
+    const s = scene({ mapName: 'mountain' });
+    for (let x = 0; x < 50; x++) for (const y of [8, 9]) s.tag(x, y, { t: 'cliff', wx: x, wy: y });
+    const plain = computeFrame(s, 0);
+    assert.ok(plain[8].slice(0, 50).every((o) => o.ch === '▔'));
+    assert.ok(plain[9].slice(0, 50).every((o) => '▲▴'.includes(o.ch)));
+  });
+
+  test('Willow Bend ripples ride the current downstream, quickest mid-channel', () => {
+    const channel = (mapName: string, over: Partial<RenderCtx> = {}) => {
+      const s = scene({ mapName, ...over });
+      for (let y = 1; y < 20; y++) for (let x = 20; x < 25; x++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
+      return s;
+    };
+    // how many rows a lane's ripples moved south between t = 0 and t = 3: the best-matching shift
+    const drift = (s: Screen, x: number) => {
+      const lane = (t: number) => computeFrame(s, t).slice(1, 20).map((r) => ('≈∼'.includes(r[x].ch) ? r[x].ch : ' '));
+      const [a, b] = [lane(0), lane(3)];
+      let best = { k: 0, score: -1 };
+      for (let k = -6; k <= 8; k++) {
+        let same = 0;
+        let n = 0;
+        for (let y = Math.max(0, k); y < 19 && y - k < 19; y++, n++) if (b[y] === a[y - k]) same++;
+        if (same / n > best.score) best = { k, score: same / n };
+      }
+      return best;
+    };
+    const river = channel('river');
+    const mid = drift(river, 22);
+    const bank = drift(river, 20);
+    assert.ok(mid.score > 0.85 && bank.score > 0.85, 'each lane carries its ripples along intact');
+    assert.ok(bank.k > 0, `downstream (${bank.k})`);
+    assert.ok(mid.k > bank.k, `faster mid-channel (${mid.k} vs ${bank.k})`);
+    const streaks = (s: Screen) => computeFrame(s, 0).flat().filter((o) => '╎╲╱'.includes(o.ch)).length;
+    assert.ok(streaks(river) > 0, 'flow streaks trace the current');
+    // a farm pond of the same shape only drifts sideways, and reduced motion holds the river still
+    const pond = drift(channel('farm'), 22);
+    assert.ok(pond.k <= 0 || pond.score < mid.score - 0.1, `ponds don't flow (${pond.k}, ${pond.score})`);
+    assert.equal(streaks(channel('farm')), 0);
+    assert.deepEqual(drift(channel('river', { reducedMotion: true }), 22), { k: 0, score: 1 });
+  });
+
+  test('Cedar Hollow lies in gloom under the canopy, broken by shafts of sun on fine days', () => {
+    // a dense grove on the left, an open clearing on the right
+    const grove = (mapName: string, weather: string) => {
+      const s = scene({ mapName, weather, minutes: 15 * 60 });
+      for (let y = 1; y < 20; y++) for (let x = 0; x < 30; x++) if ((x + 2 * y) % 3) { s.put(x, y, 'T', '0B', '00', true); s.tag(x, y, { t: 'tree', wx: x, wy: y }); }
+      return computeFrame(s, 0);
+    };
+    const under: [number, number][] = [];
+    for (let y = 3; y < 18; y++) for (let x = 3; x < 27; x++) if ((x + 2 * y) % 3 === 0) under.push([x, y]);
+    const compare = (weather: string) => {
+      const [woods, farm] = [grove('woods', weather), grove('farm', weather)];
+      const darker = under.filter(([x, y]) => lum(woods[y][x].bg) < lum(farm[y][x].bg)).length;
+      const lit = under.filter(([x, y]) => lum(woods[y][x].bg) > lum(farm[y][x].bg)).length;
+      const clearing = woods.slice(2, 18).every((r, y) => r.slice(36, 48).every((o, x) => o.bg === farm[y + 2][x + 36].bg));
+      return { darker, lit, clearing };
+    };
+    const sun = compare('Sunny');
+    assert.ok(sun.darker > under.length / 2, `ground under the canopy is gloomy (${sun.darker}/${under.length})`);
+    assert.ok(sun.lit > 0 && sun.lit < under.length / 3, `with a few shafts of sun (${sun.lit})`);
+    assert.ok(sun.clearing, 'the open clearing is untouched');
+    const rain = compare('Rain');
+    assert.ok(rain.darker > under.length / 2, 'still gloomy in the rain');
+    assert.equal(rain.lit, 0, 'but no shafts of sun');
+  });
+
+  test('the lighthouse sweeps a beam over the sea at night and in storms, held still with reduced motion', () => {
+    const coast = (over: Partial<RenderCtx>) => {
+      const s = scene({ mapName: 'point', minutes: 23 * 60, ...over });
+      for (let y = 1; y < 20; y++) {
+        for (let x = 0; x < 50; x++) {
+          const sea = y >= 9;
+          s.put(x, y, sea ? '~' : '.', sea ? '0D' : '09', '00');
+          s.tag(x, y, { t: sea ? 'water' : 'sand', wx: x, wy: y });
+        }
+      }
+      for (let y = 3; y < 7; y++) for (let x = 10; x < 13; x++) s.tag(x, y, { t: 'wall', wx: x, wy: y });
+      s.put(11, 5, '=', '0C', '01');
+      s.tag(11, 5, { t: 'wall', wx: 11, wy: 5, k: 'deco', dch: '=', dfg: '0C' });
+      return s;
+    };
+    // the beam starts out pointing south-east, out to sea, through (27, 13)
+    const probe = (over: Partial<RenderCtx>, t: number) => lum(computeFrame(coast(over), t)[13][27].bg);
+    const night = probe({}, 0);
+    assert.ok(night > probe({ mapName: 'beach' }, 0) + 20, 'the beam brightens the sea');
+    assert.ok(probe({}, 5) < night - 20, 'half a turn later it points inland');
+    const window = computeFrame(coast({ minutes: 60 }), 0)[5][11];
+    assert.ok(window.glow && window.accent, 'the lantern stays lit after the households sleep');
+    const still = probe({ reducedMotion: true }, 0);
+    assert.equal(probe({ reducedMotion: true }, 5), still, 'with reduced motion the beam holds still');
+    assert.ok(still > probe({ mapName: 'beach', reducedMotion: true }, 0) + 20);
+    const storm = { minutes: 12 * 60, weather: 'Typhoon', reducedMotion: true };
+    assert.ok(probe(storm, 0) > probe({ ...storm, mapName: 'beach' }, 0) + 15, 'storms light it by day');
+    assert.equal(probe({ minutes: 12 * 60 }, 0), probe({ minutes: 12 * 60, mapName: 'beach' }, 0), 'but not on a fair day');
+    const beam = computeFrame(coast({}), 0).flat().filter((o) => o.accent && grey(o.fg) !== o.fg && lum(o.bg) > 40);
+    assert.equal(beam.length, 0, 'the beam is light, not a new colour');
+  });
+
+  test('tide pools on Lighthouse Point glint now and then on fine days', () => {
+    const pools = (over: Partial<RenderCtx>) => {
+      const s = scene({ mapName: 'point', ...over });
+      for (let y = 1; y < 20; y++) for (let x = 0; x < 50; x++) s.tag(x, y, { t: 'sand', wx: x, wy: y });
+      const at: [number, number][] = [];
+      for (let y = 3; y < 18; y += 4) {
+        for (let x = 3; x < 48; x += 5) {
+          s.put(x, y, '~', '0B', '00');
+          s.tag(x, y, { t: 'pond', wx: x, wy: y });
+          at.push([x, y]);
+        }
+      }
+      return (t: number) => {
+        const out = computeFrame(s, t);
+        return at.filter(([x, y]) => out[y][x].ch === '✦').map(([x, y]) => `${x},${y}`).join(' ');
+      };
+    };
+    const frames = (over: Partial<RenderCtx>) => [0, 0.7, 1.4, 2.1, 2.8, 3.5, 4.2, 4.9].map(pools(over));
+    const sunny = frames({});
+    const count = (f: string[]) => f.reduce((n, s) => n + (s ? s.split(' ').length : 0), 0);
+    assert.ok(sunny.every((s) => !s || s.split(' ').length < 12), 'only a few at a time');
+    assert.ok(new Set(sunny).size > 3, 'the glints come and go');
+    assert.ok(count(sunny) > 3 * count(frames({ mapName: 'farm' })), `more than a plain pond's sparkle (${count(sunny)})`);
+    assert.equal(count(frames({ weather: 'Rain' })), 0, 'none under rain clouds');
+  });
+
+  test('QA: the lamp pool at dusk is never darker than the ground around it', () => {
+    for (const over of [{ minutes: 17.5 * 60, weather: 'Rain' }, { minutes: 18 * 60, weather: 'Sunny' }]) {
+      const s = scene(over);
+      s.put(25, 10, '@', '0F', '00', true);
+      s.tag(25, 10, { t: 'grass', wx: 25, wy: 10, ent: 'player' });
+      const out = computeFrame(s, 0);
+      const ring = (r0: number, r1: number) => {
+        const cells = [];
+        for (let y = 2; y < 18; y++) for (let x = 2; x < 48; x++) {
+          const d = Math.hypot((x - 25) * 0.5, y - 10);
+          if (d >= r0 && d < r1) cells.push(lum(out[y][x].bg));
+        }
+        return cells.reduce((a, b) => a + b, 0) / cells.length;
+      };
+      assert.ok(ring(1, 4) >= ring(8, 14), `${over.weather}: lamp ring ${ring(1, 4).toFixed(1)} vs far ${ring(8, 14).toFixed(1)}`);
+    }
+  });
+
+  test('QA: every tool tier swings in its own colour, and a hit flash does not hide it', () => {
+    const swing = (tier: number, flash = false) => {
+      const fx: NonNullable<RenderCtx['fx']> = [{ kind: 'swing', x: 10, y: 5, age: 0.05, life: 0.2, dir: [1, 0], tier }];
+      if (flash) fx.push({ kind: 'flash', x: 10, y: 5, age: 0.05, life: 0.14 });
+      return computeFrame(scene({ fx }), 0)[5][10];
+    };
+    const cols = [0, 1, 2, 3, 4, 5, 6].map((t) => swing(t).fg);
+    assert.equal(new Set(cols).size, 7, cols.join(' '));
+    const hit = swing(3, true);
+    assert.equal(hit.ch, '╲', 'the slash is still drawn');
+    assert.equal(hit.fg, swing(3).fg, 'in its tier colour');
+  });
+
+  test('QA: a heavy hit shakes the view by a few pixels, not one or two', () => {
+    const [dx] = shakeOffset({ age: 0.02, strength: 2 });
+    assert.ok(Math.abs(dx) >= 3);
+    const [lx] = shakeOffset({ age: 0.02, strength: 1 });
+    assert.ok(Math.abs(lx) >= 1 && Math.abs(lx) <= 2);
+  });
+
+  test('QA: a lone one-cell tide pool gets no foam box', () => {
+    const s = scene();
+    s.put(20, 10, '~', '0D', '00');
+    s.tag(20, 10, { t: 'pond', wx: 20, wy: 10 });
+    assert.equal(computeFrame(s, 0)[10][20].foam, undefined);
+  });
+
+  test('QA: a prompt over the title screen keeps its punctuation as plain text', () => {
+    const s = new Screen(100, 30);
+    s.scene = 'title';
+    s.box(20, 10, 40, 6, '0D', '00', 'Name');
+    s.put(22, 12, "What's your name? (type, then enter)", '07', '00');
+    const out = computeFrame(s, 0);
+    const apos = out[12][22 + "What's".indexOf("'")];
+    const comma = out[12][22 + "What's your name? (type".length];
+    assert.equal(apos.ch, "'");
+    assert.equal(comma.ch, ',');
+    assert.equal(subPattern(apos, 16, 2), null, 'no texture swap');
+    assert.equal(subPattern(comma, 16, 2), null);
   });
 
   test('hash is deterministic and in range', () => {

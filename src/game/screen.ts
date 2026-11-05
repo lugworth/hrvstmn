@@ -1,4 +1,5 @@
 // Terminal screen buffer and async input handling for HRVSTMN
+import { COMPACT_MIN_COLS, MIN_ROWS } from './compact';
 
 export type Cell = [char: string, fg: string, bg: string, bold: boolean];
 
@@ -38,6 +39,19 @@ export type CellTag = {
   label?: HudLabel;
 };
 
+export type FxKind = 'dust' | 'sparkle' | 'splash' | 'coin' | 'swing' | 'flash' | 'debris' | 'text';
+
+/** Optional detail for an effect: swing direction, tool tier colour, floating text, debris material. */
+export type FxExtra = { dir?: [number, number]; tier?: number; text?: string; stuff?: 'stone' | 'wood' | 'plant'; delay?: number; seed?: number };
+
+export type RenderFx = FxExtra & {
+  kind: FxKind;
+  x: number;
+  y: number;
+  age: number;
+  life: number;
+};
+
 export type HudIcon = { x: number; y: number; icon: 'stamina' | 'fatigue' | 'gold' | 'bin' | 'tool' | 'weather' };
 
 /** Per-frame scene context for the renderer (null on title/menus). */
@@ -49,6 +63,10 @@ export type RenderCtx = {
   /** 0 Spring, 1 Summer, 2 Fall, 3 Winter. */
   season: number;
   weather: string;
+  /** 0 = dry ground, 1 = fresh rain. Persists and fades after the rain stops. */
+  wetness?: number;
+  /** Colourblind-safe state glyphs (ripe !, wet ≈). */
+  cues?: boolean;
   /** Screen cells per map tile horizontally. Always 1 now that large tiles are gone. */
   zoom: number;
   /** OS-level or user-chosen reduced motion. Freezes ambient animation. */
@@ -59,6 +77,10 @@ export type RenderCtx = {
   divX: number;
   divY: number;
   icons: HudIcon[];
+  /** Transient action-feedback glyphs, in screen cells. */
+  fx?: RenderFx[];
+  /** A heavy hit shakes the view: seconds since the hit and its strength (1 light, 2 heavy). */
+  shake?: { age: number; strength: number };
 };
 
 export class Screen {
@@ -70,9 +92,16 @@ export class Screen {
   /** Special full-screen scenes the renderer can dress up (currently 'title'). */
   scene: string | null = null;
   /** Rectangles of boxes (dialogs, menus) drawn this frame, top-most last. */
-  boxes: { x: number; y: number; w: number; h: number }[] = [];
+  boxes: { x: number; y: number; w: number; h: number; born?: number }[] = [];
+  /** When each panel first appeared, so menus can ease in once. */
+  private boxAges = new Map<string, number>();
   style: VisualStyle = 'enhanced';
   reducedMotion: boolean = false;
+  /** Whether texture cells may use half-size 2x2/3x3 detail glyphs. */
+  hires: boolean = true;
+  /** Colourblind-safe state cues: ripe/ wet/ ready markers in addition to colour. */
+  accessibleCues: boolean = false;
+  onHiresChange?: (hires: boolean) => void;
   keyQueue: string[] = [];
   private keyWaiters: Array<{
     resolve: (key: string | null) => void;
@@ -85,12 +114,17 @@ export class Screen {
   }
 
   setSize(w: number, h: number) {
-    this.w = Math.max(80, Math.min(160, w));
-    this.h = Math.max(24, Math.min(50, h));
+    // Phones get the compact layout down to COMPACT_MIN_COLS (see compact.ts).
+    this.w = Math.max(COMPACT_MIN_COLS, Math.min(160, w));
+    this.h = Math.max(MIN_ROWS, Math.min(50, h));
     this.clear();
   }
 
   clear() {
+    const live = new Set(this.boxes.map((b) => `${b.x},${b.y},${b.w},${b.h}`));
+    for (const key of this.boxAges.keys()) {
+      if (!live.has(key)) this.boxAges.delete(key);
+    }
     const blank: Cell = [' ', '05', '00', false];
     this.buf = Array.from({ length: this.h }, () =>
       Array.from({ length: this.w }, () => [...blank] as Cell)
@@ -110,6 +144,12 @@ export class Screen {
   /** Choose a renderer programmatically. The UI never exposes a style switch. */
   setStyle(style: VisualStyle) {
     this.style = style;
+  }
+
+  setHires(hires: boolean) {
+    if (this.hires === hires) return;
+    this.hires = hires;
+    this.onHiresChange?.(hires);
   }
 
   put(x: number, y: number, text: string, fg: string = '05', bg: string = '00', bold: boolean = false) {
@@ -138,7 +178,13 @@ export class Screen {
     for (let j = 0; j < h; j++) {
       this.put(x, y + j, ' '.repeat(w), fg, bg);
     }
-    this.boxes.push({ x, y, w, h });
+    const key = `${x},${y},${w},${h}`;
+    let born = this.boxAges.get(key);
+    if (born === undefined) {
+      born = performance.now() / 1000;
+      this.boxAges.set(key, born);
+    }
+    this.boxes.push({ x, y, w, h, born });
     const edge = '+' + '-'.repeat(Math.max(0, w - 2)) + '+';
     this.put(x, y, edge, fg, bg);
     this.put(x, y + h - 1, edge, fg, bg);

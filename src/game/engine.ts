@@ -1,12 +1,18 @@
 // Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
-import { Screen, CellTag } from './screen';
+import { Screen, CellTag, FxExtra, FxKind } from './screen';
+import { COMPACT_MIN_COLS, MIN_ROWS, isCompact, fitMessages, fitText, reflowPages, wrapLines } from './compact';
 import {
   GameMap,
   build_farm,
   build_town,
   build_mountain,
   build_beach,
+  build_woods,
+  build_ridge,
+  build_river,
+  build_point,
+  link_regions,
   build_house,
   build_interior,
   build_house_upgraded,
@@ -65,6 +71,15 @@ import {
   TV_SHOPPING_ITEMS,
   HEART_EVENTS,
   RIVAL_PAIRS,
+  REGION_FORAGE,
+  REGION_CATCH,
+  LOOKOUT_VIEW,
+  LOOKOUT_STAMINA,
+  LOOKOUT_FATIGUE,
+  HOLLOW_LUCK_CHANCE,
+  LIGHTHOUSE_INTRO,
+  LIGHTHOUSE_LOG,
+  TIDE_POOL_TEXT,
 } from './constants';
 import {
   CoordSet,
@@ -108,7 +123,47 @@ import {
   WON_EXCLUSIVE_CROPS,
   BASKET_CAPACITY,
   getBasketTotal,
+  rollRegionCatch,
+  rollStoneSkips,
 } from './rules';
+
+export interface VillagerRequest {
+  id: number;
+  npc: string;
+  item: string;
+  qty: number;
+  reward: number;
+  deadline: number;
+}
+
+export const MASTERY_DISCIPLINES = ['farming', 'foraging', 'fishing', 'mining', 'ranching'] as const;
+export type MasteryDiscipline = (typeof MASTERY_DISCIPLINES)[number];
+export const MASTERY_RANKS = [
+  { name: 'Novice', xp: 0 },
+  { name: 'Adept', xp: 25 },
+  { name: 'Expert', xp: 75 },
+  { name: 'Master', xp: 175 },
+  { name: 'Legend', xp: 350 },
+] as const;
+export const MASTERY_LABELS: Record<MasteryDiscipline, string> = {
+  farming: 'Farming',
+  foraging: 'Foraging',
+  fishing: 'Fishing',
+  mining: 'Mining',
+  ranching: 'Ranching',
+};
+export const MASTERY_REWARD_ITEMS: Record<MasteryDiscipline, string> = {
+  farming: 'Turnip Seeds',
+  foraging: 'Black Grass',
+  fishing: 'Large Fish',
+  mining: 'Copper',
+  ranching: 'Chicken Feed',
+};
+
+/** Every outdoor map, for weather and wetness bookkeeping. */
+const OUTDOOR_MAPS = ['farm', 'town', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point'];
+/** Forage spots spawned per map each day (winter thins the inland ones). */
+const FORAGE_TARGET: Record<string, number> = { mountain: 11, beach: 4, woods: 10, ridge: 8, river: 6, point: 4 };
 
 export class Game {
   [key: string]: any;
@@ -128,6 +183,16 @@ export class Game {
   indoor_npcs: Record<string, any> = {};
   _fest_saved: Record<string, any> | null = null;
   modal_depth: number = 0;
+  /** True while text_input() waits for typed text (touch UI shows a keyboard field). */
+  typing: boolean = false;
+  /**
+   * Called the moment a text prompt opens. The key that opens a prompt reaches it through promise
+   * steps only, so this still runs inside the player's tap: iOS opens the keyboard only for a
+   * focus() made there.
+   */
+  onTyping: (() => void) | null = null;
+  /** Compact (phone) layout only: show the status panel as an overlay ('p'). */
+  show_panel: boolean = false;
 
   name: string = 'Pete';
   farm: string = 'Moon';
@@ -210,18 +275,29 @@ export class Game {
   tv_watched_saturday: string | null = null;
   tv_order: [string, number] | null = null;
   makers: string[] = [];
+  museum: string[] = [];
+  museum_rewards: number[] = [];
+  requests: VillagerRequest[] = [];
+  next_request_id: number = 1;
+  requests_done: number = 0;
+  mastery_xp: Record<string, number> = {};
+  mastery_claimed: string[] = [];
 
   prayed: boolean = false;
   fest_wins: string[] = [];
   fest_attended: boolean = false;
   fest_declined: boolean = false;
   npc_pos: Record<string, [number, number]> = {};
+  fx: (FxExtra & { kind: FxKind; map: string; x: number; y: number; born: number; life: number })[] = [];
+  shake_fx: { born: number; strength: number } | null = null;
+  wetness: Record<string, number> = {};
   mine_type: 'spring' | 'lake' = 'spring';
   mine_floor: number = 0;
   max_spring_floor: number = 0;
   max_lake_floor: number = 0;
   ladder: [number, number] | null = null;
   mapname: string = 'house';
+  show_minimap: boolean = false;
   px: number = 1;
   py: number = 2;
   face: [number, number] = [0, -1];
@@ -232,6 +308,12 @@ export class Game {
   house_flags: string[] = [];
   project: [string, number] | null = null;
   bathed: boolean = false;
+  /** Outer-region landmarks. The *_day fields hold an absday(), so they lapse on their own overnight. */
+  lookout_day: number = -1;
+  hollow_luck_day: number = -1;
+  skip_best: number = 0;
+  lighthouse_log: number = 0;
+  lighthouse_day: number = -1;
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -243,10 +325,15 @@ export class Game {
     'heart_events_seen', 'rival_events_seen', 'married', 'marriage_day', 'child_name', 'child_days',
     'shipped_total', 'steps', 'fish_caught', 'goddess_gifts', 'kappa_gifts',
     'goddess_jewels', 'kappa_jewels', 'truth_jewels', 'vase_flower', 'makers',
+    'museum', 'museum_rewards',
+    'requests', 'next_request_id', 'requests_done',
+    'mastery_xp', 'mastery_claimed',
     'fest_wins', 'house_flags', 'project', 'max_spring_floor', 'max_lake_floor',
     // barn animals, and today's once-per-day flags (a mid-day save/load must not reset them)
     'animals', 'talked', 'gifted', 'honey_picked', 'prayed', 'bathed', 'fireplace_lit',
     'tv_watched_saturday', 'zack_paid_today', 'fest_attended', 'fest_declined',
+    // outer-region landmarks
+    'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -260,8 +347,13 @@ export class Game {
       town: build_town(),
       mountain: build_mountain(),
       beach: build_beach(),
+      woods: build_woods(),
+      ridge: build_ridge(),
+      river: build_river(),
+      point: build_point(),
       house: build_house(),
     };
+    link_regions(this.maps);
     this.last = Date.now() / 1000;
     this.acc = 0.0;
     this.npc_acc = 0.0;
@@ -352,17 +444,33 @@ export class Game {
     this.tv_watched_saturday = null;
     this.tv_order = null;
     this.makers = [];
+    this.museum = [];
+    this.museum_rewards = [];
+    this.requests = [];
+    this.next_request_id = 1;
+    this.requests_done = 0;
+    this.mastery_xp = Object.fromEntries(MASTERY_DISCIPLINES.map((d) => [d, 0]));
+    this.mastery_claimed = [];
+    this.lookout_day = -1;
+    this.hollow_luck_day = -1;
+    this.skip_best = 0;
+    this.lighthouse_log = 0;
+    this.lighthouse_day = -1;
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
     this.fest_declined = false;
     this.npc_pos = {};
+    this.fx = [];
+    this.shake_fx = null;
+    this.wetness = Object.fromEntries(OUTDOOR_MAPS.map((m) => [m, 0]));
     this.mine_type = 'spring';
     this.mine_floor = 0;
     this.max_spring_floor = 0;
     this.max_lake_floor = 0;
     this.ladder = null;
     this.mapname = 'house';
+    this.show_minimap = false;
     [this.px, this.py] = HOUSE_WAKE;
     this.face = [0, -1];
     this.cam_x = null;
@@ -641,6 +749,7 @@ export class Game {
     const now = Date.now() / 1000;
     const dt = Math.min(now - this.last, 0.25);
     this.last = now;
+    if (this.fx.length) this.fx = this.fx.filter((f) => now - f.born < f.life);
     if (!this.map.indoor) {
       this.acc += dt;
       while (this.acc >= SECS_PER_10MIN) {
@@ -746,6 +855,12 @@ export class Game {
       }
     } else if (k === 'y' || k === 'Y') {
       await this.today_panel();
+    } else if (k === 'n' || k === 'N') {
+      this.show_minimap = !this.show_minimap;
+      this.msg(`Minimap ${this.show_minimap ? 'shown' : 'hidden'}.`, '0C');
+    } else if (k === 'p') {
+      // Narrow screens hide the side panel; 'p' (touch INFO) overlays it. Wide screens always show it.
+      if (isCompact(this.scr.w)) this.show_panel = !this.show_panel;
     } else if (k === 'r' || k === 'R') {
       await this.relationships();
     } else if (k === '?') {
@@ -808,10 +923,14 @@ export class Game {
       'Villager Notes (r)',
       'Rucksack (i)',
       'Ranch Summary & Memo (m)',
+      'Achievements & Journal',
+      'Farm Mastery',
       'Save Diary — Slot 1',
       'Save Diary — Slot 2',
       'Load Diary — Slot 1',
       'Load Diary — Slot 2',
+      `Graphics: High-res Detail ${this.scr.hires ? 'On' : 'Off'}`,
+      `Accessible Cues: ${this.scr.accessibleCues ? 'On' : 'Off'}`,
       'Export Save File',
       'Import Save File',
     ];
@@ -832,6 +951,10 @@ export class Game {
       await this.relationships();
     } else if (choice === 'Ranch Summary & Memo (m)') {
       await this.ranch_summary();
+    } else if (choice === 'Achievements & Journal') {
+      await this.achievements_page();
+    } else if (choice === 'Farm Mastery') {
+      await this.mastery_page();
     } else if (choice === 'Save Diary — Slot 1') {
       this.save(1);
       this.msg('Saved game in Diary Slot 1.', '0B');
@@ -856,6 +979,12 @@ export class Game {
       this.export_save();
     } else if (choice === 'Import Save File') {
       await this.import_save();
+    } else if (choice.startsWith('Graphics: High-res Detail')) {
+      this.scr.setHires(!this.scr.hires);
+      this.msg(`High-res ground detail: ${this.scr.hires ? 'On' : 'Off'}.`, '0C');
+    } else if (choice.startsWith('Accessible Cues')) {
+      this.scr.accessibleCues = !this.scr.accessibleCues;
+      this.msg(`Accessible state cues: ${this.scr.accessibleCues ? 'On' : 'Off'}.`, '0C');
     } else if (choice === 'Use Teleport Stone') {
       await this.use_teleport_stone();
     } else if (choice === 'Help (?)') {
@@ -874,6 +1003,10 @@ export class Game {
       ["Mother's Hill Hot Spring", 'mountain', 8, 14],
       ['Goddess Pond & Spring Mine', 'mountain', 50, 6],
       ['Lake Mine Island (Mother\'s Hill Lake)', 'mountain', 14, 6],
+      ['Cedar Hollow Clearing', 'woods', 44, 19],
+      ['Skyline Ridge Lookout', 'ridge', 32, 3],
+      ['Willow Bend Bridge', 'river', 30, 12],
+      ['Lighthouse Point', 'point', 40, 12],
     ];
     const sel = await this.menu(
       'Teleport Stone — Warp Where?',
@@ -1005,6 +1138,27 @@ export class Game {
       }
     }
     this.move_indoor_npcs();
+  }
+
+  fx_add(kind: FxKind, x: number, y: number, life: number = 0.55, extra: FxExtra = {}): void {
+    const born = Date.now() / 1000;
+    this.fx.push({ kind, map: this.mapname, x, y, born, life: life + (extra.delay ?? 0), seed: (this.fx_seq = (this.fx_seq + 1) % 997), ...extra });
+    if (this.fx.length > 36) this.fx.shift();
+  }
+
+  fx_seq: number = 0;
+
+  /** Game feel for a tool striking something: a flash, and for heavy blows a shake. */
+  fx_hit(x: number, y: number, strength: number): void {
+    this.fx_add('flash', x, y, 0.14);
+    if (strength > 0) this.shake_fx = { born: Date.now() / 1000, strength };
+  }
+
+  /** Something breaks: a beat of hit-pause, then debris flies and the reward floats up. */
+  fx_break(x: number, y: number, stuff: 'stone' | 'wood' | 'plant', text?: string, strength: number = 1): void {
+    this.fx_hit(x, y, strength);
+    this.fx_add('debris', x, y, 0.55, { stuff, delay: 0.12 });
+    if (text) this.fx_add('text', x, y, 1.1, { text, delay: 0.12 });
   }
 
   target(): [number, number] {
@@ -1203,6 +1357,12 @@ export class Game {
     }
 
     this.record_tool_use(t);
+    if (t === 'Watering Can') this.fx_add('splash', tx, ty);
+    else if (['Hoe', 'Hammer', 'Axe', 'Sickle'].includes(t)) {
+      this.fx_add('dust', tx, ty);
+      // the swing itself, in the tool's tier colour (copper, silver, gold...)
+      this.fx_add('swing', tx, ty, 0.2, { dir: [this.face[0], this.face[1]], tier: this.levels[t] || 0 });
+    }
 
     if (t === 'Sickle') {
       let cutCount = 0;
@@ -1211,6 +1371,9 @@ export class Game {
         const qk = pkey(qx, qy);
         if (objs[qk] === 'weed') {
           delete objs[qk];
+          // each cut weed blinks, then scatters leaves after a beat
+          this.fx_add('flash', qx, qy, 0.12);
+          this.fx_add('debris', qx, qy, 0.45, { stuff: 'plant', delay: 0.08 });
           cutCount += 1;
         } else if (this.mapname === 'farm' && this.crops[qk] && this.crops[qk][0] === 'Grass') {
           const [, age] = this.crops[qk];
@@ -1264,6 +1427,7 @@ export class Game {
     } else if (t === 'Hammer') {
       if (obj === 'stone') {
         delete objs[pKey];
+        this.fx_break(tx, ty, 'stone', undefined, 0);
         this.msg('Crack! The stone shatters.');
       } else if (obj === 'boulder') {
         if ((this.levels['Hammer'] || 0) < 1) {
@@ -1274,13 +1438,16 @@ export class Game {
             delete objs[pKey];
             delete this.hp[pKey];
             this.give('Stone', 1);
+            this.fx_break(tx, ty, 'stone', '+1', 2);
             this.msg('BOOM! The boulder breaks apart.');
           } else {
+            this.fx_hit(tx, ty, 1);
             this.msg('Clang! The boulder cracks.');
           }
         }
       } else if (obj === 'rock') {
         delete objs[pKey];
+        this.fx_break(tx, ty, 'stone', undefined, 0);
         const drop = this.mine_drop();
         if (drop) {
           this.give(drop);
@@ -1300,6 +1467,7 @@ export class Game {
       if (obj === 'branch') {
         delete objs[pKey];
         this.give('Lumber');
+        this.fx_break(tx, ty, 'wood', '+1', 0);
         this.msg('Chop! +1 Lumber.');
       } else if (obj === 'stump') {
         if ((this.levels['Axe'] || 0) < 1) {
@@ -1310,8 +1478,10 @@ export class Game {
             delete objs[pKey];
             delete this.hp[pKey];
             this.give('Lumber', 6);
+            this.fx_break(tx, ty, 'wood', '+6', 2);
             this.msg('The stump splits! +6 Lumber.', '09');
           } else {
+            this.fx_hit(tx, ty, 1);
             this.msg('Thunk!');
           }
         }
@@ -1356,6 +1526,7 @@ export class Game {
       return;
     }
     const f = this.mine_floor;
+    this.mastery_add('mining');
     // Check if Lake Mine floor has a Cursed Tool
     if (this.mine_type === 'lake' && CURSED_TOOL_FLOORS[f]) {
       const cTool = CURSED_TOOL_FLOORS[f];
@@ -1500,36 +1671,48 @@ export class Game {
     }
     this.last = Date.now() / 1000;
     if (result === 'catch') {
-      const rodLvl = this.levels['Fishing Rod'] || 0;
-      const r = py_rng().random();
-      let caught = 'Small Fish';
-      if (this.mapname === 'mine' && this.mine_type === 'lake' && this.mine_floor === 9) {
-        caught = 'Coelacanth';
-      } else if (this.mapname === 'beach' && rodLvl >= 4 && r < 0.12) {
-        caught = this.season === 1 ? 'Pirate Treasure' : this.season === 2 ? 'Fossil of Ancient Fish' : 'Squid';
-        if (this.season === 3 && !this.berry_sources.includes('ocean_fish')) {
-          this.give_power_berry('ocean_fish');
-        }
-      } else if (rodLvl >= 3 && r < 0.08) {
-        caught = this.mapname === 'mountain' ? 'Carp' : 'Catfish';
-      } else if (r < 0.06) {
-        caught = py_rng().choice(['Boot', 'Empty Can']);
-      } else if (r < 0.25 + rodLvl * 0.08) {
-        caught = 'Large Fish';
-      } else if (r < 0.6) {
-        caught = 'Medium Fish';
-      }
+      const caught = this.roll_catch();
+      const [tx, ty] = this.target();
       this.give(caught);
+      this.fx_add('splash', tx, ty, 0.7);
       if (ITEMS[caught]?.[2] === 'fish') {
         this.fish_caught[caught] = (this.fish_caught[caught] || 0) + 1;
+        this.mastery_add('fishing');
       }
-      this.msg(`You caught a ${caught}!`, '0C');
+      if (caught === REGION_CATCH[this.mapname]?.rare) {
+        this.fx_add('sparkle', tx, ty, 0.9);
+        this.msg(`A rare catch: ${caught}!`, '0C');
+      } else {
+        this.msg(`You caught a ${caught}!`, '0C');
+      }
     } else if (result === 'early') {
       this.msg('You reeled in too early.');
     } else if (result === 'miss') {
       this.msg('It got away...');
     }
     await this.spend(3);
+  }
+
+  /** What bites here: Willow Bend and Lighthouse Point have their own tables; elsewhere the valley-wide odds. */
+  roll_catch(): string {
+    const rodLvl = this.levels['Fishing Rod'] || 0;
+    const table = REGION_CATCH[this.mapname];
+    if (table) {
+      return rollRegionCatch(table, { season: this.season, weather: this.weather, rodLvl }, () => py_rng().random());
+    }
+    const r = py_rng().random();
+    if (this.mapname === 'mine' && this.mine_type === 'lake' && this.mine_floor === 9) return 'Coelacanth';
+    if (this.mapname === 'beach' && rodLvl >= 4 && r < 0.12) {
+      if (this.season === 3 && !this.berry_sources.includes('ocean_fish')) {
+        this.give_power_berry('ocean_fish');
+      }
+      return this.season === 1 ? 'Pirate Treasure' : this.season === 2 ? 'Fossil of Ancient Fish' : 'Squid';
+    }
+    if (rodLvl >= 3 && r < 0.08) return this.mapname === 'mountain' ? 'Carp' : 'Catfish';
+    if (r < 0.06) return py_rng().choice(['Boot', 'Empty Can']);
+    if (r < 0.25 + rodLvl * 0.08) return 'Large Fish';
+    if (r < 0.6) return 'Medium Fish';
+    return 'Small Fish';
   }
 
   async interact(): Promise<void> {
@@ -1579,6 +1762,13 @@ export class Game {
       return;
     }
 
+    // Cedar Hollow's mossy pond and Lighthouse Point's tide pools are not the Goddess Pond
+    if (tile === 'pond' && this.mapname !== 'mountain') {
+      if (this.mapname === 'woods') await this.hollow_offering();
+      else await this.say(TIDE_POOL_TEXT, 'Tide Pool');
+      return;
+    }
+
     // Goddess Pond Offering
     if (tile === 'pond') {
       if (!this.held) {
@@ -1618,6 +1808,12 @@ export class Game {
       return;
     }
 
+    // Willow Bend: skip a flat stone across the river
+    if (this.mapname === 'river' && tile === 'water') {
+      await this.skip_stone();
+      return;
+    }
+
     // Farm Crop Harvesting
     if (this.mapname === 'farm' && pKey in this.crops) {
       const [crop, age] = this.crops[pKey];
@@ -1639,6 +1835,8 @@ export class Game {
         } else {
           delete this.crops[pKey];
         }
+        this.mastery_add('farming');
+        this.fx_add('sparkle', tx, ty, 0.7);
       } else {
         this.msg(`${crop}: ${days - age} more day${days - age > 1 ? 's' : ''} to go.${this.wet.has(pKey) ? '' : ' (needs water)'}`);
       }
@@ -1650,7 +1848,14 @@ export class Game {
     if (pKey in fr) {
       const item = py_pop(fr, pKey);
       this.give(item);
-      this.msg(`You picked up ${item}.`, '0B');
+      this.mastery_add('foraging');
+      if (this.hollow_luck_day === this.absday() && py_rng().random() < HOLLOW_LUCK_CHANCE) {
+        this.give(item);
+        this.fx_add('sparkle', tx, ty, 0.7);
+        this.msg(`You picked up ${item}, and found a second one beside it! (Hollow luck)`, '0B');
+      } else {
+        this.msg(`You picked up ${item}.`, '0B');
+      }
       return;
     }
 
@@ -1692,6 +1897,14 @@ export class Game {
       await this.inn_phone_menu();
       return;
     }
+    if (signId === 'ridge_lookout') {
+      await this.ridge_lookout();
+      return;
+    }
+    if (signId === 'lighthouse_log') {
+      await this.lighthouse_read();
+      return;
+    }
 
     if (tile === 'bin') {
       await this.ship();
@@ -1714,11 +1927,89 @@ export class Game {
       let text = m.signs[pKey] || '';
       if (text === 'farm') {
         text = `${this.farm.toUpperCase()} FARM — Owner: ${this.name}`;
+      } else if (text === 'request_board') {
+        await this.request_menu();
+        return;
       }
       await this.say(text, 'Sign');
     } else if (this.held) {
       this.msg(`You're holding ${this.held}. Face someone and press X to give it.`);
     }
+  }
+
+  // ---------------------------------------------------------------- outer-region landmarks
+
+  /** Skyline Ridge lookout: the view reads tomorrow's weather, and once a day the cold air revives you. */
+  async ridge_lookout(): Promise<void> {
+    let text = `${this.lookout_scene()} ${LOOKOUT_VIEW[this.tomorrow] || LOOKOUT_VIEW.Sunny}`;
+    if (this.lookout_day !== this.absday()) {
+      this.lookout_day = this.absday();
+      this.stamina = Math.min(this.max_stamina, this.stamina + LOOKOUT_STAMINA);
+      this.fatigue = Math.max(0, this.fatigue - LOOKOUT_FATIGUE);
+      text += ` The thin, cold air clears your head. (+${LOOKOUT_STAMINA} Stamina, -${LOOKOUT_FATIGUE} Fatigue)`;
+    }
+    await this.say(text, 'Skyline Ridge Lookout');
+  }
+
+  lookout_scene(): string {
+    const h = Math.floor(this.minutes / 60);
+    if (h < 9) return 'Morning mist is lifting off the valley below.';
+    if (h < 17) return 'The whole valley lies below you: the farm, the town, the river and the sea.';
+    if (h < 20) return 'The valley glows gold in the evening light.';
+    return 'Far below, the lights of town twinkle in the dark.';
+  }
+
+  /** Lighthouse Point: the old keeper's log, one new page a day. The last page leaves a keepsake. */
+  async lighthouse_read(): Promise<void> {
+    const total = LIGHTHOUSE_LOG.length;
+    const fresh = this.lighthouse_log < total && this.lighthouse_day !== this.absday();
+    if (fresh) {
+      this.lighthouse_log += 1;
+      this.lighthouse_day = this.absday();
+    }
+    const page = clamp(this.lighthouse_log, 1, total);
+    const intro = page === 1 ? `${LIGHTHOUSE_INTRO}\n` : '';
+    const more = this.lighthouse_log < total ? '\n(The next page is stuck fast with salt. Come back tomorrow.)' : '';
+    const lamp = this.weather === 'Rain' || this.weather === 'Typhoon' ? '\nHigh above you, the old lamp is turning.' : '';
+    await this.say(`${intro}${LIGHTHOUSE_LOG[page - 1]}${more}${lamp}`, `Keeper's Log ${page}/${total}`);
+    if (fresh && this.lighthouse_log === total) {
+      this.give('Sea Glass');
+      this.msg('Tucked behind the last page: a smooth piece of green Sea Glass.', '0C');
+    }
+  }
+
+  /** Cedar Hollow's mossy pond: give back something that grew wild for a lucky day of foraging. */
+  async hollow_offering(): Promise<void> {
+    if (this.hollow_luck_day === this.absday()) {
+      await this.say('Rings are still spreading from your last gift. The Hollow is listening; come back tomorrow.', 'Mossy Pond');
+      return;
+    }
+    const item = this.held;
+    if (!item || ITEMS[item]?.[2] !== 'forage') {
+      await this.say('Moss-green water, very still. Folk say the Hollow smiles on anyone who gives back something that grew wild. Hold a forage item and press X.', 'Mossy Pond');
+      return;
+    }
+    this.take(item, 1);
+    this.hollow_luck_day = this.absday();
+    const [tx, ty] = this.target();
+    this.fx_add('sparkle', tx, ty, 0.9);
+    await this.say(`You drop the ${item} into the pond. It sinks without a ripple... then the whole pond shivers. Today, wild things seem to find you. (Lucky foraging until tonight)`, 'Mossy Pond');
+  }
+
+  /** Willow Bend: skip a flat stone across the river and try to beat your record. */
+  async skip_stone(): Promise<void> {
+    const calm = this.weather !== 'Rain' && this.weather !== 'Typhoon';
+    const n = rollStoneSkips(() => py_rng().random(), calm);
+    const [tx, ty] = this.target();
+    this.fx_add('splash', tx, ty, 0.6);
+    this.fx_add('text', tx, ty, 1.1, { text: `${n}x` });
+    if (n > this.skip_best) {
+      this.skip_best = n;
+      this.msg(`Skip, skip, skip... ${n} skip${n === 1 ? '' : 's'}! A new Willow Bend record!`, '0C');
+    } else {
+      this.msg(`Your stone skips ${n} time${n === 1 ? '' : 's'}. (Record: ${this.skip_best})`, '0D');
+    }
+    await this.spend(1);
   }
 
   async dog_menu(): Promise<void> {
@@ -2181,6 +2472,7 @@ export class Game {
           const eggType = getEggQuality(this.chicken_aff, this.chicken_fest_won, this.outdoor_hours, py_rng().random());
           this.give(eggType, this.eggs);
           this.msg(`Collected ${this.eggs} x ${eggType}!`, '07');
+          this.mastery_add('ranching');
           this.eggs = 0;
         } else {
           await this.say('No eggs waiting right now.', null);
@@ -2359,6 +2651,7 @@ export class Game {
           a.talked = true;
           a.aff = Math.min(100, a.aff + 2);
           const sound = a.kind === 'cow' ? 'Moooo!' : 'Baaaa!';
+          this.mastery_add('ranching');
           await this.say(`${sound} ${name} seems happy to see you.`, name);
         }
       } else if (act === 'Brush') {
@@ -2368,6 +2661,7 @@ export class Game {
           a.brushed = true;
           a.aff = Math.min(100, a.aff + 3);
           this.msg(`You brushed ${name}. ${name} looks pleased!`, '0B');
+          this.mastery_add('ranching');
           await this.spend(1);
         }
       } else if (act === 'Milk') {
@@ -2379,6 +2673,7 @@ export class Game {
           const item = getMilkQuality(a.aff, Boolean(a.wonFestival), this.outdoor_hours, py_rng().random());
           this.give(item);
           this.msg(`You milked ${name}: ${item}!`, '07');
+          this.mastery_add('ranching');
           await this.spend(2);
         }
       } else if (act === 'Shear') {
@@ -2391,6 +2686,7 @@ export class Game {
           const item = getWoolQuality(a.aff, Boolean(a.wonFestival), this.outdoor_hours, py_rng().random());
           this.give(item);
           this.msg(`You sheared ${name}: ${item}!`, '07');
+          this.mastery_add('ranching');
           await this.spend(2);
         }
       } else if (act.startsWith('Use Miracle Potion')) {
@@ -2832,6 +3128,12 @@ export class Game {
     if (bid === 'library') {
       return [['Read a Farming Book', () => this.say(py_rng().choice(BOOKS), 'Book')]];
     }
+    if (bid === 'museum') {
+      return [
+        ['Donate an item', () => this.museum_donate()],
+        ['View the collection', () => this.museum_book()],
+      ];
+    }
     if (bid === 'church') {
       return [
         ['Pray at the Altar', () => this.pray()],
@@ -3205,6 +3507,12 @@ export class Game {
     lines.push(`  Water  ${this.crop_water_count()} crop${this.crop_water_count() === 1 ? '' : 's'} still dry`);
     lines.push(`  Feed   ${this.animal_feed_count()} animal${this.animal_feed_count() === 1 ? '' : 's'} still hungry`);
     lines.push(`  Ready  ${this.ready_livestock_count()} product${this.ready_livestock_count() === 1 ? '' : 's'} to collect`);
+    lines.push(`  Museum ${this.museum.length}/${this.museum_total()} donated`);
+    if (this.requests.length) {
+      const r = this.requests[0];
+      const extra = this.requests.length > 1 ? ` (+${this.requests.length - 1} more)` : '';
+      lines.push(`  Board  ${r.npc} needs ${r.qty} × ${r.item}${extra}`);
+    }
     lines.push('');
     const bdays = this.birthdays();
     if (bdays.length) lines.push(`  Birthday today: ${bdays.join(', ')} (5× gift bonus!)`);
@@ -3275,7 +3583,8 @@ export class Game {
   }
 
   /** What the big touch button should do for the tile the player is facing. */
-  context_action(): { key: 'x' | 'space'; label: string } {
+  context_action(): { key: 'x' | 'space' | 'enter'; label: string } {
+    if (this.typing) return { key: 'enter', label: 'DONE' };
     if (this.modal_depth > 0) return { key: 'space', label: 'OK' };
     const [tx, ty] = this.target();
     const pKey = pkey(tx, ty);
@@ -3287,9 +3596,10 @@ export class Game {
     }
     const tile = m.tile(tx, ty);
     if (tile === 'spring') return { key: 'x', label: 'SOAK' };
-    if (tile === 'pond') return { key: 'x', label: 'OFFER' };
+    if (tile === 'pond') return { key: 'x', label: this.mapname === 'point' ? 'LOOK' : 'OFFER' };
     if (this.mapname === 'farm' && pKey in this.crops) {
       const [crop, age] = this.crops[pKey];
+      if (age < CROPS[crop][2] && this.tool === 'Watering Can' && !this.wet.has(pKey)) return { key: 'space', label: 'WATER' };
       return { key: 'x', label: age >= CROPS[crop][2] ? 'HARVEST' : 'CHECK' };
     }
     if (pKey in (this.forage[this.mapname] || {})) return { key: 'x', label: 'PICK' };
@@ -3301,8 +3611,268 @@ export class Game {
       return { key: 'x', label: 'USE' };
     }
     if (this.tool === 'Fishing Rod' && (tile === 'water' || tile === 'pond')) return { key: 'space', label: 'CAST' };
+    if (this.mapname === 'river' && tile === 'water' && this.tool !== 'Watering Can') return { key: 'x', label: 'SKIP' };
     const short = this.tool.endsWith(' Seeds') ? this.tool.slice(0, -6) : this.tool;
     return { key: 'space', label: short.length > 7 ? 'USE' : `USE ${short.toUpperCase()}` };
+  }
+
+  museum_categories(): [string, string][] {
+    return [
+      ['Fish', 'fish'],
+      ['Ore', 'ore'],
+      ['Forage', 'forage'],
+      ['Crops', 'crop'],
+    ];
+  }
+
+  museum_pool(category: string | null = null): string[] {
+    const excluded = new Set(['Junk Ore', 'Boot', 'Empty Can', 'Failed Dish']);
+    const cats = this.museum_categories();
+    const allowed = new Set(category ? cats.filter(([, c]) => c === category).map(([, c]) => c) : cats.map(([, c]) => c));
+    return py_sorted(
+      Object.entries(ITEMS)
+        .filter(([name, d]) => allowed.has(d[2]) && !excluded.has(name))
+        .map(([name]) => name)
+    );
+  }
+
+  museum_total(): number {
+    return this.museum_pool().length;
+  }
+
+  async museum_reward_check(): Promise<void> {
+    const milestones: [number, number, string, number][] = [
+      [5, 500, 'Flour', 3],
+      [10, 1000, 'Basket', 1],
+      [20, 2000, 'Diamond', 1],
+      [30, 5000, 'Diamond', 2],
+    ];
+    for (const [need, gold, item, qty] of milestones) {
+      if (this.museum.length >= need && !this.museum_rewards.includes(need)) {
+        this.museum_rewards.push(need);
+        this.gold += gold;
+        this.give(item, qty);
+        await this.say(
+          `Museum milestone: ${need} donations! The town fund awards ${gold}G and ${qty} × ${item}.`,
+          'Curator'
+        );
+      }
+    }
+  }
+
+  async museum_donate(): Promise<void> {
+    const pool = new Set(this.museum_pool());
+    const items = py_sorted(
+      Object.keys(this.inv).filter((i) => pool.has(i) && !this.museum.includes(i) && (this.inv[i] || 0) > 0)
+    );
+    if (!items.length) {
+      await this.say(
+        this.museum.length >= this.museum_total()
+          ? 'The collection is complete! Every fish, ore, forage item and crop is on display.'
+          : 'Bring me a fish, ore, forage item or crop that is not already on display.',
+        'Curator'
+      );
+      return;
+    }
+    const sel = await this.menu(
+      `Donate to the Museum   ${this.museum.length}/${this.museum_total()}`,
+      [...items.map((i) => `${i}  x${this.inv[i]}`), 'Leave']
+    );
+    if (sel === null || sel >= items.length) return;
+    const item = items[sel];
+    this.take(item, 1);
+    this.museum.push(item);
+    this.msg(`${item} added to the museum collection! (${this.museum.length}/${this.museum_total()})`, '0B');
+    await this.museum_reward_check();
+  }
+
+  async museum_book(): Promise<void> {
+    const pages: string[][] = [];
+    for (const [label, category] of this.museum_categories()) {
+      const all = this.museum_pool(category);
+      const got = new Set(this.museum.filter((i) => all.includes(i)));
+      let page = [`  ${label} — ${got.size}/${all.length} donated`];
+      for (const item of all) {
+        if (page.length >= 18) {
+          pages.push(page);
+          page = [`  ${label} (continued)`];
+        }
+        page.push(`    ${got.has(item) ? '[x]' : '[ ]'} ${item}`);
+      }
+      pages.push(page);
+    }
+    await this.show_pages('Museum Collection', pages);
+  }
+
+  request_pool(): string[] {
+    const crops = Object.keys(CROPS).filter((c) => c !== 'Grass' && CROPS[c][0] === this.season);
+    const extras = Object.keys(ITEMS).filter((i) => ITEMS[i][2] === 'forage' || ITEMS[i][2] === 'fish');
+    return py_sorted([...crops, ...extras]);
+  }
+
+  request_refresh(count: number = 3): number {
+    const rng = py_rng();
+    const npcs = py_sorted(Object.keys(NPCS).filter((n) => n !== 'Curator'));
+    const pool = this.request_pool();
+    let added = 0;
+    while (this.requests.length < count && this.requests.length < 3) {
+      const used = new Set(this.requests.map((r) => r.npc));
+      const available = npcs.filter((n) => !used.has(n));
+      const npc = rng.choice(available.length ? available : npcs);
+      const item = rng.choice(pool);
+      if (!npc || !item) break;
+      const qty = rng.randint(1, 3);
+      const price = Math.max(1, Number(ITEMS[item]?.[0]) || 40);
+      this.requests.push({
+        id: this.next_request_id++,
+        npc,
+        item,
+        qty,
+        reward: Math.max(100, price * qty * 2 + 50),
+        deadline: this.absday() + 3,
+      });
+      added++;
+    }
+    return added;
+  }
+
+  request_day(report: string[]): void {
+    const today = this.absday();
+    const expired = this.requests.filter((r) => r.deadline < today);
+    this.requests = this.requests.filter((r) => r.deadline >= today);
+    if (expired.length) {
+      report.push(`${expired.length} request${expired.length === 1 ? '' : 's'} expired at the Rose Square board.`);
+    }
+    if (this.requests.length < 3) {
+      const added = this.request_refresh(3);
+      if (added) report.push(`${added} new request${added === 1 ? '' : 's'} appeared at the Rose Square board.`);
+    }
+  }
+
+  request_deliver(index: number): string | null {
+    const request = this.requests[index];
+    if (!request) return null;
+    if ((this.inv[request.item] || 0) < request.qty) {
+      return `You need ${request.qty} × ${request.item} for ${request.npc}.`;
+    }
+    this.take(request.item, request.qty);
+    this.gold += request.reward;
+    this.friend[request.npc] = clamp((this.friend[request.npc] || 0) + 5, 0, 100);
+    this.requests_done += 1;
+    this.fx_add('coin', this.px, this.py, 0.8);
+    this.fx_add('text', this.px, this.py, 1.1, { text: `+${request.reward}G` });
+    this.requests.splice(index, 1);
+    return `${request.npc} got ${request.qty} × ${request.item}! You earned ${request.reward}G and +5 friendship.`;
+  }
+
+  async request_menu(): Promise<void> {
+    if (!this.requests.length) this.request_refresh(3);
+    if (!this.requests.length) {
+      await this.say('The request board is empty today. Check again tomorrow morning.', 'Rose Square');
+      return;
+    }
+    const labels = this.requests.map((r) => {
+      const days = Math.max(0, r.deadline - this.absday());
+      return `${r.npc}: ${r.qty} × ${r.item} — ${r.reward}G (${days}d left)`;
+    });
+    const sel = await this.menu('Rose Square Request Board', [...labels, 'Leave']);
+    if (sel === null || sel >= this.requests.length) return;
+    const request = this.requests[sel];
+    const result = this.request_deliver(sel);
+    if (result === null) return;
+    if (result.startsWith('You need')) {
+      await this.say(result, 'Rose Square');
+      return;
+    }
+    await this.say(result, request.npc);
+  }
+
+  achievement_list(): { name: string; desc: string; done: boolean; progress: string }[] {
+    const fish = py_sum(Object.values(this.fish_caught));
+    const maxFriend = Math.max(0, ...Object.values(this.friend));
+    const gems = this.goddess_jewels + this.kappa_jewels + this.truth_jewels;
+    return [
+      { name: 'First Shipment', desc: 'Ship your first item to Zack', done: this.shipped_total > 0, progress: `${this.shipped_total}G shipped` },
+      { name: 'Market Regular', desc: 'Ship 10,000G worth of goods', done: this.shipped_total >= 10000, progress: `${Math.min(10000, this.shipped_total)}/10000G` },
+      { name: 'Angler', desc: 'Catch 10 fish', done: fish >= 10, progress: `${Math.min(10, fish)}/10 fish` },
+      { name: 'Mine Explorer', desc: 'Reach floor 25 of the Spring Mine', done: this.max_spring_floor >= 25, progress: `floor ${Math.min(25, this.max_spring_floor)}/25` },
+      { name: 'Deep Earth', desc: 'Reach floor 100 of the Spring Mine', done: this.max_spring_floor >= 100, progress: `floor ${Math.min(100, this.max_spring_floor)}/100` },
+      { name: 'Museum Patron', desc: 'Donate 10 items to the museum', done: this.museum.length >= 10, progress: `${Math.min(10, this.museum.length)}/10 donated` },
+      { name: 'Complete Collection', desc: 'Complete the museum collection', done: this.museum.length >= this.museum_total(), progress: `${this.museum.length}/${this.museum_total()} donated` },
+      { name: 'Good Neighbor', desc: 'Complete 5 Rose Square requests', done: this.requests_done >= 5, progress: `${Math.min(5, this.requests_done)}/5 requests` },
+      { name: 'Beloved', desc: 'Reach 80 friendship with a villager', done: maxFriend >= 80, progress: `${maxFriend}/80 hearts` },
+      { name: 'Festival Star', desc: 'Win 3 festivals', done: this.fest_wins.length >= 3, progress: `${Math.min(3, this.fest_wins.length)}/3 wins` },
+      { name: 'Homestead', desc: 'Complete 3 house or farm upgrades', done: this.house_flags.length >= 3, progress: `${Math.min(3, this.house_flags.length)}/3 upgrades` },
+      { name: 'Family', desc: 'Marry and welcome a child', done: !!this.married && !!this.child_name, progress: this.child_name ? 'family complete' : this.married ? 'married' : 'not yet' },
+      { name: 'Rancher', desc: 'Own 8 animals', done: this.animals.length >= 8, progress: `${Math.min(8, this.animals.length)}/8 animals` },
+      { name: 'Gem Hunter', desc: 'Collect 9 gems across the mines', done: gems >= 9, progress: `${Math.min(9, gems)}/9 gems` },
+    ];
+  }
+
+  async achievements_page(): Promise<void> {
+    const list = this.achievement_list();
+    const done = list.filter((a) => a.done).length;
+    const pages: string[][] = [];
+    let page = [`  ${done}/${list.length} unlocked`];
+    for (const a of list) {
+      if (page.length >= 18) {
+        pages.push(page);
+        page = ['  Achievements (continued)'];
+      }
+      page.push(`  ${a.done ? '[x]' : '[ ]'} ${a.name} — ${a.desc}  (${a.progress})`);
+    }
+    pages.push(page);
+    await this.show_pages('Achievements & Journal', pages);
+  }
+
+  mastery_level(discipline: MasteryDiscipline): number {
+    const xp = this.mastery_xp[discipline] || 0;
+    let level = 0;
+    for (let i = 0; i < MASTERY_RANKS.length; i++) {
+      if (xp >= MASTERY_RANKS[i].xp) level = i;
+    }
+    return level;
+  }
+
+  mastery_add(discipline: MasteryDiscipline, amount: number = 1): void {
+    if (!MASTERY_DISCIPLINES.includes(discipline)) return;
+    const before = this.mastery_level(discipline);
+    this.mastery_xp[discipline] = (this.mastery_xp[discipline] || 0) + amount;
+    const after = this.mastery_level(discipline);
+    for (let level = before + 1; level <= after; level++) {
+      const key = `${discipline}:${level}`;
+      if (this.mastery_claimed.includes(key)) continue;
+      this.mastery_claimed.push(key);
+      this.mastery_reward(discipline, level);
+    }
+  }
+
+  mastery_reward(discipline: MasteryDiscipline, level: number): void {
+    const gold = [0, 250, 500, 1000, 2000][level] || 0;
+    const item = MASTERY_REWARD_ITEMS[discipline];
+    const qty = level >= 3 ? 2 : 1;
+    this.gold += gold;
+    this.give(item, qty);
+    this.msg(
+      `Mastery: ${MASTERY_LABELS[discipline]} reached ${MASTERY_RANKS[level].name}! +${gold}G and ${qty} × ${item}.`,
+      '0C'
+    );
+  }
+
+  async mastery_page(): Promise<void> {
+    const lines: string[] = ['  Keep doing a discipline to earn XP and rank rewards.'];
+    for (const discipline of MASTERY_DISCIPLINES) {
+      const level = this.mastery_level(discipline);
+      const xp = this.mastery_xp[discipline] || 0;
+      const next = MASTERY_RANKS[level + 1];
+      const progress = next ? `${Math.min(xp, next.xp)}/${next.xp} XP` : `${xp} XP (max)`;
+      lines.push(
+        `  ${MASTERY_LABELS[discipline].padEnd(9)} ${MASTERY_RANKS[level].name.padEnd(7)} ${progress}`
+      );
+    }
+    lines.push('');
+    lines.push('  Rewards: 250G / 500G / 1000G / 2000G plus seeds, forage, fish, ore or feed.');
+    await this.show_pages('Farm Mastery', [lines]);
   }
 
   async ranch_summary(): Promise<void> {
@@ -4014,6 +4584,10 @@ export class Game {
     }
 
     this.weather = this.tomorrow;
+    for (const map of OUTDOOR_MAPS) {
+      const wet = this.weather === 'Rain' || this.weather === 'Typhoon' ? 1 : (this.wetness[map] || 0) * 0.55;
+      this.wetness[map] = wet < 0.06 ? 0 : wet;
+    }
     let [nd, ns] = [this.day + 1, this.season];
     if (nd > 30) {
       nd = 1;
@@ -4083,6 +4657,9 @@ export class Game {
       report.push(`Joyous news! ${this.married} and you welcomed a healthy baby into your family!`);
     }
 
+    // Rose Square request board
+    this.request_day(report);
+
     // Spawn daily weeds & mountain/beach forage
     if (this.season !== 3) {
       const m = this.maps['farm'];
@@ -4135,15 +4712,20 @@ export class Game {
     this.last = Date.now() / 1000;
   }
 
+  /** Today's forage list for a map: an outer region's own pool, or the valley-wide seasonal list. */
+  forage_pool(mapKey: string): string[] {
+    return REGION_FORAGE[mapKey]?.[this.season_name] || FORAGE[this.season_name] || ['Blue Grass'];
+  }
+
   spawn_forage(): void {
-    const items = FORAGE[this.season_name] || ['Blue Grass'];
     const rng = py_rng();
-    for (const mapKey of ['mountain', 'beach'] as const) {
+    for (const mapKey of ['mountain', 'beach', 'woods', 'ridge', 'river', 'point']) {
       const m = this.maps[mapKey];
       if (!m) continue;
+      const items = this.forage_pool(mapKey);
       const fr: Record<string, string> = {};
       let tries = 0;
-      const target = mapKey === 'beach' ? 4 : this.season === 3 ? 6 : 11;
+      const target = (FORAGE_TARGET[mapKey] ?? 6) * (this.season === 3 && mapKey !== 'beach' && mapKey !== 'point' ? 0.55 : 1);
       while (Object.keys(fr).length < target && tries < 400) {
         tries += 1;
         const [x, y] = [rng.randint(2, m.w - 3), rng.randint(2, m.h - 3)];
@@ -4153,6 +4735,18 @@ export class Game {
         }
       }
       this.forage[mapKey] = fr;
+    }
+    // fallen branches gather in Cedar Hollow overnight (a renewable lumber source)
+    const woods = this.maps['woods'];
+    if (woods) {
+      const objs = (this.objs['woods'] ||= {});
+      let tries = 0;
+      while (Object.keys(objs).length < 9 && tries < 300) {
+        tries += 1;
+        const [x, y] = [rng.randint(2, woods.w - 3), rng.randint(2, woods.h - 3)];
+        const k = pkey(x, y);
+        if (woods.tile(x, y) === 'grass' && !woods.near(x, y, ['path', 'bridge'], 0) && !(k in (this.forage['woods'] || {}))) objs[k] = 'branch';
+      }
     }
   }
 
@@ -4286,22 +4880,23 @@ export class Game {
       return;
     }
     const [W, H] = [s.w, s.h];
-    if (W < 80 || H < 24) {
-      s.put(0, 0, `Terminal too small: need 80x24, have ${W}x${H}`, '08');
+    if (W < COMPACT_MIN_COLS || H < MIN_ROWS) {
+      s.put(0, 0, `Terminal too small: need ${COMPACT_MIN_COLS}x${MIN_ROWS}, have ${W}x${H}`, '08');
       return;
     }
-    const enhanced = s.style === 'enhanced';
-    const side = enhanced ? clamp(Math.round(W * 0.23), 24, 36) : 29;
-    const mapY = enhanced ? 0 : 1;
-    const messageRows = enhanced ? 1 : 3;
-    const dividerY = H - messageRows - 1;
-    const [vw, vh] = [W - side - 1, dividerY - mapY];
+    // Narrow (phone) grids drop the side panel: the map takes the full width and the
+    // panel's essentials move into the divider row (draw_status); 'p' overlays the panel.
+    const compact = isCompact(W);
+    const side = compact ? 0 : 29;
+    const [vw, vh] = [compact ? W : W - side - 1, H - 5];
     s.ctx = {
       mapName: this.mapname,
       indoor: !!this.map.indoor,
       minutes: this.minutes,
       season: this.season,
       weather: this.map.indoor ? 'Sunny' : this.weather,
+      wetness: this.wetness[this.mapname] || 0,
+      cues: s.accessibleCues,
       zoom: 1,
       reducedMotion: s.reducedMotion,
       view: { x: 0, y: mapY, w: vw, h: vh },
@@ -4309,9 +4904,21 @@ export class Game {
       divY: dividerY,
       icons: [],
     };
-    if (!enhanced) this.draw_topbar(W);
-    this.draw_map(0, mapY, vw, vh);
-    for (let y = 0; y < dividerY; y++) {
+    this.draw_topbar(W);
+    this.draw_map(0, 1, vw, vh);
+    if (this.show_minimap) this.draw_minimap(vw, vh);
+    if (compact) {
+      s.put(0, H - 4, '-'.repeat(W), '01');
+      this.draw_status(H - 4, W);
+      if (this.show_panel) {
+        const rows = 16 + (this.chickens ? 1 : 0) + (this.animals.length ? 1 : 0);
+        s.box(W - 29, 1, 29, Math.min(H - 4, rows), '0C', '00', 'Status');
+        this.draw_side(W - 27, 2, 25, false);
+      }
+      this.draw_msgs(H - 3);
+      return;
+    }
+    for (let y = 1; y < H - 4; y++) {
       s.put(vw, y, '|', '01');
     }
     s.put(0, dividerY, '-'.repeat(W), '01');
@@ -4412,21 +5019,25 @@ export class Game {
     const s = this.scr;
     s.put(0, 0, ' '.repeat(W), '05', '01');
     const sn = this.season_name;
+    const compact = isCompact(W);
+    const sep = compact ? ' ' : '  ';
     let x = 1;
     const segments: [string, string][] = [
       [`${sn} ${this.day}`, SEASON_COL[sn]],
       [` ${WEEKDAYS[this.weekday]}`, '05'],
-      [`  Yr ${this.year}`, '04'],
-      [`  ${fmt_time(this.minutes)}`, '07'],
+      [compact ? ` Y${this.year}` : `  Yr ${this.year}`, '04'],
+      [`${sep}${fmt_time(this.minutes)}`, '07'],
       [`  ${this.weather}`, WEATHER_COL[this.weather] || '09'],
-      [`  ${this.gold}G`, '09'],
+      [`${sep}${this.gold}G`, '09'],
     ];
     for (const [text, fg] of segments) {
       s.put(x, 0, text, fg, '01', true);
       if (text === `  ${this.weather}`) s.ctx?.icons.push({ x: x + 1, y: 0, icon: 'weather' });
       x += text.length;
     }
-    const loc = this.map.title + (this.map.indoor ? ' (indoors)' : '');
+    let loc = this.map.title + (this.map.indoor && !compact ? ' (indoors)' : '');
+    // Narrow screens: shorten the place name rather than let it run off the edge.
+    if (compact && x + 1 + loc.length > W - 1) loc = loc.slice(0, Math.max(0, W - x - 3)) + '…';
     s.put(Math.max(x + 1, W - loc.length - 2), 0, loc, '0C', '01');
   }
 
@@ -4461,6 +5072,13 @@ export class Game {
     }
     const cx = Math.round(this.cam_x);
     const cy = Math.round(this.cam_y);
+    if (s.ctx) {
+      const now = Date.now() / 1000;
+      s.ctx.fx = this.fx
+        .filter((f) => f.map === this.mapname)
+        .map((f) => ({ ...f, x: ox + f.x - cx, y: oy + f.y - cy, age: now - f.born, life: f.life }));
+      s.ctx.shake = this.shake_fx && now - this.shake_fx.born < 0.3 ? { age: now - this.shake_fx.born, strength: this.shake_fx.strength } : undefined;
+    }
     const hour = this.minutes / 60;
     const classic = s.style === 'classic';
     const night = classic && !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
@@ -4583,7 +5201,110 @@ export class Game {
     }
   }
 
-  draw_side(x: number, y: number, w: number): void {
+  draw_minimap(vw: number, vh: number): void {
+    if (vw < 30 || vh < 12) return;
+    const s = this.scr;
+    const m = this.map;
+    const gw = Math.min(19, vw - 4);
+    const gh = Math.min(7, vh - 6);
+    const bx = vw - gw - 3;
+    const by = 2;
+    if (bx < 0 || by + gh + 2 > s.h) return;
+    s.box(bx, by, gw + 2, gh + 2, '0C', '00', 'Map');
+    // Keep the map's aspect ratio and include its outer edges. Small interiors stay
+    // 1:1; large outdoor maps sample the full extent without dropping the last row/column.
+    const drawW = Math.min(gw, m.w);
+    const drawH = Math.min(gh, m.h);
+    const offX = Math.floor((gw - drawW) / 2);
+    const offY = Math.floor((gh - drawH) / 2);
+    const atX = (gx: number) => (m.w <= 1 ? 0 : Math.round((gx * (m.w - 1)) / Math.max(1, drawW - 1)));
+    const atY = (gy: number) => (m.h <= 1 ? 0 : Math.round((gy * (m.h - 1)) / Math.max(1, drawH - 1)));
+    const glyph = (t: string | undefined): [string, string] => {
+      if (!t || t === 'void') return [' ', '00'];
+      if (t === 'water' || t === 'fountain' || t === 'spring' || t === 'pond') return ['≈', '0A'];
+      if (t === 'path' || t === 'bridge') return ['·', '03'];
+      if (t === 'tree') return ['♣', '0B'];
+      if (t === 'field') return ['▒', '04'];
+      if (t === 'cliff') return ['▲', '08'];
+      if (t === 'door' || t === 'exit') return ['+', '09'];
+      if (t === 'roof' || t === 'wall' || t === 'iwall' || t === 'mwall') return ['▮', '09'];
+      if (t === 'flower') return ['*', '0A'];
+      return [' ', '02'];
+    };
+    for (let gy = 0; gy < drawH; gy++) {
+      for (let gx = 0; gx < drawW; gx++) {
+        const tx = atX(gx);
+        const ty = atY(gy);
+        const [ch, col] = glyph(m.t[ty]?.[tx]);
+        s.put(bx + 1 + offX + gx, by + 1 + offY + gy, ch, col, '00');
+      }
+    }
+    const mark = (wx: number, wy: number, ch: string, col: string) => {
+      const gx = offX + Math.round((wx * (drawW - 1)) / Math.max(1, m.w - 1));
+      const gy = offY + Math.round((wy * (drawH - 1)) / Math.max(1, m.h - 1));
+      if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) return;
+      s.put(bx + 1 + gx, by + 1 + gy, ch, col, '00', true);
+    };
+    for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
+      if (NPCS[n]?.where?.[0] === this.mapname) mark(x, y, 'o', '0C');
+    }
+    mark(this.px, this.py, '@', '0D');
+  }
+
+  /**
+   * Compact layout status line, drawn into the divider row: tool (+cost, can level or seed
+   * bags), stamina bar, and fatigue/held item when there is room.
+   */
+  draw_status(y: number, W: number): void {
+    const s = this.scr;
+    const t = this.tool;
+    const preview = this.action_preview();
+    let x = 1;
+    const seg = (text: string, fg: string, bold = false): boolean => {
+      if (x + text.length > W - 1) return false;
+      s.put(x, y, text, fg, '00', bold);
+      // tag as UI so the divider pass doesn't turn hyphens ("-2st") into rule lines
+      for (let i = 0; i < text.length; i++) if (text[i] !== ' ') s.tag(x + i, y, { t: 'ui' });
+      x += text.length;
+      return true;
+    };
+    const idx = TOOLS.includes(t) ? `[${TOOLS.indexOf(t) + 1}] ` : '';
+    s.ctx?.icons.push({ x, y, icon: 'tool' });
+    seg(' ', '02');
+    seg(`${idx}${t} `, '07', true);
+    if (t === 'Watering Can') seg(`${this.water}/${CAN_CAP[this.levels[t] || 0]} `, '0D');
+    else if (t.endsWith(' Seeds')) {
+      const crop = t.slice(0, -6);
+      const ok = crop === 'Grass' || CROPS[crop]?.[0] === this.season_name;
+      seg(`x${this.inv[t] || 0}${ok ? '' : ' off-season'} `, ok ? '0B' : '08');
+    }
+    if (preview.cost > 0) seg(`-${preview.cost}st${preview.faint ? '!' : ''} `, preview.faint ? '08' : '03');
+    x += 1;
+    const frac = this.stamina / this.max_stamina;
+    const col = frac > 0.5 ? '0B' : frac > 0.2 ? '09' : '08';
+    const num = ` ${this.stamina}`;
+    const bw = Math.max(4, Math.min(10, W - x - num.length - 4));
+    const filled = Math.round(frac * bw);
+    s.ctx?.icons.push({ x, y, icon: 'stamina' });
+    seg(' ', '02');
+    s.put(x, y, '#'.repeat(filled), col, '00', true);
+    s.put(x + filled, y, '.'.repeat(bw - filled), '01');
+    for (let i = 0; i < bw; i++) s.tag(x + i, y, { t: 'ui', k: i < filled ? 'bar' : 'bar:empty' });
+    x += bw;
+    seg(`${num} `, col);
+    if (this.fatigue >= 50) {
+      x += 1;
+      seg(` Fatg ${this.fatigue} `, this.fatigue < 80 ? '09' : '08');
+    }
+    const bCount = getBasketTotal(this.basket);
+    const held = this.held === 'Basket' ? `Basket ${bCount}/${BASKET_CAPACITY}` : this.held ? `${this.held} x${this.inv[this.held] || 0}` : '';
+    if (held) {
+      x += 1;
+      if (!seg(` ${held} `, '0A')) seg(` ${held.slice(0, Math.max(0, W - x - 3))} `, '0A');
+    }
+  }
+
+  draw_side(x: number, y: number, w: number, hints = true): void {
     const s = this.scr;
     const sn = this.season_name;
     s.put(x, y, 'H R V S T M N', SEASON_COL[sn], '00', true);
@@ -4703,7 +5424,7 @@ export class Game {
       ['?', 'help'],
     ];
     for (const [k, d] of help_lines) {
-      if (y >= s.h - 4) break;
+      if (!hints || y >= s.h - 4) break;
       s.put(x, y, k, '0D', '00', true);
       s.put(x + 4, y, d, '02');
       y += 1;
@@ -4712,7 +5433,16 @@ export class Game {
 
   draw_msgs(y0: number): void {
     const cols = ['02', '03', null];
-    const recent = this.msgs.slice(-Math.min(3, this.scr.h - y0));
+    const recent = this.msgs.slice(-3);
+    if (isCompact(this.scr.w)) {
+      // Narrow screens wrap messages instead of cutting them off; the newest always shows.
+      const lines = fitMessages(recent.map(([text]) => text), this.scr.w - 2, 3);
+      lines.forEach(({ text, age }, i) => {
+        const fg = age === 0 ? recent[recent.length - 1][1] : age === 1 ? cols[1]! : cols[0]!;
+        this.scr.put(1, y0 + i, text, fg);
+      });
+      return;
+    }
     for (let i = 0; i < recent.length; i++) {
       const [text, col] = recent[i];
       const age = recent.length - 1 - i;
@@ -4732,10 +5462,11 @@ export class Game {
       s.put(x0, 2 + i, LOGO[i], cols[i], '00', true);
       for (let j = 0; j < LOGO[i].length; j++) if (LOGO[i][j] !== ' ') s.tag(x0 + j, 2 + i, { t: 'ui', k: 'logo' });
     }
-    const sub = '~ Harvest Moon: Friends of Mineral Town (Complete ASCII Edition) ~';
+    const sub = fitText(W, '~ Harvest Moon: Friends of Mineral Town (Complete ASCII Edition) ~', '~ Harvest Moon: Friends of Mineral Town ~');
     s.put(Math.max(0, Math.floor((W - sub.length) / 2)), 8, sub, '04');
     const scene_y = 10;
-    const hills = '   T   T  .-^-.   T   [Hot Spring]   T   .-^-.   T   ';
+    const hillsFull = '   T   T  .-^-.   T   [Hot Spring]   T   .-^-.   T   ';
+    const hills = fitText(W, hillsFull, hillsFull.trim());
     s.put(Math.max(0, Math.floor((W - hills.length) / 2)), scene_y, hills, '0B');
     const field = ' o * j o Y * o v d o * j O o * A o v * o j ';
     const fx = Math.max(0, Math.floor((W - field.length) / 2));
@@ -4745,7 +5476,11 @@ export class Game {
       s.put(fx + i, scene_y + 1, ch, ch !== ' ' ? palette[i % palette.length] : '00', '00', true);
     }
     s.put(fx, scene_y + 2, '='.repeat(field.length), '09');
-    const tag = 'base16 isotope dark · 255-floor mines · 7 sprites · 20+ festivals · 108 recipes';
+    const tag = fitText(
+      W,
+      'base16 isotope dark · 255-floor mines · 7 sprites · 20+ festivals · 108 recipes',
+      '255-floor mines · 7 sprites · 20+ festivals',
+    );
     s.put(Math.max(0, Math.floor((W - tag.length) / 2)), H - 2, tag, '02');
   }
 
@@ -4819,6 +5554,7 @@ export class Game {
   async show_pages(title: string, pages: string[][]): Promise<void> {
     const [W, H] = [this.scr.w, this.scr.h];
     if (!pages.length) pages.push([]);
+    if (isCompact(W)) pages = reflowPages(pages, W - 6, Math.max(4, H - 5));
     const maxLn = Math.max(
       title.length + 6,
       ...pages.flat().map((ln) => ln.length + 4),
@@ -4851,7 +5587,8 @@ export class Game {
     if (n === 0) return null;
     while (true) {
       const [W, H] = [this.scr.w, this.scr.h];
-      const info_lines = typeof info === 'function' ? info(sel) : info || [];
+      const info_raw = typeof info === 'function' ? info(sel) : info || [];
+      const info_lines = isCompact(W) ? wrapLines(info_raw, W - 6) : info_raw;
       const maxvis = Math.max(3, H - 8 - info_lines.length);
       const vis = Math.min(n, maxvis);
       const top = clamp(sel - Math.floor(vis / 2), 0, Math.max(0, n - vis));
@@ -4942,6 +5679,16 @@ export class Game {
   }
 
   async text_input(prompt: string, py_default: string = ''): Promise<string> {
+    this.typing = true;
+    this.onTyping?.();
+    try {
+      return await this.read_text(prompt, py_default);
+    } finally {
+      this.typing = false;
+    }
+  }
+
+  async read_text(prompt: string, py_default: string = ''): Promise<string> {
     let text = '';
     while (true) {
       const [W] = [this.scr.w, this.scr.h];

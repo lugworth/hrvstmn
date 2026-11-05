@@ -1,5 +1,7 @@
 // Pure game rules and mechanics for Harvest Moon: Friends of Mineral Town (ASCII Edition)
 
+import type { CatchEntry, CatchTable } from './constants';
+
 export const TOOL_LEVEL_NAMES = [
   'Basic',
   'Copper',
@@ -364,3 +366,35 @@ export function getBasketTotal(basket: Record<string, number>): number {
   return Object.values(basket).reduce((sum, n) => sum + n, 0);
 }
 
+// ---------------------------------------------------------------- outer regions
+
+/** What bites in a region's waters: the rod-gated rare catch first, then a weighted draw of what is in season. */
+export function rollRegionCatch(
+  table: CatchTable,
+  ctx: { season: number; weather: string; rodLvl: number },
+  rand: () => number
+): string {
+  if (ctx.rodLvl >= table.rareRod) {
+    const stormy = ctx.weather === 'Rain' || ctx.weather === 'Typhoon';
+    const chance = (table.rareChance + 0.01 * (ctx.rodLvl - table.rareRod)) * (stormy ? table.stormBoost ?? 1 : 1);
+    if (rand() < chance) return table.rare;
+  }
+  const pool = table.fish.filter((f) => !f.seasons || f.seasons.includes(ctx.season));
+  const weight = (f: CatchEntry) => f.w + (f.rod ?? 0) * ctx.rodLvl;
+  let r = rand() * pool.reduce((sum, f) => sum + weight(f), 0);
+  for (const f of pool) {
+    r -= weight(f);
+    if (r < 0) return f.item;
+  }
+  return pool[pool.length - 1]?.item ?? 'Small Fish';
+}
+
+export const MAX_STONE_SKIPS = 12;
+
+/** Skipping a stone at Willow Bend: each bounce has a fixed chance of another; rain chops the water up. */
+export function rollStoneSkips(rand: () => number, calm: boolean = true): number {
+  const keep = calm ? 0.72 : 0.55;
+  let n = 1;
+  while (n < MAX_STONE_SKIPS && rand() < keep) n++;
+  return n;
+}

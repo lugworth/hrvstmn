@@ -17,8 +17,10 @@ export type OutCell = {
   bold: boolean;
   glow?: string;
   glowR?: number;
-  /** Horizontal offset in cells, used to centre a glyph in a 2-cell tile. */
-  dx?: number;
+  /** A small second glyph in its own colour on the upper right of the cell (fruit on a tree): a two-tone tile. */
+  detail?: { ch: string; fg: string };
+  /** Lettering: always drawn as its own glyph, never swapped for a high-res texture. */
+  plain?: boolean;
   /** Soft round backing disc behind a creature: fill and rim colours. */
   token?: string;
   rim?: string;
@@ -95,19 +97,25 @@ export function isotopeRamps(): RGB[] {
     const g = (i / 24) ** 1.4 * 255;
     set.push([g, g, g]);
   }
-  rampSet = set.map((c) => c.map(Math.round) as RGB);
+  searchSet = set.map((c) => c.map(Math.round) as RGB);
+  // Warm (sepia) and cool (moonlit) neutrals for the time-of-day duotone. They are only ever
+  // produced on purpose by toned(), so they are allowed but never picked by nearest-colour search.
+  rampSet = [...searchSet, ...TONE_HEXES.map(hexToRgb)];
   return rampSet;
 }
+let searchSet: RGB[] = [];
 
 const quantCache = new Map<string, string>();
 /** Snap a colour to the nearest Isotope ramp colour (perceptually weighted RGB). */
 export function toIsotope(hex: string): string {
   let q = quantCache.get(hex);
   if (q) return q;
+  if (TONE_SET.has(hex)) return hex;
   const [r, g, b] = hexToRgb(hex);
   let best = 0;
   let bestD = Infinity;
-  const set = isotopeRamps();
+  isotopeRamps();
+  const set = searchSet;
   for (let i = 0; i < set.length; i++) {
     const c = set[i];
     const dr = r - c[0];
@@ -136,6 +144,7 @@ function snapFrame(frame: OutCell[][]) {
       if (o.token) o.token = toIsotope(o.token);
       if (o.rim) o.rim = toIsotope(o.rim);
       if (o.foamCol) o.foamCol = toIsotope(o.foamCol);
+      if (o.detail) o.detail = { ch: o.detail.ch, fg: toIsotope(o.detail.fg) };
     }
   }
 }
@@ -162,33 +171,118 @@ export function hsv([r, g, b]: RGB): [number, number, number] {
 }
 
 /** Greyscale by perceived brightness. */
+const greyCache = new Map<string, string>();
 export function grey(hex: string): string {
+  const hit = greyCache.get(hex);
+  if (hit) return hit;
   const [r, g, b] = hexToRgb(hex);
   const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return rgbToHex([y, y, y]);
+  const out = rgbToHex([y, y, y]);
+  if (greyCache.size > 8192) greyCache.clear();
+  greyCache.set(hex, out);
+  return out;
 }
+
+// A 32x32 blue-noise threshold tile (void-and-cluster, generated offline). Unlike white
+// noise it has no clumps, so dithered gradients read as an even stipple.
+const BLUE_NOISE = Uint8Array.from(atob('Qsh93zGOVu3MZqp8w4ia+XjHVYZB6nEvwAC0Rrs3BesosAlPbBi4KH0DTf8/EkvTMhrxBbEhooPlVncl+n/PjOBolLvlnthEl7vXIZ/LZrCCo23blFzUSByc2qgTYUulEkryHj17CmX0MolZcecsC+w/wU8v+wm17mgxj+fEIXbLMn/OXfunwlERrvEGqIzZXh+REbh+Y4s7yghObzqz+GGtmQW2NiWD4mzORn40U7V3y/Nv3kHNFal4/rXUmAOKJt1R6G6T2xWhLY4c4L74FEegNFajJJf1K1mIFilY7ETAEnchRchadUDrxl6bayeJ4wGA0Q7nc0y51j6c332vbZ/9jK/wCqX3uAJMrRA70KRjv/4ssmDDBJId7GrBNQ7aKTxb1S+ETiqUZ4X7ynjxUB8+bZNIhznwfFytB032klKCugGbab/kEcbfMyBJlgy3hd+nGu3NI5vYMMh7piJnzfNy3EkcqHNfQHyiuWLjL27JB1W6eA2ralAW/EGK4bISRiSP7ss4/ZjUGfUF0n+s6zqa9zNi4UL0vqBl2gtZNZu8YK4OWYYTK65TbJBBJFYUZNkdiNKXKoQAOI4mwvBt1QfiOXWe203lhb803sef/cSTd0eqCFKzcMrprHRPkyh8VIjF9yesx2QK7x55XwyDSim07l3D/R3kW0ca1bcUpv8xoRdKawM9eqZJlrPzMLvjAtM0FnWLN50NhfpkO+pIybRi7IC+6JD5LdFaEEOocVqYfmmi4EfXa8KnLJgEiXMbjgbPLpkbVLEYg7rgj9QV70DC9SS5CqwjUc92473RW+bXdkaqX8w52W7nNWsgUoEsrxBVO4Jc+JDmPBVXRSakOFS39w/kdooMmUkApfm/nthlj8zmnMYxcAKE9q2VcPoToB9okUIl/sBg8sd5WjoHS/8ieQZoG03No7xmIN0IxYDtyS7dvJ9PGqkqhxfQjeVyuqND1bPvleEqRNaNNrRhPJRzUIEDY9J7Qty3TvAjsDMXXusohzpjF35dDfJShugZvQvWpvQ2su6SDW43nWKB2ZLEf1GrEMX0sJrAcKQn0Epl/EAib4wTLluk+cEEzEQP7zkCz/tykUgw0x4/3AF6qx6NsVzO5lPD3oAmVXriqld0tmaXHFjbBHlX/5W4V/I15HTED5k9q3EGPa/pG40t/Jwi6D6yK6HB6YsLai2HxZ4IMlDzKYQZ/JHWaZY+vWkRzk6K13rtQ2cntkvK6RhDYdOp3Hu22mC8TCDJCfVM2II3vgleGMiJFKneNp10rvaBFpA8ZABFpS7hhli1cqIjsepsp/gzmlP6fV8d0g5UK71Y/h+hxvZ1D5046hkw4l0BRZYl0Wq5DNA/lfFni92gbw=='), (c) => c.charCodeAt(0));
+
+/** Blue-noise threshold in [0, 1) for a cell, tiled every 32 cells. */
+export function blueNoise(x: number, y: number): number {
+  return BLUE_NOISE[((y & 31) << 5) | (x & 31)] / 256;
+}
+
+/** How far the black-and-white world leans warm (dawn, golden hour) or cool (night), 0..1. */
+export function toneFor(minutes: number, weather: string, indoor: boolean, mapName: string): { warm: number; cool: number } {
+  if (indoor || mapName === 'mine') return { warm: 0, cool: 0 };
+  const h = (((minutes / 60) % 24) + 24) % 24;
+  const bump = (c: number, w: number) => Math.max(0, 1 - Math.abs(h - c) / w);
+  const fair = weather !== 'Rain' && weather !== 'Typhoon' && weather !== 'Blizzard';
+  const warm = fair ? Math.min(1, Math.max(bump(6.25, 1.25), bump(17.6, 1.4)) * 1.4) : 0;
+  const cool = h >= 19 ? Math.min(1, (h - 19) / 1.5) : h < 5 ? 1 : h < 6 ? 6 - h : 0;
+  return { warm, cool };
+}
+
+// Duotone tints for the grey world: a sepia lean toward Isotope orange and a moonlit lean
+// toward Isotope blue. isotopeRamps() carries matching tinted neutral ramps.
+const TONE_S = 0.28;
+const toneHue = (code: string): RGB => {
+  const c = hexToRgb(`#${PALETTE[code]}`);
+  const m = Math.max(c[0], c[1], c[2]) || 1;
+  return [c[0] / m, c[1] / m, c[2] / m];
+};
+const WARM_TONE = toneHue('09');
+const COOL_TONE = toneHue('0D');
+/** A grey of luminance `y` leaned toward hue `t`, keeping its luminance (the tint changes hue, not light). */
+const tintGrey = (y: number, t: RGB): RGB => {
+  const c: RGB = [1 - TONE_S + TONE_S * t[0], 1 - TONE_S + TONE_S * t[1], 1 - TONE_S + TONE_S * t[2]];
+  const k = y / (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+  return [Math.min(255, c[0] * k), Math.min(255, c[1] * k), Math.min(255, c[2] * k)];
+};
+// The neutral levels (palette black/white and the grey ramp) and their tinted twins.
+const TONE_LEVELS = [0, ...Array.from({ length: 23 }, (_, i) => ((i + 1) / 24) ** 1.4 * 255), 255];
+const tintHex = (level: number, t: RGB) => rgbToHex(tintGrey(level, t).map(Math.round) as RGB);
+const TONE_HEXES = [...TONE_LEVELS.map((l) => tintHex(l, WARM_TONE)), ...TONE_LEVELS.map((l) => tintHex(l, COOL_TONE))];
+const TONE_SET = new Set(TONE_HEXES);
+
+/** Grey, or the tinted twin of the nearest neutral level (an exact ramp colour, so snapping keeps it). */
+const toneCache = [new Map<string, string>(), new Map<string, string>()];
+function toned(hex: string, t: RGB | null): string {
+  if (!t) return grey(hex);
+  const cache = toneCache[t === WARM_TONE ? 0 : 1];
+  const hit = cache.get(hex);
+  if (hit) return hit;
+  const [r, g, b] = hexToRgb(hex);
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  // TONE_LEVELS[i] = (i / 24) ** 1.4 * 255, so the nearest level sits next to this index
+  const f = 24 * (y / 255) ** (1 / 1.4);
+  const lo = Math.max(0, Math.min(24, Math.floor(f)));
+  const hi = Math.min(24, lo + 1);
+  const best = Math.abs(TONE_LEVELS[hi] - y) < Math.abs(TONE_LEVELS[lo] - y) ? TONE_LEVELS[hi] : TONE_LEVELS[lo];
+  const out = tintHex(best, t);
+  if (cache.size > 8192) cache.clear();
+  cache.set(hex, out);
+  return out;
+}
+
+type Tone = { warm: number; cool: number; light: Float32Array | null; tags: (CellTag | null)[][] };
 
 /**
  * Black-and-white world with colour reserved for things of interest: everything not
  * flagged as an accent goes grey (keeping its light and shade); accents keep their hue,
  * pushed to a clear Isotope neon, over a grey background.
  */
-function monochrome(out: OutCell[][], boxes: Screen['boxes']) {
+function monochrome(out: OutCell[][], boxes: Screen['boxes'], tone?: Tone) {
   const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
+  const W = out[0]?.length ?? 0;
   for (let y = 0; y < out.length; y++) {
     for (let x = 0; x < out[y].length; x++) {
       const o = out[y][x];
       if (o.ui || inBox(x, y)) continue;
-      o.bg = grey(o.bg);
-      if (o.token) o.token = grey(o.token);
-      if (o.foamCol) o.foamCol = grey(o.foamCol);
+      // Time of day leans the greys warm or cool; lamplight keeps its own warm pool at night.
+      // Blue noise (anchored to the world) dithers the change in and out.
+      let t: RGB | null = null;
+      if (tone) {
+        const lit = tone.light ? Math.min(1, tone.light[y * W + x] * 3) : 0;
+        const warm = Math.max(tone.warm, lit);
+        const cool = tone.cool * (1 - lit);
+        if (warm > 0 || cool > 0) {
+          const tg = tone.tags[y]?.[x];
+          const bn = blueNoise(tg?.wx ?? x, tg?.wy ?? y);
+          t = warm > bn ? WARM_TONE : cool > bn ? COOL_TONE : null;
+        }
+      }
+      o.bg = toned(o.bg, t);
+      if (o.detail) o.detail = { ch: o.detail.ch, fg: neon(o.detail.fg, 0.35) };
+      if (o.token) o.token = toned(o.token, t);
+      if (o.foamCol) o.foamCol = toned(o.foamCol, t);
       if (o.accent) {
         o.fg = neon(o.fg, 0.35);
         continue;
       }
-      o.fg = grey(o.fg);
-      if (o.glow) o.glow = grey(o.glow);
-      if (o.rim) o.rim = grey(o.rim);
+      o.fg = toned(o.fg, t);
+      if (o.glow) o.glow = toned(o.glow, t);
+      if (o.rim) o.rim = toned(o.rim, t);
     }
   }
 }
@@ -240,7 +334,6 @@ type Theme = {
   blossom?: string[];
   fruit?: string;
   wildflowers?: string[];
-  lilies?: boolean;
 };
 
 export const THEMES: Theme[] = [
@@ -258,7 +351,7 @@ export const THEMES: Theme[] = [
     trees: ['#2fd010', '#22aa0c', '#188a08'], treeBg: '#041404', treeGlyphs: ['♣', '♠'],
     soilBg: '#22180e', soilDot: '#55402a', weed: '#48b82a',
     waterBg: '#022456', waterBg2: '#053272', waterFg: '#45a0ff',
-    fruit: '#ff4a3a', wildflowers: ['#ffe27a', '#ff6a6a', '#ffffff'], lilies: true,
+    fruit: '#ff4a3a', wildflowers: ['#ffe27a', '#ff6a6a', '#ffffff'],
   },
   {
     // Fall
@@ -336,6 +429,24 @@ type Light = { x: number; y: number; r: number; col: RGB; k: number };
 
 const WALKABLE_OPEN = new Set(['grass', 'field', 'path', 'sand', 'flower', 'bridge']);
 const WATERY = new Set(['water', 'fountain', 'spring', 'pond']);
+/** Maps whose water is open sea: surf rolls in and nothing grows on it. */
+const SEA_MAPS = new Set(['beach', 'point']);
+/** The lighthouse beam: seconds per turn, cone half-width (as a slope) and reach in rows. */
+const BEAM_PERIOD = 10;
+const BEAM_SPREAD = 0.16;
+const BEAM_R = 24;
+/** Water colour by distance to the shore: lighter shallows (> 0), darker deeps (< 0). */
+const WATER_DEPTH = [0, 0.18, 0.02, -0.3, -0.55];
+/**
+ * Late at night households go to bed one by one: whether a window is still lit. Every
+ * window is lit until 10 PM; by about 1 AM only one in eight is.
+ */
+export function windowLit(minutes: number, wx: number, wy: number): boolean {
+  const h = (((minutes / 60) % 24) + 24) % 24;
+  const late = h >= 22 ? h - 22 : h < 6 ? h + 2 : 0;
+  return hash(wx, wy, 230) < Math.max(0.12, 1 - late * 0.3);
+}
+
 const FLOOR_INDOOR = new Set(['floor', 'mfloor', 'exit', 'up', 'down']);
 
 type Frame = {
@@ -349,6 +460,12 @@ type Frame = {
   amb: number;
   /** Minutes since midnight. */
   minutes: number;
+  /** 0 = dry, 1 = fresh rain; used for lingering puddles. */
+  wetness: number;
+  /** The open sea, where nothing grows on the water. */
+  sea: boolean;
+  /** Which map is drawn (regions dress some tiles their own way). */
+  map: string;
 };
 
 const roofShades = (fgCode: string) => {
@@ -356,8 +473,17 @@ const roofShades = (fgCode: string) => {
   return { lit: mix(base, '#ffffff', 0.25), mid: mix(base, '#000000', 0.35), dark: mix(base, '#000000', 0.65) };
 };
 
+/**
+ * Soft mottling for open ground: low-frequency noise (rows count double, cells are tall)
+ * with a little per-cell grain, stretched back to the full 0..1 range.
+ */
+function mottle(wx: number, wy: number, s: number): number {
+  const n = valueNoise(wx / 5, wy / 2.5, s) * 0.8 + blueNoise(wx + s * 7, wy + s * 13) * 0.2;
+  return Math.max(0, Math.min(1, (n - 0.5) * 1.6 + 0.5));
+}
+
 function grassBg(F: Frame, wx: number, wy: number) {
-  return mix(F.theme.grassBg, F.theme.grassBg2, hash(wx, wy, 3));
+  return mix(F.theme.grassBg, F.theme.grassBg2, mottle(wx, wy, 3));
 }
 
 /** Background a cell's ground would have, used under entities, roof edges and generic objects. */
@@ -366,7 +492,7 @@ function groundBg(F: Frame, tag: CellTag): string {
   const wy = tag.wy ?? 0;
   switch (tag.t) {
     case 'field':
-      return mix(F.theme.soilBg, '#000000', hash(wx, wy, 5) * 0.35);
+      return mix(F.theme.soilBg, '#000000', mottle(wx, wy, 5) * 0.35);
     case 'path':
       return mix('#2a2622', '#34302a', hash(wx, wy, 6));
     case 'sand':
@@ -376,7 +502,7 @@ function groundBg(F: Frame, tag: CellTag): string {
     case 'mfloor':
       return mix('#1e1a17', '#24201c', hash(wx, wy, 6));
     default:
-      if (WATERY.has(tag.t)) return mix(F.theme.waterBg, F.theme.waterBg2, hash(wx, wy, 7));
+      if (WATERY.has(tag.t)) return mix(F.theme.waterBg, F.theme.waterBg2, mottle(wx, wy, 7));
       return F.indoor ? '#2a2018' : grassBg(F, wx, wy);
   }
 }
@@ -401,7 +527,7 @@ const SHADOW_RECEIVERS = new Set(['grass', 'field', 'path', 'sand', 'flower', 'f
 
 /** A mine wall facing open floor gets a torch every so often. */
 function isTorch(F: Frame, x: number, y: number, tag: CellTag): boolean {
-  if ((tag.sub ?? 0) !== 0 || hash(tag.wx ?? x, tag.wy ?? y, 68) > 0.07) return false;
+  if (hash(tag.wx ?? x, tag.wy ?? y, 68) > 0.07) return false;
   const below = F.tags[y + 1]?.[x];
   return !!below && below.t === 'mfloor';
 }
@@ -410,11 +536,84 @@ function isTorch(F: Frame, x: number, y: number, tag: CellTag): boolean {
 const INTEREST = new Set(['bin', 'sign', 'doghouse', 'stable', 'mill', 'maker', 'incub', 'phone', 'vase', 'cave', 'bath']);
 
 const isRainy = (F: Frame) => !F.indoor && (F.weather === 'Rain' || F.weather === 'Typhoon');
+const isWet = (F: Frame) => isRainy(F) || (!F.indoor && F.wetness > 0.06);
 
-function puddle(F: Frame, wx: number, wy: number, sub: number, ground: string): OutCell {
-  const bg = mix(ground, '#1a3456', 0.55);
-  const ripple = hash(wx * 2 + sub, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3;
+function puddle(F: Frame, wx: number, wy: number, ground: string, strength = 1): OutCell {
+  const bg = mix(ground, '#1a3456', 0.25 + 0.45 * Math.min(1, strength));
+  const ripple = hash(wx * 2, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3 * Math.min(1, strength);
   return { ch: ripple ? '◦' : ' ', fg: '#8ab8e8', bg, bold: false };
+}
+
+/**
+ * Skyline Ridge's cliff bands as rock faces lit from above: a bright brow along the top,
+ * bedded strata across a face that darkens downward, and a base that dithers into shadow.
+ * In winter snow caps the brow and lies on some of the ledges.
+ */
+function rockFace(F: Frame, x: number, y: number, wx: number, wy: number): OutCell {
+  const cliff = (dy: number) => F.tags[y + dy]?.[x]?.t === 'cliff';
+  let up = 0;
+  while (up < 6 && cliff(-up - 1)) up++;
+  let down = 0;
+  while (down < 6 && cliff(down + 1)) down++;
+  const snow = !!F.theme.snow;
+  const depth = up + down ? up / (up + down) : 1; // 0 at the brow, 1 at the base
+  const face = mix('#5e5548', '#26211c', depth);
+  if (!up) {
+    const cap = snow && hash(wx * 2, wy, 160) < 0.85;
+    const weathered = valueNoise(wx / 4, wy, 164) * 0.45; // the lit brow is not one even line
+    const rock = mix('#aca08a', '#6a6052', weathered);
+    // winter: a thin line of snow lying on the lit rock, not a solid white band
+    if (cap) return { ch: '▔', fg: '#eef2f8', bg: mix(rock, '#26211c', 0.25), bold: false };
+    return { ch: '▀', fg: rock, bg: down ? face : '#26211c', bold: false };
+  }
+  // bedding planes run along the band, each stretch with its own kind of layer
+  const bed = valueNoise(wx / 6, wy, 161);
+  let ch = bed < 0.36 ? '─' : bed < 0.7 ? '═' : '≡';
+  let fg = mix(face, '#b0a48e', 0.6 - depth * 0.25);
+  if (!down) {
+    // the foot of the face falls away into shadow through a blue-noise dither
+    const bn = blueNoise(wx, wy);
+    if (bn < 0.14) ch = '░';
+    else if (bn < 0.27) ch = '▒';
+  }
+  if (hash(wx, wy, 162) < 0.06) {
+    ch = '│'; // a joint in the rock
+    fg = mix(face, '#000000', 0.5);
+  } else if (snow && hash(wx * 2, wy, 163) < 0.3) fg = '#e8eef8'; // snow on a ledge
+  return { ch, fg, bg: face, bold: false };
+}
+
+/**
+ * The current at a Willow Bend river cell. The river runs south; `lane` is the offset from
+ * mid-channel, `u` the same as a share of the half-width (-1..1), `dc` how many columns the
+ * channel shifts per row downstream, and `speed` rows per second: quickest mid-channel and
+ * where the channel narrows, slowest along the banks.
+ */
+function riverFlow(F: Frame, x: number, y: number) {
+  const span = (yy: number, xx: number): [number, number] | null => {
+    const row = F.tags[yy];
+    if (!row) return null;
+    for (const d of [0, -1, 1, -2, 2, -3, 3]) {
+      if (row[xx + d]?.t !== 'water') continue;
+      let a = xx + d;
+      let b = a;
+      while (row[a - 1]?.t === 'water' && b - a < 16) a--;
+      while (row[b + 1]?.t === 'water' && b - a < 16) b++;
+      return [a, b];
+    }
+    return null;
+  };
+  const [a, b] = span(y, x) ?? [x, x];
+  const c = (a + b) / 2;
+  const w = b - a + 1;
+  const up = span(y - 1, Math.round(c));
+  const dn = span(y + 1, Math.round(c));
+  const cu = up ? (up[0] + up[1]) / 2 : c;
+  const cd = dn ? (dn[0] + dn[1]) / 2 : c;
+  const dc = up && dn ? (cd - cu) / 2 : cd - cu;
+  const u = w > 1 ? (x - c) / (w / 2) : 0;
+  const speed = 2 * (1 - 0.8 * u * u) * Math.max(0.7, Math.min(1.4, 5 / w));
+  return { lane: x - c, u, dc, speed };
 }
 
 /** Style one tagged map cell (terrain, objects, crops, structures). */
@@ -425,52 +624,43 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
   const g = cell[0];
   const fg = cell[1];
   const bold = cell[3];
-  const h = hash(wx, wy);
-  const hs = h;
+  const hs = hash(wx, wy);
   const k = tag.k || '';
-  // Large tiles are retired. These aliases keep the shared texture code simple:
-  // every cell is now its own tile, so no cell is a sub-cell or spans two cells.
-  const sub = 0;
-  const wide = false;
-  const lead = cell;
-  const centre = (o: OutCell): OutCell => o;
-  const lit = (o: OutCell): OutCell => o;
 
   // ---- objects on the field
   if (k.startsWith('obj:')) {
     const soil = groundBg(F, tag);
     switch (k) {
       case 'obj:weed':
-        return centre({ ch: 'ψ', fg: mix(th.weed, '#000000', hash(wx, wy, 8) * 0.35), bg: soil, bold: false });
+        return { ch: 'ψ', fg: mix(th.weed, '#000000', hash(wx, wy, 8) * 0.35), bg: soil, bold: false };
       case 'obj:stone':
-        return centre({ ch: '•', fg: '#a9a9b4', bg: soil, bold: true });
+        return { ch: '•', fg: '#a9a9b4', bg: soil, bold: true };
       case 'obj:rock':
-        return centre({ ch: '•', fg: '#78787f', bg: soil, bold: true });
+        return { ch: '•', fg: '#78787f', bg: soil, bold: true };
       case 'obj:boulder':
-        if (wide) return lit({ ch: sub === 0 ? '◖' : '◗', fg: '#8c8c98', bg: soil, bold: false });
         return { ch: '●', fg: '#8c8c98', bg: mix(soil, '#3a342e', 0.6), bold: false };
       case 'obj:stump':
-        return centre({ ch: '◉', fg: '#b8702e', bg: soil, bold: false });
+        return { ch: '◉', fg: '#b8702e', bg: soil, bold: false };
       case 'obj:branch':
-        return centre({ ch: '╱', fg: '#c58a4a', bg: soil, bold: true });
+        return { ch: '╱', fg: '#c58a4a', bg: soil, bold: true };
     }
   }
   if (k === 'forage') {
-    return centre({ ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 3, accent: true });
+    return { ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 3, accent: true };
   }
   // ---- tilled soil and crops
   if (k.startsWith('soil') || k.startsWith('crop:')) {
     const wet = k.endsWith(':wet');
     const bg = wet ? mix('#160e08', '#1a1209', hash(wx, wy, 5)) : mix('#2c1c0f', '#321f10', hash(wx, wy, 5));
     if (k.startsWith('soil')) {
-      if (wet && hash(wx * 2 + sub, wy, 64) < 0.12) return { ch: '·', fg: '#4a8ad8', bg, bold: true }; // a glint of water
+      if (wet && hash(wx * 2, wy, 64) < 0.12) return { ch: '·', fg: '#4a8ad8', bg, bold: true }; // a glint of water
       return { ch: wy % 2 ? '≡' : '═', fg: wet ? '#4a3424' : '#7a5230', bg, bold: false };
     }
-    if (k.startsWith('crop:seed')) return centre({ ch: '∴', fg: '#c89058', bg, bold: false });
-    if (k.startsWith('crop:sprout')) return centre({ ch: ',', fg: '#7ad04a', bg, bold: true });
-    if (k.startsWith('crop:young')) return centre({ ch: '"', fg: '#5ae02a', bg, bold: true });
+    if (k.startsWith('crop:seed')) return { ch: '∴', fg: '#c89058', bg, bold: false };
+    if (k.startsWith('crop:sprout')) return { ch: ',', fg: '#7ad04a', bg, bold: true };
+    if (k.startsWith('crop:young')) return { ch: '"', fg: '#5ae02a', bg, bold: true };
     // ripe: the crop's own glyph and colour, with a gentle "ready" glow
-    return centre({ ch: g, fg: pal(fg), bg, bold: true, glow: pal(fg), glowR: 6, accent: true });
+    return { ch: g, fg: pal(fg), bg, bold: true, glow: pal(fg), glowR: 6, accent: true };
   }
 
   switch (tag.t) {
@@ -480,7 +670,7 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       const gb = grassBg(F, wx, wy);
       const above = F.tags[y - 1]?.[x];
       if (above && above.t === 'tree' && hash(wx, wy, 72) < 0.6) {
-        return centre({ ch: '╿', fg: th.snow ? '#6a5a4a' : '#6a4a2c', bg: gb, bold: false }); // trunk under the canopy
+        return { ch: '╿', fg: th.snow ? '#6a5a4a' : '#6a4a2c', bg: gb, bold: false }; // trunk under the canopy
       }
       if (th.snow) {
         if (hs < 0.18) return { ch: hs < 0.08 ? '∙' : '·', fg: th.grassDetail, bg: gb, bold: false };
@@ -490,15 +680,15 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (g === ',' || g === '"') {
         // tufts sway in a slow breeze
         const sway = Math.floor(F.t * 0.8 + hash(wx, wy, 66) * 4) % 4 === 0;
-        return centre({ ch: g === '"' ? (sway ? '"' : 'ʷ') : sway ? '`' : ',', fg: th.tuft, bg: gb, bold: false });
+        return { ch: g === '"' ? (sway ? '"' : 'ʷ') : sway ? '`' : ',', fg: th.tuft, bg: gb, bold: false };
       }
       const nearTree = th.leaves && [[-1, 0], [1, 0], [0, 1], [0, -1], [-1, 1], [1, 1]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.t === 'tree');
-      if (nearTree && hs < 0.32) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves!, hash(wx, wy, 4 + sub)), bg: gb, bold: false, accent: true }; // leaf litter
-      if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9 + sub)), fg: pick(th.leaves, hash(wx, wy, 4 + sub)), bg: gb, bold: false };
-      if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31 + sub)), bg: gb, bold: true };
+      if (nearTree && hs < 0.32) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9)), fg: pick(th.leaves!, hash(wx, wy, 4)), bg: gb, bold: false, accent: true }; // leaf litter
+      if (th.leaves && hs < 0.07) return { ch: pick(['•', '❦', ','], hash(wx, wy, 9)), fg: pick(th.leaves, hash(wx, wy, 4)), bg: gb, bold: false };
+      if (th.wildflowers && hs > 0.975) return { ch: '·', fg: pick(th.wildflowers, hash(wx, wy, 31)), bg: gb, bold: true };
       if (th.fruit && hs > 0.93) return { ch: 'ʷ', fg: th.tuft, bg: gb, bold: false }; // tall summer grass
       const dewy = !th.snow && !F.indoor && F.weather === 'Sunny' && F.minutes >= 360 && F.minutes < 480;
-      if (dewy && hs < 0.03 && hash(wx * 2 + sub, wy, 140 + (Math.floor(F.t * 2) % 20)) > 0.45) {
+      if (dewy && hs < 0.03 && hash(wx * 2, wy, 140 + (Math.floor(F.t * 2) % 20)) > 0.45) {
         return { ch: '✧', fg: '#ffffff', bg: gb, bold: true }; // morning dew twinkling
       }
       if (hs < 0.1) return { ch: "'", fg: th.grassDetail, bg: gb, bold: false };
@@ -509,38 +699,40 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     case 'flower': {
       const gb = grassBg(F, wx, wy);
       if (th.snow || g === '.') return { ch: '·', fg: th.grassDetail, bg: gb, bold: false };
-      return centre({ ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true, accent: true });
+      return { ch: pick(['✿', '❀'], hash(wx, wy, 2)), fg: pal(fg), bg: gb, bold: true, accent: true };
     }
     case 'tree': {
       const windy = !F.indoor && (F.weather === 'Typhoon' || F.weather === 'Blizzard');
-      const sway = windy ? hash(wx * 2 + sub, wy, 90 + (Math.floor(F.t * 3) % 2)) < 0.5 : false;
+      const sway = windy ? hash(wx * 2, wy, 90 + (Math.floor(F.t * 3) % 2)) < 0.5 : false;
       const ch = (hs < 0.72) !== sway ? th.treeGlyphs[0] : th.treeGlyphs[1];
       const bg = mix(th.treeBg, '#000000', hash(wx, wy, 2) * 0.5);
-      let fgc = pick(th.trees, hash(wx * 2 + sub, wy, 1));
+      let fgc = pick(th.trees, hash(wx * 2, wy, 1));
       // canopies are lit from above: bright crown, shaded underside
       const up = F.tags[y - 1]?.[x];
       const dn = F.tags[y + 1]?.[x];
       if (!up || up.t !== 'tree') fgc = mix(fgc, '#ffffff', 0.2);
       else if (!dn || dn.t !== 'tree') fgc = mix(fgc, '#000000', 0.32);
       // seasonal accents: spring blossom, summer fruit, winter snow on the tips
-      const acc = hash(wx * 2 + sub, wy, 41);
-      if (th.blossom && acc < 0.12) return { ch: '❀', fg: pick(th.blossom, hash(wx, wy, 42 + sub)), bg, bold: true, accent: true };
-      if (th.fruit && acc < 0.05) return { ch: '•', fg: th.fruit, bg, bold: true, accent: true };
-      if (th.leaves && acc < 0.18) return lit({ ch, fg: fgc, bg, bold: true, accent: true }); // a few turning leaves
+      const acc = hash(wx * 2, wy, 41);
+      // two-tone canopies: the tree stays grey, the blossom or fruit is a small colour detail
+      if (th.blossom && acc < 0.12) return { ch, fg: fgc, bg, bold: true, detail: { ch: '✿', fg: pick(th.blossom, hash(wx, wy, 42)) } };
+      if (th.fruit && acc < 0.07) return { ch, fg: fgc, bg, bold: true, detail: { ch: '●', fg: th.fruit } };
+      if (th.leaves && acc < 0.18) return { ch, fg: fgc, bg, bold: true, accent: true }; // a few turning leaves
       if (th.snow && acc < 0.3) fgc = '#eef4fc';
       // summer canopies are fuller: an extra leafy glyph now and then
-      const leafy = th.fruit && !wide && acc > 0.9 ? '♠' : ch;
-      return lit({ ch: leafy, fg: fgc, bg, bold: true });
+      const leafy = th.fruit && acc > 0.9 ? '♠' : ch;
+      return { ch: leafy, fg: fgc, bg, bold: true };
     }
     case 'field': {
       const soil = groundBg(F, tag);
-      if (isRainy(F) && hash(wx, wy, 70) < 0.06) return puddle(F, wx, wy, sub, soil);
+      if (isWet(F) && hash(wx, wy, 70) < 0.06 * Math.max(0.25, F.wetness)) return puddle(F, wx, wy, soil, F.wetness || 1);
       if (th.snow) return { ch: hs < 0.35 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
       return { ch: hs < 0.45 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
     }
     case 'path': {
       const pb = groundBg(F, tag);
-      if (isRainy(F) && hash(wx, wy, 70) < 0.16) return puddle(F, wx, wy, sub, pb);
+      if (th.snow && hs < 0.1) return { ch: '▁', fg: '#eef4fc', bg: pb, bold: false };
+      if (isWet(F) && hash(wx, wy, 70) < 0.16 * Math.max(0.3, F.wetness)) return puddle(F, wx, wy, pb, F.wetness || 1);
       return { ch: hs < 0.25 ? '▪' : hs < 0.55 ? '·' : ' ', fg: th.snow ? '#7a8494' : '#5a534b', bg: pb, bold: false };
     }
     case 'sand':
@@ -550,16 +742,13 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     case 'ice':
       return { ch: hs < 0.3 ? '╱' : ' ', fg: '#d8f0ff', bg: mix('#5a8aa8', '#6a9ab8', hash(wx, wy, 7)), bold: false };
     case 'cliff': {
+      if (F.map === 'ridge') return rockFace(F, x, y, wx, wy);
       const rock = th.snow ? '#c8d0dc' : '#8a8070';
-      if (wide) {
-        // a small peak per tile; snowy tips in winter
-        const cap = th.snow || hash(wx, wy, 44) < 0.15;
-        return lit({ ch: sub === 0 ? '◢' : '◣', fg: cap && hash(wx, wy, 45) < 0.6 ? '#e8eef6' : rock, bg: '#24201c', bold: false });
-      }
-      return { ch: '▲', fg: rock, bg: '#24201c', bold: false };
+      const above = F.tags[y - 1]?.[x];
+      const exposed = !above || above.t !== 'cliff';
+      return { ch: exposed ? '▔' : hs < 0.25 ? '▴' : '▲', fg: rock, bg: '#24201c', bold: false };
     }
     case 'cave':
-      if (wide) return { ch: '▄', fg: '#050505', bg: '#3a342c', bold: false };
       return { ch: '●', fg: '#050505', bg: '#3a342c', bold: false };
     case 'roof': {
       const rc = roofShades(tag.dfg || fg);
@@ -572,16 +761,15 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (!(above && above.t === 'roof')) {
         return { ch: '▄', fg: rc.mid, bg: outside, bold: false };
       }
-      const snowCap = th.snow && hash(wx * 2 + sub, wy, 12) < 0.5;
-      return lit({ ch: wy % 2 ? '▒' : '░', fg: snowCap ? '#e8eef8' : rc.lit, bg: rc.mid, bold: false });
+      const snowCap = th.snow && hash(wx * 2, wy, 12) < 0.5;
+      return { ch: wy % 2 ? '▒' : '░', fg: snowCap ? '#e8eef8' : rc.lit, bg: rc.mid, bold: false };
     }
     case 'wall': {
       if (tag.k === 'deco' && tag.dch === '=') {
-        if (wide) return { ch: sub === 0 ? '▐' : '▌', fg: '#7fe8ff', bg: '#3a2818', bold: false, glow: '#5fd8ff', glowR: 5, accent: true };
         return { ch: '▦', fg: '#7fe8ff', bg: '#3a2818', bold: true, glow: '#5fd8ff', glowR: 5, accent: true };
       }
       if (tag.k === 'deco' && tag.dch !== undefined) {
-        return centre({ ch: tag.dch, fg: '#fff2d0', bg: '#6a4424', bold: true });
+        return { ch: tag.dch, fg: '#fff2d0', bg: '#6a4424', bold: true, plain: true }; // sign lettering
       }
       const below = y + 1 < F.tags.length ? F.tags[y + 1][x] : null;
       const base = !below || (below.t !== 'wall' && below.t !== 'door');
@@ -591,21 +779,24 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
         ? { ch: '▀', fg: '#6a4a2c', bg: '#2a1c10', bold: false }
         : { ch: '═', fg: '#7c5634', bg: '#4a321e', bold: false };
       // corner posts frame each building; the row under the eaves sits in shadow
-      if (!base && !walled(F.tags[y][x - 1])) o = { ...o, ch: wide ? '▐' : '║', fg: '#2a1a0e' };
-      else if (!base && !walled(F.tags[y][x + 1])) o = { ...o, ch: wide ? '▌' : '║', fg: '#2a1a0e' };
+      if (!base && !walled(F.tags[y][x - 1])) o = { ...o, ch: '║', fg: '#2a1a0e' };
+      else if (!base && !walled(F.tags[y][x + 1])) o = { ...o, ch: '║', fg: '#2a1a0e' };
       if (above && above.t === 'roof') {
         o = { ...o, bg: mix(o.bg, '#000000', 0.38), fg: mix(o.fg, '#000000', 0.3) };
-        if (th.snow && hash(wx * 2 + sub, wy, 74) < 0.55) o = { ...o, ch: '╷', fg: '#e8f0ff' }; // icicles on the eaves
+        if (th.snow && hash(wx * 2, wy, 74) < 0.55) o = { ...o, ch: '╷', fg: '#e8f0ff' }; // icicles on the eaves
       }
       return o;
     }
-    case 'door':
-      if (wide) return sub === 0 ? { ch: '▕', fg: '#3a2010', bg: '#8a4e22', bold: false } : { ch: '·', fg: '#ffd24a', bg: '#8a4e22', bold: true, accent: true };
+    case 'door': {
+      // the door swings open while the player stands at it, showing the warm room inside
+      const open = [[0, 1], [0, -1], [-1, 0], [1, 0]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.ent === 'player');
+      if (open) return { ch: '▯', fg: '#ffb050', bg: '#1a0e06', bold: true, glow: '#ffb050', glowR: 6, accent: true };
       return { ch: '▮', fg: '#d08a3a', bg: '#3a2818', bold: true, accent: true };
+    }
     case 'iwall':
       return { ch: '▒', fg: '#6a5844', bg: '#4a3c2e', bold: false };
     case 'mwall':
-      if (isTorch(F, x, y, tag)) return centre({ ch: '†', fg: '#ff9900', bg: '#2e2924', bold: true, glow: '#ff9900', glowR: 9, accent: true });
+      if (isTorch(F, x, y, tag)) return { ch: '†', fg: '#ff9900', bg: '#2e2924', bold: true, glow: '#ff9900', glowR: 9, accent: true };
       return { ch: hs < 0.5 ? '▓' : '▒', fg: '#4a423a', bg: '#2e2924', bold: false };
     case 'floor': {
       const nearTable = [[-2, 0], [2, 0], [0, -1], [0, 1], [-2, 1], [2, 1], [-2, -1], [2, -1]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.t === 'table');
@@ -613,10 +804,10 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return { ch: wy % 2 ? '─' : ' ', fg: '#4a3622', bg: groundBg(F, tag), bold: false };
     }
     case 'mfloor':
-      if (hash(wx * 2 + sub, wy, 67) < 0.012) return { ch: '✦', fg: '#00ffff', bg: groundBg(F, tag), bold: false, glow: '#00ffff', glowR: 4, accent: true }; // ore glint
+      if (hash(wx * 2, wy, 67) < 0.012) return { ch: '✦', fg: '#00ffff', bg: groundBg(F, tag), bold: false, glow: '#00ffff', glowR: 4, accent: true }; // ore glint
       return { ch: hs < 0.3 ? '·' : ' ', fg: '#4a4038', bg: groundBg(F, tag), bold: false };
     case 'fireplace':
-      return centre({ ch: g, fg: '#ff7a30', bg: '#3a1a0a', bold: true, glow: '#ff7a30', glowR: 8, accent: true });
+      return { ch: g, fg: '#ff7a30', bg: '#3a1a0a', bold: true, glow: '#ff7a30', glowR: 8, accent: true };
     // ---- furniture
     case 'bed': {
       const left = F.tags[y][x - 1];
@@ -625,62 +816,91 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return { ch: hs < 0.5 ? '░' : '▒', fg: '#6a82d0', bg: '#3a4f9a', bold: false };
     }
     case 'tv':
-      if (wide) return { ch: sub === 0 ? '▐' : '▌', fg: '#6ae0ff', bg: '#141418', bold: false, glow: '#4ac8ff', glowR: 6, accent: true };
       return { ch: '▓', fg: '#6ae0ff', bg: '#141418', bold: false, glow: '#4ac8ff', glowR: 6, accent: true };
     case 'cal':
-      return centre({ ch: '▤', fg: '#f4ead8', bg: '#3a2818', bold: false });
+      return { ch: '▤', fg: '#f4ead8', bg: '#3a2818', bold: false };
     case 'table':
       return { ch: '▀', fg: '#b07840', bg: groundBg(F, { ...tag, t: 'floor' }), bold: false };
     case 'counter':
       return { ch: '▀', fg: '#d0a070', bg: '#5a3a20', bold: false };
     case 'kitchen':
-      return centre({ ch: '◉', fg: '#ff7040', bg: '#2a2a2e', bold: true, glow: '#ff5020', glowR: 5, accent: true });
+      return { ch: '◉', fg: '#ff7040', bg: '#2a2a2e', bold: true, glow: '#ff5020', glowR: 5, accent: true };
     case 'shelf':
       return { ch: '▤', fg: '#b07a48', bg: '#3a2414', bold: false };
     case 'bookcase':
-      return { ch: hs < 0.5 ? '▌' : '▐', fg: pick(['#c04848', '#4868c8', '#48a868', '#c8a848', '#9858c0'], hash(wx * 2 + sub, wy, 60)), bg: '#2a1a0e', bold: false };
+      return { ch: hs < 0.5 ? '▌' : '▐', fg: pick(['#c04848', '#4868c8', '#48a868', '#c8a848', '#9858c0'], hash(wx * 2, wy, 60)), bg: '#2a1a0e', bold: false };
     case 'bath':
       return { ch: hs < 0.5 ? '≈' : '∼', fg: '#3a90d8', bg: '#d8e6ee', bold: false };
     case 'up':
     case 'down':
     case 'exit':
-      return centre({ ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 5, accent: true });
+      return { ch: g, fg: pal(fg), bg: groundBg(F, tag), bold: true, glow: pal(fg), glowR: 5, accent: true };
     case 'pond':
     case 'spring':
     case 'fountain':
     case 'water': {
-      if (tag.k === 'deco' && tag.dch) return centre({ ch: tag.dch, fg: '#7fe8ff', bg: groundBg(F, tag), bold: true, accent: true }); // fountain statue
-      const wb = groundBg(F, tag);
+      if (tag.k === 'deco' && tag.dch) return { ch: tag.dch, fg: '#7fe8ff', bg: groundBg(F, tag), bold: true, accent: true }; // fountain statue
       const tint = tag.t === 'pond' ? '#0a3a2a' : tag.t === 'spring' ? '#0a3a4a' : tag.t === 'fountain' ? '#0a3a6a' : '';
-      let bg = tint ? mix(wb, tint, 0.6) : wb;
       const fgc = tag.t === 'spring' ? '#9ae8ff' : tag.t === 'fountain' ? '#7fe8ff' : tag.t === 'pond' ? '#5ae0a0' : th.waterFg;
-      if (g === '-' && sub === 0) return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
-      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
-        const n = F.tags[y + dy]?.[x + dx];
-        return !!n && !WATERY.has(n.t) && n.t !== 'bridge';
-      });
-      if (edge) return { ch: hs < 0.5 ? '∼' : ' ', fg: mix(fgc, '#ffffff', 0.25), bg: mix(bg, '#2a5aa0', 0.4), bold: false };
-      // deeper water further from the shore
-      let deep = true;
-      for (let dy = -2; dy <= 2 && deep; dy++) {
-        for (let dx = -3; dx <= 3; dx++) {
+      const T = Math.floor(F.t * 3) / 3; // water moves in small steps so a calm scene doesn't repaint every tick
+      // depth: distance to the nearest shore, where a row counts about double (cells are tall)
+      let depth = WATER_DEPTH.length - 1;
+      for (let dy = -2; dy <= 2 && depth > 1; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
           const n = F.tags[y + dy]?.[x + dx];
-          if (n && !WATERY.has(n.t) && n.t !== 'bridge') { deep = false; break; }
+          if (n && n.t !== 'ui' && !WATERY.has(n.t) && n.t !== 'bridge') depth = Math.min(depth, Math.max(Math.abs(dx), dy ? Math.abs(dy) * 2 - 1 : 0));
         }
       }
-      if (deep) bg = mix(bg, '#000000', 0.32);
-      if (th.lilies && tag.t === 'water' && hash(wx, wy, 46) < 0.03) return centre({ ch: '◒', fg: '#3aa040', bg, bold: false });
-      const glint = hash(wx * 2 + sub, wy, 80 + (Math.floor(F.t * 3) % 97));
+      let bg = groundBg(F, tag);
+      if (tint) bg = mix(bg, tint, 0.6);
+      const dk = WATER_DEPTH[depth];
+      bg = dk > 0 ? mix(bg, '#3a6ab0', dk) : mix(bg, '#000000', -dk);
+      // Willow Bend's river runs south, so its surface moves with the current
+      const flow = F.map === 'river' && tag.t === 'water' ? riverFlow(F, x, y) : null;
+      // the surface colour wanders a little around its depth colour, never drifting away from it
+      const shimmer = (flow ? valueNoise(wx / 6, (wy - T * 1.2) / 3, 22) : valueNoise(wx / 6 + T * 0.25, wy / 3 - T * 0.1, 22)) - 0.5;
+      bg = shimmer > 0 ? mix(bg, '#5a8ad0', shimmer * 0.18) : mix(bg, '#000000', -shimmer * 0.18);
+      if (g === '-') return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
+      const glint = hash(wx * 2, wy, 80 + (Math.floor(T * 3) % 97));
       if (!F.indoor && F.weather === 'Sunny' && F.amb > 0.85 && glint < 0.014) return { ch: '✦', fg: '#ffffff', bg, bold: true, glow: '#cfe8ff', glowR: 5 };
-      if (!F.indoor && F.weather === 'Sunny' && F.amb < 0.5 && hash(wx * 2 + sub, wy, 85 + (Math.floor(F.t * 1.5) % 61)) < 0.012) return { ch: '·', fg: '#e8eeff', bg, bold: true };
-      const f = Math.floor(F.t * 1.2);
-      const hw = hash(wx * 2 + sub, wy, 20 + (f % 64));
-      if (tag.t === 'spring' && hw < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
-      return { ch: hw < 0.3 ? '≈' : hw < 0.55 ? '∼' : ' ', fg: fgc, bg, bold: false };
+      // Lighthouse Point's tide pools catch the sun now and then
+      if (F.map === 'point' && tag.t === 'pond' && F.weather === 'Sunny' && F.amb > 0.6 && hash(wx, wy, 170 + (Math.floor(F.t * 1.5) % 53)) < 0.14) {
+        return { ch: '✦', fg: '#ffffff', bg, bold: true, glow: '#cfe8ff', glowR: 5 };
+      }
+      if (!F.indoor && F.weather === 'Sunny' && F.amb < 0.5 && hash(wx * 2, wy, 85 + (Math.floor(T * 1.5) % 61)) < 0.012) return { ch: '·', fg: '#e8eeff', bg, bold: true };
+      if (tag.t === 'spring' && hash(wx * 2, wy, 20 + (Math.floor(T * 1.2) % 64)) < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
+      if (flow) {
+        // each lane of the current carries its ripples downstream at its own speed, a whole
+        // row at a time; thin streaks in the fast middle trace the line of the channel
+        const s = wy - Math.floor(F.t * flow.speed);
+        const r = valueNoise(flow.lane * 1.7, s / 1.6, 26);
+        if (Math.abs(flow.u) < 0.5 && valueNoise(flow.lane * 1.7 + 9.3, s / 2.6, 27) > 0.74) {
+          return { ch: flow.dc > 0.5 ? '╲' : flow.dc < -0.5 ? '╱' : '╎', fg: mix(fgc, '#ffffff', 0.2), bg, bold: false };
+        }
+        if (F.weather === 'Typhoon' && depth >= 3 && r > 0.66) return { ch: '≋', fg: '#eef2ff', bg, bold: true };
+        return { ch: r > 0.64 ? '≈' : r > 0.54 ? '∼' : ' ', fg: depth <= 1 ? mix(fgc, '#ffffff', 0.25) : fgc, bg, bold: false };
+      }
+      if (F.sea && tag.t === 'water') {
+        // breakers: lines of surf roll in toward the beach, a row at a time
+        let rows = 6;
+        for (let d = 1; d < rows; d++) {
+          const up = F.tags[y - d]?.[x];
+          const dn = F.tags[y + d]?.[x];
+          if ((up && up.t !== 'ui' && !WATERY.has(up.t)) || (dn && dn.t !== 'ui' && !WATERY.has(dn.t))) rows = d;
+        }
+        const ph = (T * 0.4 + rows * 0.3 + valueNoise(wx / 7, 0, 24) * 0.3) % 1;
+        if (rows <= 4 && ph < 0.12) return { ch: '≈', fg: '#e8f0ff', bg: mix(bg, '#5a8ad0', 0.2), bold: true };
+      }
+      // ripples run in short streaks that drift across the surface together; wind speeds them up
+      const wind = F.indoor ? 1 : F.weather === 'Typhoon' ? 2.4 : F.weather === 'Rain' || F.weather === 'Blizzard' ? 1.5 : 1;
+      const r = valueNoise(wx / 3 - T * 0.5 * wind, wy * 0.9, 21) * 0.8 + hash(wx, wy, 23) * 0.2;
+      if (wind > 2 && depth >= 3 && r > 0.66) return { ch: '≋', fg: '#eef2ff', bg, bold: true }; // whitecaps in a storm
+      const ch = r > 0.64 ? '≈' : r > 0.54 ? '∼' : ' ';
+      return { ch, fg: depth <= 1 ? mix(fgc, '#ffffff', 0.25) : fgc, bg, bold: false };
     }
   }
   // Generic: furniture, signs, bins, doghouse... keep the readable glyph on a grounded background.
-  return centre({ ch: g, fg: pal(fg), bg: F.indoor || lead[2] === '01' ? '#3a2818' : groundBg(F, tag), bold, accent: INTEREST.has(tag.t) });
+  return { ch: g, fg: pal(fg), bg: F.indoor || cell[2] === '01' ? '#3a2818' : groundBg(F, tag), bold, accent: INTEREST.has(tag.t) };
 }
 
 /** Contour Farm treatment: only scenery changes; sprites, crops and cues stay full size. */
@@ -723,6 +943,107 @@ const WEATHER_ICON: Record<string, [string, string]> = {
 const CREATURE_GLYPH: Record<string, string> = { H: '♞', C: '♉', S: '☁' };
 const BOX: Record<string, string> = { 'box:h': '─', 'box:v': '│', 'box:tl': '╭', 'box:tr': '╮', 'box:bl': '╰', 'box:br': '╯' };
 
+/** Effect colour by tool tier (Cogmind's rule: colour shows strength). Basic to Blessed. */
+// Each tier must stay distinct after the Isotope neon snap: dim grey, dim orange, bright white,
+// bright orange, cyan, purple, pink. Copper and gold share a hue, so they differ in brightness.
+export const TIER_COLOURS = ['#8a8a8a', '#a85a10', '#f4f4f4', '#ffb347', '#33ffcc', '#cc00ff', '#ff4db8'];
+const SWING: Record<string, string> = { '1,0': '╲', '-1,0': '╱', '0,-1': '╱', '0,1': '╲' };
+const DEBRIS: Record<string, string[]> = { stone: ['•', '·', '∙', ','], wood: ['╱', '`', '·', ','], plant: ['ʷ', ',', '`', '·'] };
+const DEBRIS_COL: Record<string, string> = { stone: '#b8b8c0', wood: '#c58a4a', plant: '#7ad04a' };
+
+function drawFx(
+  out: OutCell[][],
+  fx: NonNullable<RenderCtx['fx']>,
+  v: { x: number; y: number; w: number; h: number },
+  W: number,
+  H: number,
+  motion = true
+) {
+  const glyph: Record<string, string> = { dust: '·', sparkle: '*', splash: '≈', coin: '$' };
+  const colour: Record<string, string> = { dust: '#d8c8a8', sparkle: '#fff0a0', splash: '#9cc8ff', coin: '#ffd45a' };
+  const inView = (x: number, y: number) => x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h && x < W && y < H;
+  // flashes go down first, so the tier-coloured slash and the reward still show over them
+  const ordered = [...fx.filter((f) => f.kind === 'flash'), ...fx.filter((f) => f.kind !== 'flash')];
+  for (const f of ordered) {
+    const delay = f.delay ?? 0;
+    const p = (f.age - delay) / Math.max(0.01, f.life - delay);
+    if (p >= 1 || (p < 0 && f.kind !== 'flash')) continue;
+    if (f.kind === 'flash') {
+      // the struck thing blinks white; it holds through the hit-pause before any debris flies
+      if (!inView(f.x, f.y)) continue;
+      const o = out[f.y][f.x];
+      o.fg = '#ffffff';
+      o.bg = mix(o.bg, '#ffffff', 0.35);
+      o.bold = true;
+      o.accent = true;
+      continue;
+    }
+    if (f.kind === 'swing') {
+      if (!inView(f.x, f.y)) continue;
+      const col = TIER_COLOURS[Math.max(0, Math.min(6, f.tier ?? 0))];
+      const o = out[f.y][f.x];
+      out[f.y][f.x] = { ...o, ch: SWING[`${f.dir?.[0] ?? 0},${f.dir?.[1] ?? 1}`] ?? '╲', fg: mix(col, '#000000', p * 0.5), bold: true, glow: col, glowR: 4, accent: true, plain: true }; // fades on its own, whatever is under it
+      continue;
+    }
+    if (f.kind === 'debris') {
+      if (!motion) continue;
+      // a short burst that arcs out and falls back under gravity
+      const pool = DEBRIS[f.stuff ?? 'stone'];
+      const col = DEBRIS_COL[f.stuff ?? 'stone'];
+      const n = f.stuff === 'plant' ? 4 : 8;
+      for (let i = 0; i < n; i++) {
+        const a = hash(i, f.seed ?? 0, 91) * Math.PI * 2;
+        const sp = 0.8 + hash(i, f.seed ?? 0, 92) * 1.4;
+        const r = 0.7 + sp * 2 * p; // bits start just outside the struck cell, so the burst reads at once
+        const x = Math.round(f.x + Math.cos(a) * r);
+        const y = Math.round(f.y + Math.sin(a) * r * 0.6 - 0.8 * p + 2.2 * p * p);
+        if (!inView(x, y) || out[y][x].token || (x === f.x && y === f.y)) continue; // the struck cell keeps its slash
+        const o = out[y][x];
+        out[y][x] = { ...o, ch: pool[i % pool.length], fg: mix(o.bg, col, 0.95 - p * 0.6), bold: true, glow: undefined, accent: true, plain: true };
+      }
+      continue;
+    }
+    if (f.kind === 'text') {
+      // the reward floats up off the spot and fades
+      const txt = f.text ?? '';
+      const y = f.y - 1 - (motion ? Math.floor(p * 1.6) : 0);
+      const x0 = f.x - Math.floor(txt.length / 2);
+      for (let i = 0; i < txt.length; i++) {
+        const x = x0 + i;
+        if (!inView(x, y)) continue;
+        const o = out[y][x];
+        out[y][x] = { ...o, ch: txt[i], fg: mix(o.bg, '#ffe27a', p < 0.6 ? 1 : 1 - (p - 0.6) * 2), bold: true, glow: undefined, accent: true, plain: true };
+      }
+      continue;
+    }
+    const jitter = hash(f.x, f.y, 88);
+    const x = f.x + (f.kind === 'dust' ? (jitter < 0.5 ? -1 : 1) : 0);
+    const y = f.y - (p > 0.45 ? 1 : 0);
+    if (!inView(x, y)) continue;
+    const o = out[y][x];
+    o.ch = glyph[f.kind] || '·';
+    o.fg = mix(o.bg, colour[f.kind] || '#ffffff', 0.55 + (1 - p) * 0.4);
+    o.bold = true;
+    o.glow = colour[f.kind] || '#ffffff';
+    o.glowR = 5;
+    o.accent = true;
+  }
+}
+
+/**
+ * Screen-shake offset in CSS pixels for a heavy hit: a few pixels that die away within a
+ * quarter second (1-2 px for a crack, up to 4 for a break). None with reduced motion.
+ */
+export function shakeOffset(shake: RenderCtx['shake'], reducedMotion = false): [number, number] {
+  if (!shake || reducedMotion) return [0, 0];
+  const life = shake.strength > 1 ? 0.25 : 0.12;
+  if (shake.age >= life) return [0, 0];
+  // a quick back-and-forth that holds most of its size until the end, then settles
+  const amp = (shake.strength > 1 ? 4 : 2) * (1 - shake.age / life) ** 0.6;
+  const k = Math.floor(shake.age * 60);
+  return [Math.round(amp * (k % 2 ? 1 : -1)), Math.round(amp * 0.5 * ((k >> 1) % 2 ? 1 : -1))];
+}
+
 /**
  * Build the styled frame for the current screen contents.
  * @param t seconds, used for animation (water, rain, snow, fireflies)
@@ -738,7 +1059,8 @@ export function computeFrame(
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
   const motion = !ctx?.reducedMotion;
   const skyNow = ctx ? skyFor(ctx) : null;
-  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720 };
+  // with reduced motion every tile animation (sway, ripples, twinkles) holds its first frame
+  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? ''), map: ctx?.mapName ?? '' };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -795,10 +1117,30 @@ export function computeFrame(
         o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
       }
       if (uiCell) o.ui = true;
-      else if (tag) o.seed = hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 200);
+      else if (tag) o.seed = hash((tag.wx ?? x) * 2, tag.wy ?? y, 200);
       row[x] = o;
     }
     out[y] = row;
+  }
+
+  // ---- colourblind-safe state cues: shape as well as colour
+  if (ctx?.cues) {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const tag = tags[y][x];
+        const o = out[y][x];
+        if (!tag || tag.t === 'ui') continue;
+        if ((tag.k || '').startsWith('crop:ripe')) {
+          o.ch = '!';
+          o.plain = true;
+          o.seed = undefined;
+        } else if (tag.k === 'soil:wet') {
+          o.ch = '≈';
+          o.plain = true;
+          o.seed = undefined;
+        }
+      }
+    }
   }
 
   // ---- Isotope Dark look: black-leaning grounds, neon glyphs (before lighting)
@@ -820,11 +1162,13 @@ export function computeFrame(
 
   if (!ctx) {
     if (scr.scene === 'title') {
-      for (const row of out) for (const o of row) o.ui = false;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) out[y][x].ui = boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h); // prompts stay plain text
+      }
       titleScene(out, buf, tags, boxes, t, W, H);
       monochrome(out, boxes);
     }
-    decorateBoxes(out, boxes, W, H);
+    decorateBoxes(out, boxes, W, H, t);
     snapFrame(out);
     return out;
   }
@@ -851,36 +1195,66 @@ export function computeFrame(
   for (const ic of ctx.icons) {
     if (ic.y < 0 || ic.y >= H || ic.x < 0 || ic.x >= W) continue;
     if (buf[ic.y][ic.x][0] !== ' ' || tags[ic.y][ic.x]) continue;
+    if (boxes.some((b) => ic.x >= b.x && ic.x < b.x + b.w && ic.y >= b.y && ic.y < b.y + b.h)) continue; // under a dialog
     const clearNight = ctx.weather === 'Sunny' && sky.amb < 0.5 && !ctx.indoor;
     const [ch, col] =
       ic.icon === 'weather' ? (clearNight ? ['☾', '#d8e0ff'] : WEATHER_ICON[ctx.weather] || ['☀', '#ffcc33']) : ICONS[ic.icon];
     out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: true };
   }
 
-  // ---- contact shadows: ground below/right of buildings, trees and cliffs is darker.
-  // At dawn and dusk the shadow reaches one cell farther, like a low sun.
+  // ---- contact shadows: buildings and trees throw away from the sun.
+  // Morning sun casts west (left), afternoon sun casts east (right).
   const sunHour = (((ctx.minutes / 60) % 24) + 24) % 24;
   const longShadow = sunHour < 8 || sunHour > 17;
+  const sunWest = sunHour >= 12;
+  const sunny = sky.amb > 0.85 && ctx.weather === 'Sunny';
+  const woods = ctx.mapName === 'woods';
+  const shaftT = motion ? Math.floor(t * 2) / 2 : 0;
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !SHADOW_RECEIVERS.has(tag.t) || (tag.k || '').startsWith('obj:boulder')) continue;
+      const wx = tag.wx ?? x;
+      const wy = tag.wy ?? y;
       const up = y > 0 ? tags[y - 1][x] : null;
       const up2 = longShadow && y > 1 ? tags[y - 2][x] : null;
-      const left = x > 0 ? tags[y][x - 1] : null;
-      const left2 = longShadow && x > 1 ? tags[y][x - 2] : null;
+      const side1 = tags[y]?.[x + (sunWest ? -1 : 1)];
+      const side2 = longShadow ? tags[y]?.[x + (sunWest ? -2 : 2)] : null;
       let k = 0;
       if (up && up.t !== 'ui' && SHADOW_CASTERS.has(up.t)) k = up.t === 'tree' ? 0.22 : 0.34;
       else if (up2 && up2.t !== 'ui' && SHADOW_CASTERS.has(up2.t)) k = up2.t === 'tree' ? 0.1 : 0.16;
-      else if (left && left.t !== 'ui' && (left.t === 'wall' || left.t === 'door')) k = 0.16;
-      else if (left2 && left2.t !== 'ui' && (left2.t === 'wall' || left2.t === 'door')) k = 0.09;
-      if (k) {
+      else if (side1 && side1.t !== 'ui' && (side1.t === 'wall' || side1.t === 'door' || side1.t === 'tree')) {
+        k = side1.t === 'tree' ? 0.12 : 0.16;
+      } else if (side2 && side2.t !== 'ui' && (side2.t === 'wall' || side2.t === 'door' || side2.t === 'tree')) {
+        k = side2.t === 'tree' ? 0.07 : 0.09;
+      }
+      // Cedar Hollow: ground hemmed in by trees lies in the canopy's gloom, except where a
+      // slanting shaft of sun breaks through on a fine day
+      let gloom = 0;
+      let shaft = 0;
+      if (woods) {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const row = tags[y + dy];
+          if (row) for (let dx = -2; dx <= 2; dx++) if ((dx || dy) && row[x + dx]?.t === 'tree') n++;
+        }
+        // blue noise dithers the gloom so it deepens evenly between the dark ramp steps
+        const g0 = Math.min(1, Math.max(0, (n - 2) / 7));
+        gloom = g0 ? Math.max(0, g0 * 0.55 + (blueNoise(wx, wy) - 0.5) * 0.18) : 0;
+        if (gloom && sunny) {
+          const beam = valueNoise((wx + (sunWest ? -1.6 : 1.6) * wy) / 3.2, wy / 9 + shaftT * 0.03, 155);
+          shaft = Math.min(1, Math.max(0, (beam - 0.68) / 0.1));
+        }
+      }
+      const kb = 1 - (1 - k) * (1 - gloom * (1 - shaft));
+      if (kb || shaft) {
         const o = out[y][x];
-        o.bg = mix(o.bg, '#000000', k);
-        o.fg = mix(o.fg, '#000000', k * 0.6);
+        o.bg = mix(o.bg, '#000000', kb);
+        // the gloom only darkens the ground under people and things, so they stay readable
+        o.fg = mix(o.fg, '#000000', (tag.ent || tag.k ? k : kb) * 0.6);
+        if (shaft) o.bg = mix(o.bg, '#fff4d8', shaft * 0.1);
         // sunlight dapples through the leaves onto the shaded ground
-        if (up && up.t === 'tree' && o.ch === ' ' && !o.dx && sky.amb > 0.85 && ctx.weather === 'Sunny'
-          && hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 150) < 0.5) {
+        if (o.ch === ' ' && sunny && ((up?.t === 'tree' && hash(wx * 2, wy, 150) < 0.5) || (shaft > 0.4 && hash(wx * 2, wy, 151) < 0.4))) {
           o.ch = '˙';
           o.fg = mix(o.bg, '#fff4d8', 0.55);
         }
@@ -896,9 +1270,7 @@ export function computeFrame(
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
-        const zw = tag.zw ?? 1;
-        const px = (tag.wx ?? x) + (tag.sub ?? 0) / zw;
-        const n = valueNoise(px / 9 + tc * 0.06, (tag.wy ?? y) / 5 + tc * 0.02, 51);
+        const n = valueNoise((tag.wx ?? x) / 9 + tc * 0.06, (tag.wy ?? y) / 5 + tc * 0.02, 51);
         if (n > 0.64) {
           const k = Math.min(1, (n - 0.64) / 0.2) * 0.3;
           const o = out[y][x];
@@ -910,11 +1282,13 @@ export function computeFrame(
     }
   }
 
-  // ---- chimney smoke, butterflies, falling leaves
+  // ---- chimney smoke, butterflies, falling leaves, wildlife, water life
   if (outdoor && motion) {
     chimneys(out, tags, v, t, W, H, ctx.weather);
     critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
+    wildlife(out, tags, v, t, season, ctx.weather, ctx.mapName, sky.amb);
   }
+  if (outdoor) waterLife(out, tags, v, season, SEA_MAPS.has(ctx.mapName));
   if (outdoor && (ctx.weather === 'Rain' || ctx.weather === 'Typhoon')) {
     // everything looks wet and a touch darker in the rain
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
@@ -938,11 +1312,9 @@ export function computeFrame(
         if (!tag || tag.t === 'ui' || tag.ent) continue;
         const open = WALKABLE_OPEN.has(tag.t) || WATERY.has(tag.t) || (tag.k || '').startsWith('soil') || (tag.k || '').startsWith('crop:');
         if (!open) continue;
-        const zw = tag.zw ?? 1;
-        const wx = (tag.wx ?? x) * zw + (tag.sub ?? 0);
+        const wx = tag.wx ?? x;
         const wy = tag.wy ?? y;
         const o = out[y][x];
-        if (o.dx) continue; // don't paint over a centred sprite
         if (rain) {
           const drift = w === 'Typhoon' ? 2 : 1;
           if (hash(wx - f * drift, wy - f, 11) < dens) {
@@ -965,6 +1337,7 @@ export function computeFrame(
   if (outdoorFx && w === 'Sunny' && sky.amb > 0.85 && motion) birds(out, tags, v, t);
 
   // ---- lighting (with lightning flashes in a typhoon)
+  let lightMap: Float32Array | null = null;
   const flash = motion && outdoor && ctx.weather === 'Typhoon' && lightning(t);
   if (flash) {
     sky.amb = Math.min(1.1, sky.amb + 0.65);
@@ -973,23 +1346,32 @@ export function computeFrame(
   }
   const fireflies = motion && outdoorFx && sky.amb < 0.62 && (season === 0 || season === 1) && w === 'Sunny';
   const FIREFLY = '#fff27a';
+  // Lighthouse Point: at night and in storms the lighthouse window turns a beam over the sea
+  const beamOn = outdoor && ctx.mapName === 'point' && (sky.windowsLit || w === 'Typhoon' || w === 'Blizzard');
+  let beacon: [number, number] | null = null;
   if (sky.amb < 0.999 || flash) {
     const lights: Light[] = [];
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
-        // one light per tile, centred on it
-        if ((tag.sub ?? 0) !== 0) continue;
-        const lx = x + ((tag.zw ?? 1) - 1) / 2;
-        const zr = tag.zw ?? 1;
-        if (tag.ent === 'player' && sky.lanterns) lights.push({ x: lx, y, r: (ctx.mapName === 'mine' ? 8 : 10) * (zr > 1 ? 1.3 : 1), col: hexToRgb('#ffd890'), k: 1.15 });
-        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') lights.push({ x: lx, y, r: 3.4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffb050'), k: 0.75 });
-        if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x: lx, y, r: 4 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ffa040'), k: 0.8 });
-        if (tag.t === 'fireplace') lights.push({ x: lx, y, r: 5 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ff8a40'), k: 0.8 });
-        if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x: lx, y: y + 1, r: 5 * (zr > 1 ? 1.4 : 1), col: hexToRgb('#ff9900'), k: 0.85 });
+        if (tag.ent === 'player' && sky.lanterns) lights.push({ x, y, r: ctx.mapName === 'mine' ? 8 : 10, col: hexToRgb('#ffd890'), k: 1.15 });
+        const pane = tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=';
+        if (pane && beamOn && !beacon) {
+          beacon = [x, y];
+          lights.push({ x, y, r: 6, col: hexToRgb('#fff0d0'), k: 1 });
+        } else if (sky.windowsLit && pane && windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) lights.push({ x, y, r: 3.4, col: hexToRgb('#ffb050'), k: 0.75 });
+        if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x, y, r: 4, col: hexToRgb('#ffa040'), k: 0.8 });
+        if (tag.t === 'fireplace') lights.push({ x, y, r: 5, col: hexToRgb('#ff8a40'), k: 0.8 });
+        if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x, y: y + 1, r: 5, col: hexToRgb('#ff9900'), k: 0.85 });
       }
     }
+    lightMap = new Float32Array(W * H);
+    // The beam turns once every BEAM_PERIOD seconds in small steps; with reduced motion it
+    // holds still, pointing out to sea. It brightens what it crosses rather than tinting it.
+    const beamA = Math.PI / 4 + (motion ? (Math.floor(t * 12) / 12 / BEAM_PERIOD) * Math.PI * 2 : 0);
+    const beamCos = Math.cos(beamA);
+    const beamSin = Math.sin(beamA);
     const tintRgb = hexToRgb(sky.tint);
     const vignette = flash ? 0 : Math.max(0, 0.8 - sky.amb) * 0.6;
     const shade = (col: string, lr: number, lg: number, lb: number, ls: number) => {
@@ -1002,41 +1384,66 @@ export function computeFrame(
       const w0 = lr / ls / 255;
       const w1 = lg / ls / 255;
       const w2 = lb / ls / 255;
-      return rgbToHex([
-        n0 + (c[0] * (0.55 + 0.45 * w0) - n0) * s,
-        n1 + (c[1] * (0.55 + 0.45 * w1) - n1) * s,
-        n2 + (c[2] * (0.55 + 0.45 * w2) - n2) * s,
-      ]);
+      // light only ever adds: aim for the brighter of the ambient (which carries the sunset
+      // tint at dusk) and the lamp-lit colour, plus a little of the lamp's own warmth
+      const t0 = Math.max(n0, c[0] * (0.55 + 0.45 * w0)) + 14 * w0;
+      const t1 = Math.max(n1, c[1] * (0.55 + 0.45 * w1)) + 14 * w1;
+      const t2 = Math.max(n2, c[2] * (0.55 + 0.45 * w2)) + 14 * w2;
+      return rgbToHex([n0 + (t0 - n0) * s, n1 + (t1 - n1) * s, n2 + (t2 - n2) * s]);
     };
+    // Each light only touches the cells within its radius (columns count half, cells are tall),
+    // so a town full of lit windows costs lights x area, not lights x screen.
+    const LR = new Float32Array(W * H);
+    const LG = new Float32Array(W * H);
+    const LB = new Float32Array(W * H);
+    const LS = new Float32Array(W * H);
+    for (const L of lights) {
+      // flames flicker a little; each light has its own rhythm
+      const flick = 0.9 + 0.1 * Math.sin(Math.floor(F.t * 8) * 0.9 + L.x * 1.7 + L.y * 2.3);
+      const y0 = Math.max(v.y, Math.floor(L.y - L.r));
+      const y1 = Math.min(v.y + v.h, H, Math.ceil(L.y + L.r) + 1);
+      const x0 = Math.max(v.x, Math.floor(L.x - L.r * 2));
+      const x1 = Math.min(v.x + v.w, W, Math.ceil(L.x + L.r * 2) + 1);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const dx = (x - L.x) * 0.5;
+          const dy = y - L.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d >= L.r) continue;
+          const k = (1 - d / L.r) ** 1.1 * L.k * flick;
+          const i = y * W + x;
+          LR[i] += L.col[0] * k;
+          LG[i] += L.col[1] * k;
+          LB[i] += L.col[2] * k;
+          LS[i] += k;
+        }
+      }
+    }
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
       for (let x = v.x; x < v.x + v.w && x < W; x++) {
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
         const o = out[y][x];
-        let lr = 0;
-        let lg = 0;
-        let lb = 0;
-        let ls = 0;
-        for (const L of lights) {
-          const dx = (x - L.x) * 0.5;
-          const dy = y - L.y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d < L.r) {
-            // flames flicker a little; each light has its own rhythm
-            const flick = 0.9 + 0.1 * Math.sin(Math.floor(t * 8) * 0.9 + L.x * 1.7 + L.y * 2.3);
-            const k = (1 - d / L.r) ** 1.1 * L.k * flick;
-            lr += L.col[0] * k;
-            lg += L.col[1] * k;
-            lb += L.col[2] * k;
-            ls += k;
-          }
-        }
+        const li = y * W + x;
+        let lr = LR[li];
+        let lg = LG[li];
+        let lb = LB[li];
+        let ls = LS[li];
         // Entities stay a little brighter so the player can always find them.
         const entBoost = tag.ent ? 0.35 : 0;
+        const bn = blueNoise(tag.wx ?? x, tag.wy ?? y);
+        if (ls > 0) {
+          // blue-noise dither on the falloff turns banded rings into an even stipple
+          const f = Math.max(0, 1 + (bn - 0.5) * 0.3);
+          lr *= f;
+          lg *= f;
+          lb *= f;
+          ls *= f;
+        }
+        lightMap[y * W + x] = ls;
         o.bg = shade(o.bg, lr, lg, lb, ls);
         // the rim of each light pool fades out through ':' and '.' (an ASCII gradient)
-        if (ls > 0.04 && ls < 0.32 && o.ch === ' ' && SHADOW_RECEIVERS.has(tag.t) && !tag.ent && !o.dx && !(x > 0 && out[y][x - 1].dx)
-          && hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 73) < 0.45) {
+        if (ls > 0.04 && ls < 0.32 && o.ch === ' ' && SHADOW_RECEIVERS.has(tag.t) && !tag.ent && bn < 0.45) {
           o.ch = ls < 0.14 ? '.' : ':';
           o.fg = mix(o.bg, '#ffe0a0', 0.22 + ls * 0.6);
         }
@@ -1047,21 +1454,48 @@ export function computeFrame(
           const nx = (x - (v.x + v.w / 2)) / (v.w / 2);
           const ny = (y - (v.y + v.h / 2)) / (v.h / 2);
           const d = Math.sqrt(nx * nx + ny * ny) / 1.25;
-          const k = Math.max(0, Math.min(1, (d - 0.5) / 0.5)) * vignette;
+          const k = Math.max(0, Math.min(1, (d - 0.5) / 0.5 + (bn - 0.5) * 0.18)) * vignette;
           if (k > 0) {
             o.bg = mix(o.bg, '#000000', k);
             o.fg = mix(o.fg, '#000000', k * 0.8);
           }
         }
-        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') {
-          o.fg = '#ffd27a';
-          o.bg = '#5a3410';
-          o.glow = '#ffb040';
-          o.glowR = 10;
-          o.accent = true;
+        if (beacon) {
+          // a cone that widens away from the window, strongest on the water and the shore
+          const bx = (x - beacon[0]) * 0.5;
+          const by = y - beacon[1];
+          const along = bx * beamCos + by * beamSin;
+          const across = Math.abs(by * beamCos - bx * beamSin);
+          const half = along * BEAM_SPREAD + 0.6;
+          const surface = WATERY.has(tag.t) ? 1 : GROUND.has(tag.t) || tag.t === 'cliff' || tag.t === 'bridge' ? 0.55 : 0;
+          if (surface && along > 1 && along < BEAM_R && across < half) {
+            const kb = surface * (1 - across / half) ** 0.7 * (1 - along / BEAM_R) ** 0.6;
+            o.bg = mix(o.bg, '#e8e8e8', kb * 0.4);
+            o.fg = mix(o.fg, '#ffffff', kb * 0.55);
+            if (tag.t === 'pond' && kb > 0.3) {
+              o.ch = '✦'; // a tide pool flashes as the beam passes
+              o.fg = '#ffffff';
+              o.bold = true;
+            }
+          }
         }
-        if (fireflies && tag.t === 'grass' && !tag.ent && !o.dx) {
-          const wx = (tag.wx ?? x) * (tag.zw ?? 1) + (tag.sub ?? 0);
+        const beaconHere = !!beacon && beacon[0] === x && beacon[1] === y;
+        if ((sky.windowsLit || beaconHere) && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') {
+          if (beaconHere || windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) {
+            o.fg = beaconHere ? '#fff2c8' : '#ffd27a';
+            o.bg = '#5a3410';
+            o.glow = '#ffb040';
+            o.glowR = beaconHere ? 14 : 10;
+            o.accent = true;
+          } else {
+            // that household has gone to bed: dark glass
+            o.fg = '#3a4452';
+            o.glow = undefined;
+            o.accent = false;
+          }
+        }
+        if (fireflies && tag.t === 'grass' && !tag.ent) {
+          const wx = tag.wx ?? x;
           const wy = tag.wy ?? y;
           if (hash(wx, wy, 77) < 0.03 && hash(wx, wy, 78 + (Math.floor(t * 1.5) % 40)) > 0.35) {
             o.ch = '·';
@@ -1077,10 +1511,13 @@ export function computeFrame(
   }
   // ---- reflections in calm water (after lighting, so lit windows reflect too)
   if (outdoor && ctx.weather === 'Sunny') reflections(out, tags, v, t, W, H);
-  shoreFoam(out, tags, v, W, H);
+  shoreFoam(out, tags, v, W, H, motion ? t : 0);
+  if (ctx.fx?.length) drawFx(out, ctx.fx, v, W, H, motion);
+  if (!ctx.indoor) worldMargin(out, tags, buf, v, ctx.divX, ctx.divY, boxes);
 
-  monochrome(out, boxes);
-  decorateBoxes(out, boxes, W, H);
+  const tod = toneFor(ctx.minutes, ctx.weather, !!ctx.indoor, ctx.mapName);
+  monochrome(out, boxes, { ...tod, light: lightMap, tags });
+  decorateBoxes(out, boxes, W, H, t);
   snapFrame(out);
   return out;
 }
@@ -1107,20 +1544,17 @@ function footprints(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['
     trail.push({ map: ctx.mapName, wx: pwx, wy: pwy });
     if (trail.length > 16) trail.shift();
   }
-  const zw = ctx.zoom || 1;
   for (let i = 0; i < trail.length - 1; i++) {
     const s = trail[i];
-    const x = px + (s.wx - pwx) * zw;
+    const x = px + (s.wx - pwx);
     const y = py + (s.wy - pwy);
     if (y < v.y || y >= v.y + v.h || x < v.x || x >= v.x + v.w) continue;
     const tg = tags[y][x];
     if (!tg || tg.wx !== s.wx || tg.wy !== s.wy || tg.ent || tg.k) continue;
     if (!((season === 3 && GROUND.has(tg.t)) || tg.t === 'sand')) continue;
     const o = out[y][x];
-    if (o.dx) continue;
     const fresh = (i + 1) / trail.length; // older prints fade
-    out[y][x] = { ...o, ch: ':', fg: mix(o.bg, '#b4bccc', 0.3 + 0.55 * fresh), bold: true, glow: undefined, dx: zw > 1 ? 0.5 : undefined };
-    if (zw > 1 && out[y][x + 1]) out[y][x + 1] = { ...out[y][x + 1], ch: ' ' };
+    out[y][x] = { ...o, ch: ':', fg: mix(o.bg, '#b4bccc', 0.3 + 0.55 * fresh), bold: true, glow: undefined };
   }
 }
 
@@ -1139,14 +1573,15 @@ function birds(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'
     const x = Math.round(lead - dir * rank * 2);
     const y = y0 + Math.round(p * 3) + (i === 0 ? 0 : i % 2 ? -rank : rank);
     const tg = tags[y]?.[x];
-    if (!tg || tg.t === 'ui' || tg.ent || out[y][x].dx) continue;
+    if (!tg || tg.t === 'ui' || tg.ent) continue;
     const flap = Math.floor(t * 5 + i) % 2 === 0;
     out[y][x] = { ...out[y][x], ch: flap ? 'v' : 'ˇ', fg: '#d8d8d8', bold: true, glow: undefined };
   }
 }
 
 /** Mark water cells that touch land so the painter can draw a thin foam line on that side. */
-function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number) {
+function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number, t: number) {
+  const T = Math.floor(t * 3) / 3;
   const land = (n: CellTag | null | undefined) => !!n && n.t !== 'ui' && !WATERY.has(n.t) && n.t !== 'bridge' && n.t !== 'void';
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
@@ -1157,10 +1592,14 @@ function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['v
       if (land(tags[y][x + 1])) m |= 2;
       if (land(tags[y + 1]?.[x])) m |= 4;
       if (land(tags[y][x - 1])) m |= 8;
-      if (!m) continue;
+      if (!m || m === 15) continue; // a lone tide pool gets no foam box
+      // the foam laps: each stretch of shore brightens, fades and breaks on its own beat,
+      // so the waterline reads as moving foam rather than a stone kerb
+      const lap = 0.5 + 0.5 * Math.sin(T * 2.2 + (tg.wx ?? x) * 0.8 + (tg.wy ?? y) * 1.3);
+      if (lap < 0.22) continue;
       const o = out[y][x];
       o.foam = m;
-      o.foamCol = mix(o.bg, '#ffffff', 0.42);
+      o.foamCol = mix(o.bg, '#ffffff', 0.16 + 0.26 * lap);
     }
   }
   // the same thin edge line, fainter, gives paths a stone kerb where they meet grass or soil
@@ -1178,6 +1617,45 @@ function shoreFoam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['v
       const o = out[y][x];
       o.foam = m;
       o.foamCol = mix(o.bg, '#ffffff', 0.2);
+    }
+  }
+}
+
+/**
+ * A map narrower or shorter than its window leaves a margin. Instead of a hard black frame,
+ * the world's edge carries on into the dark: each margin cell borrows a cell from the map's
+ * outer band (so a treeline stays a forest and a road keeps going), dimmer and sparser with
+ * distance. Dialogs over the margin are left alone.
+ */
+function worldMargin(out: OutCell[][], tags: (CellTag | null)[][], buf: Cell[][], v: RenderCtx['view'], divX: number, divY: number, boxes: Screen['boxes']) {
+  if (v.w < 2 || v.h < 2) return;
+  const x1 = v.x + v.w - 1;
+  const y1 = v.y + v.h - 1;
+  const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
+  for (let y = 1; y < Math.min(divY, out.length); y++) {
+    for (let x = 0; x < Math.min(divX, out[y].length); x++) {
+      if (x >= v.x && x <= x1 && y >= v.y && y <= y1) continue;
+      if (tags[y][x] || buf[y][x][0] !== ' ' || inBox(x, y)) continue;
+      const ex = x < v.x ? v.x - x : x > x1 ? x - x1 : 0;
+      const ey = y < v.y ? v.y - y : y > y1 ? y - y1 : 0;
+      const d = Math.max(ex, ey * 2); // rows are about twice as tall as columns are wide
+      const fade = 0.4 + d * 0.07;
+      if (fade >= 0.97) continue;
+      // borrow from the two outermost rings, nudged a row or column so copies don't streak
+      const j = hash(x, y, 210) < 0.5 ? 0 : 1;
+      const n = Math.floor(hash(x, y, 211) * 3) - 1;
+      const sx = x < v.x ? v.x + j : x > x1 ? x1 - j : Math.max(v.x, Math.min(x1, x + n));
+      const sy = y < v.y ? v.y + j : y > y1 ? y1 - j : Math.max(v.y, Math.min(y1, y + n));
+      const src = out[sy][sx];
+      const st = tags[sy][sx];
+      const sparse = blueNoise(x, y) < (d - 1) * 0.15; // glyphs thin out toward the far edge
+      out[y][x] = {
+        ch: !st || st.ent || sparse ? ' ' : src.ch,
+        fg: mix(src.fg, '#000000', fade),
+        bg: mix(src.bg, '#000000', fade),
+        bold: false,
+        seed: hash(x, y, 213),
+      };
     }
   }
 }
@@ -1209,18 +1687,14 @@ function reflections(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx[
       const src = out[sy][x];
       if (!(TALL.has(st.t) || st.ent || src.accent)) continue;
       const o = out[y][x];
-      if (src.ch === ' ') {
-        if (x > 0 && out[sy][x - 1].dx) out[y][x] = { ...o, ch: ' ', glow: undefined };
-        continue;
-      }
-      if (hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 120 + (f % 31)) < 0.22) continue; // ripple break-up
+      if (src.ch === ' ') continue;
+      if (hash((tag.wx ?? x) * 2, tag.wy ?? y, 120 + (f % 31)) < 0.22) continue; // ripple break-up
       out[y][x] = {
         ch: MIRROR[src.ch] ?? src.ch,
         fg: mix(src.fg, o.bg, 0.5 + 0.1 * k),
         bg: o.bg,
         bold: false,
         accent: src.accent,
-        dx: src.dx,
         glow: src.accent && src.glow ? mix(src.glow, '#000000', 0.5) : undefined,
         glowR: 4,
       };
@@ -1241,32 +1715,99 @@ export function lightning(t: number): boolean {
 
 const GROUND = new Set(['grass', 'field', 'path', 'sand', 'flower']);
 
+// ---- shape-matched edge glyphs
+// After Alex Harri's "ASCII characters are not pixels": a glyph is described by how much ink
+// falls in six sampling circles (two staggered columns of three), and an edge cell picks the
+// glyph whose ink best matches how far the neighbouring ground reaches into it.
+const EDGE_SAMPLES: [number, number][] = [[0.27, 0.22], [0.73, 0.18], [0.27, 0.52], [0.73, 0.48], [0.27, 0.82], [0.73, 0.78]];
+const EDGE_SHAPES: Record<string, (u: number, v: number) => boolean> = {
+  '▀': (u, v) => v < 0.5, '▄': (u, v) => v >= 0.5, '▌': (u) => u < 0.5, '▐': (u) => u >= 0.5,
+  '▘': (u, v) => u < 0.5 && v < 0.5, '▝': (u, v) => u >= 0.5 && v < 0.5, '▖': (u, v) => u < 0.5 && v >= 0.5, '▗': (u, v) => u >= 0.5 && v >= 0.5,
+  '▛': (u, v) => !(u >= 0.5 && v >= 0.5), '▜': (u, v) => !(u < 0.5 && v >= 0.5), '▙': (u, v) => !(u >= 0.5 && v < 0.5), '▟': (u, v) => !(u < 0.5 && v < 0.5),
+  '◤': (u, v) => u + v < 1, '◥': (u, v) => v < u, '◣': (u, v) => v > u, '◢': (u, v) => u + v > 1,
+};
+/** Shape vectors: the share of each sampling circle (radius 0.2) covered by the glyph's ink. */
+const EDGE_VECTORS: [string, number[]][] = Object.entries(EDGE_SHAPES).map(([ch, inside]) => [
+  ch,
+  EDGE_SAMPLES.map(([cu, cv]) => {
+    let hit = 0;
+    let n = 0;
+    for (let a = -1; a <= 1; a += 0.25) {
+      for (let b = -1; b <= 1; b += 0.25) {
+        if (a * a + b * b > 1) continue;
+        n++;
+        if (inside(cu + a * 0.2, cv + b * 0.2)) hit++;
+      }
+    }
+    return hit / n;
+  }),
+]);
+EDGE_VECTORS.push(['░', EDGE_SAMPLES.map(() => 0.25)], [' ', EDGE_SAMPLES.map(() => 0)]);
+
+/**
+ * Best glyph for an edge cell, given which of its eight neighbours ([dy+1][dx+1]) are the
+ * other ground. Coverage falls off with distance from each neighbour; a contrast curve
+ * sharpens it before the nearest-shape match.
+ */
+export function edgeGlyph(occ: boolean[][]): string {
+  const want = EDGE_SAMPLES.map(([u, v]) => {
+    let f = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if ((dx || dy) && occ[dy + 1][dx + 1]) {
+          const d = Math.hypot(u - (0.5 + dx), v - (0.5 + dy));
+          f = Math.max(f, Math.min(1, Math.max(0, (1.4 - d) / 0.6)));
+        }
+      }
+    }
+    return f;
+  });
+  const top = Math.max(...want);
+  if (top <= 0) return ' ';
+  const sharp = want.map((w) => (w / top) ** 1.6 * top); // global contrast enhancement
+  let best = ' ';
+  let bestD = Infinity;
+  for (const [ch, vec] of EDGE_VECTORS) {
+    let d = 0;
+    for (let k = 0; k < 6; k++) d += (vec[k] - sharp[k]) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = ch;
+    }
+  }
+  return best;
+}
+
 function blendGroundEdges(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], W: number, H: number) {
-  // A 16-colour palette has no in-between hues, so borders are dithered (the classic
-  // limited-palette technique): the softer ground (grass over soil, soil over path)
-  // creeps into its neighbour as a light shade pattern in its own colour.
+  // A 16-colour palette has no in-between hues, so where two grounds meet, the softer one
+  // (grass over soil, soil over path) reaches into its neighbour as a shape-matched block glyph
+  // in its own colour: straight edges get half blocks, corners get quadrants or diagonals.
   const rank: Record<string, number> = { grass: 3, flower: 3, field: 2, sand: 1, path: 0 };
   const base = out.map((r) => r.map((o) => o.bg));
-  const dirs: [number, number, string][] = [
-    [0, -1, '▀'],
-    [0, 1, '▄'],
-    [-1, 0, '▌'],
-    [1, 0, '▐'],
-  ];
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !GROUND.has(tag.t) || tag.k || out[y][x].ch !== ' ') continue;
-      if (out[y][x - 1]?.dx) continue; // under a centred sprite
-      if (hash((tag.wx ?? x) * 2 + (tag.sub ?? 0), tag.wy ?? y, 61) > 0.55) continue; // ragged, not a solid band
-      for (const [dx, dy, edge] of dirs) {
-        const n = tags[y + dy]?.[x + dx];
-        if (n && n.t !== 'ui' && GROUND.has(n.t) && !n.k && rank[n.t] > rank[tag.t]) {
-          const solid = hash((tag.wx ?? x) * 2 + (tag.sub ?? 0) + dx, (tag.wy ?? y) + dy, 62) < 0.34;
-          out[y][x] = { ...out[y][x], ch: solid ? edge : '░', fg: base[y + dy][x + dx] };
-          break;
+      if (hash((tag.wx ?? x) * 2, tag.wy ?? y, 61) > 0.7) continue; // ragged, not a solid band
+      const occ = [[false, false, false], [false, false, false], [false, false, false]];
+      let fg = '';
+      let fgRank = -1;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const n = (dx || dy) ? tags[y + dy]?.[x + dx] : null;
+          if (!n || n.t === 'ui' || !GROUND.has(n.t) || n.k || rank[n.t] <= rank[tag.t]) continue;
+          occ[dy + 1][dx + 1] = true;
+          // the colour comes from the strongest side neighbour (diagonals only if nothing else)
+          const r = rank[n.t] + (dx && dy ? 0 : 0.5);
+          if (r > fgRank) {
+            fgRank = r;
+            fg = base[y + dy][x + dx];
+          }
         }
       }
+      if (fgRank < 0) continue;
+      const ch = edgeGlyph(occ);
+      if (ch !== ' ') out[y][x] = { ...out[y][x], ch, fg: mix(fg, '#ffffff', 0.07) }; // a touch lighter, so the shape reads
     }
   }
 }
@@ -1304,7 +1845,6 @@ function chimneys(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['vi
         const phase = (t * 0.9 + seed + k * 0.37) % 1;
         if (phase < 0.25 * k - 0.2) continue;
         const o = out[yy][xx];
-        if (o.dx) continue;
         out[yy][xx] = { ...o, ch: k === 1 ? '°' : k === 2 ? '∘' : '·', fg: mix('#eeeef4', o.bg, 0.05 + k * 0.15), bold: k === 1, glow: undefined };
       }
     }
@@ -1339,7 +1879,6 @@ function critters(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['vi
     if (butterflies && !(GROUND.has(tg.t) || (tg.k || '').startsWith('soil') || (tg.k || '').startsWith('crop:'))) continue;
     if (leaves && !(GROUND.has(tg.t) || WATERY.has(tg.t) || (tg.k || '').startsWith('soil'))) continue;
     const o = out[y][x];
-    if (o.dx) continue;
     const flap = Math.floor(t * 6 + i) % 2 === 0;
     out[y][x] = {
       ...o,
@@ -1349,6 +1888,77 @@ function critters(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['vi
       glow: undefined,
       accent: true,
     };
+  }
+}
+
+/** Reeds and lily pads: small signs that the water is alive. */
+function waterLife(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], season: number, sea: boolean) {
+  if (sea || season === 3) return; // nothing grows on the open sea, and winter water is bare
+  for (let y = v.y; y < v.y + v.h && y < tags.length; y++) {
+    for (let x = v.x; x < v.x + v.w && x < tags[y].length; x++) {
+      const tg = tags[y][x];
+      if (!tg || tg.t === 'ui' || tg.ent) continue;
+      const wx = tg.wx ?? x;
+      const wy = tg.wy ?? y;
+      if (WATERY.has(tg.t)) {
+        if ((tg.t === 'water' || tg.t === 'pond') && hash(wx, wy, 190) < 0.035) {
+          const o = out[y][x];
+          o.ch = hash(wx, wy, 193) < 0.6 ? '◡' : '⌓';
+          o.fg = '#256a34';
+          o.bold = false;
+          o.accent = true;
+          o.plain = true;
+          o.seed = undefined;
+        }
+        continue;
+      }
+      if (!GROUND.has(tg.t)) continue;
+      const nearWater = [[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => {
+        const n = tags[y + dy]?.[x + dx];
+        return !!n && WATERY.has(n.t);
+      });
+      if (nearWater && hash(wx, wy, 191) < 0.08) {
+        const o = out[y][x];
+        o.ch = pick(['¦', 'ʸ', '╽'], hash(wx, wy, 192));
+        o.fg = '#4a8a52';
+        o.bold = false;
+        o.accent = true;
+        o.plain = true;
+        o.seed = undefined;
+      }
+    }
+  }
+}
+
+/** A little non-interactive wildlife: beach crabs, farm rabbits, town cats. */
+function wildlife(
+  out: OutCell[][],
+  tags: (CellTag | null)[][],
+  v: RenderCtx['view'],
+  t: number,
+  season: number,
+  weather: string,
+  mapName: string,
+  amb: number
+) {
+  if (weather !== 'Sunny' && weather !== 'Cloudy' && weather !== 'Snow') return;
+  if (!['beach', 'farm', 'mountain', 'town', 'woods', 'ridge', 'river', 'point'].includes(mapName) || amb < 0.4) return;
+  const count = SEA_MAPS.has(mapName) || mapName === 'woods' ? 2 : 1;
+  for (let i = 0; i < count; i++) {
+    const x = v.x + Math.floor(hash(i, mapName.length, 201) * v.w);
+    const y = v.y + Math.floor(hash(i, mapName.length, 202) * v.h);
+    const tg = tags[y]?.[x];
+    if (!tg || tg.t === 'ui' || tg.ent) continue;
+    const o = out[y][x];
+    if (SEA_MAPS.has(mapName) && tg.t === 'sand') {
+      const flip = Math.floor(t * 4 + i) % 2 === 0;
+      out[y][x] = { ...o, ch: flip ? 'v' : 'w', fg: '#e08040', bold: true, accent: true, plain: true, seed: undefined };
+    } else if (['farm', 'mountain', 'woods', 'ridge', 'river'].includes(mapName) && tg.t === 'grass') {
+      const hop = Math.floor(t * 1.5 + i) % 3 === 0;
+      out[y][x] = { ...o, ch: hop ? 'ᵣ' : 'r', fg: season === 3 ? '#e8f4ff' : '#d8c8a8', bold: true, accent: true, plain: true, seed: undefined };
+    } else if (mapName === 'town' && (tg.t === 'path' || tg.t === 'grass')) {
+      out[y][x] = { ...o, ch: 'c', fg: '#ffb050', bold: true, accent: true, plain: true, seed: undefined };
+    }
   }
 }
 
@@ -1400,8 +2010,19 @@ function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][],
 }
 
 /** Dialogs and menus: a raised panel and a soft drop shadow. */
-function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: number) {
+function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: number, t = 0) {
   for (const b of boxes) {
+    const p = t <= 0 || b.born === undefined ? 1 : Math.min(1, Math.max(0, (t - b.born) / 0.11));
+    if (p < 1) {
+      // a short top-down reveal: the panel wipes in instead of popping
+      const reveal = b.y + Math.ceil(b.h * p);
+      for (let y = reveal; y < b.y + b.h && y < H; y++) {
+        for (let x = b.x; x < b.x + b.w && x < W; x++) {
+          if (x < 0 || y < 0) continue;
+          out[y][x] = { ch: ' ', fg: '#000000', bg: '#000000', bold: false };
+        }
+      }
+    }
     for (let y = b.y; y < b.y + b.h && y < H; y++) {
       for (let x = b.x; x < b.x + b.w && x < W; x++) {
         if (y < 0 || x < 0) continue;
@@ -1421,7 +2042,45 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
 
 // ---------------------------------------------------------------- drawing
 
-export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number };
+export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number; hires?: boolean };
+
+export type DirtyRect = { x0: number; y0: number; x1: number; y1: number };
+
+/** Bounding box of cells that changed between two frames, including glyph overhang. */
+export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): DirtyRect | null {
+  if (!prev || prev.length !== next.length) return { x0: 0, y0: 0, x1: next[0]?.length ?? 0, y1: next.length };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < next.length; y++) {
+    const a = prev[y];
+    const b = next[y];
+    if (!a || a.length !== b.length) return { x0: 0, y0: 0, x1: b.length, y1: next.length };
+    for (let x = 0; x < b.length; x++) {
+      const p = a[x];
+      const n = b[x];
+      if (
+        p.ch !== n.ch || p.fg !== n.fg || p.bg !== n.bg || p.bold !== n.bold ||
+        p.glow !== n.glow || p.glowR !== n.glowR || p.token !== n.token || p.rim !== n.rim ||
+        p.plain !== n.plain || p.ui !== n.ui || p.accent !== n.accent || p.seed !== n.seed ||
+        p.foam !== n.foam || p.foamCol !== n.foamCol || p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg
+      ) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return {
+    x0: Math.max(0, minX - 1),
+    y0: Math.max(0, minY - 1),
+    x1: Math.min(next[0]?.length ?? 0, maxX + 2),
+    y1: Math.min(next.length, maxY + 2),
+  };
+}
 
 /** Paint a computed frame. Block shapes are drawn as rects/paths so they tile without seams. */
 // ---------------------------------------------------------------- high-resolution textures
@@ -1469,16 +2128,15 @@ export const SPRITE_KEEP = new Set(['ψ', '•']);
  * should stay a single glyph (glowing crops, tokens, the HUD, small fonts).
  */
 export function spritePattern(o: OutCell, fontPx: number, level: number): string[] | null {
-  if (level < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.token || o.glow) return null;
+  if (level < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.plain || o.token || o.glow) return null;
   const pools = SPRITE_POOLS[o.ch];
   if (!pools) return null;
-  const cols = level * (o.dx ? 2 : 1);
   const seed = o.seed ?? 0;
   const rows: string[] = [];
   for (let r = 0; r < level; r++) {
     let row = '';
-    for (let c = 0; c < cols; c++) {
-      const dx = (c + 0.5) / cols - 0.5;
+    for (let c = 0; c < level; c++) {
+      const dx = (c + 0.5) / level - 0.5;
       const dy = (r + 0.5) / level - 0.5;
       const pool = Math.sqrt(dx * dx * 1.6 + dy * dy) < 0.3 ? pools[0] : pools[1];
       const j = Math.sin(seed * 6151 + r * 17.3 + c * 41.9) * 43758.5453;
@@ -1501,6 +2159,11 @@ const SUBPOOL: Record<string, string[]> = Object.fromEntries(Object.entries(SUBP
 export function hiresLevel(fontPx: number, dpr = 1): number {
   if (fontPx >= 14 && fontPx * dpr >= 28) return 3;
   return fontPx >= HIRES_MIN_FONT ? 2 : 1;
+}
+
+/** The texture detail level after applying the player's high-res-detail preference. */
+export function effectiveHiresLevel(fontPx: number, dpr = 1, hires = true): number {
+  return hires ? hiresLevel(fontPx, dpr) : 1;
 }
 
 /** The n x n high-resolution pattern for a cell (n*n glyphs, row by row), or null for a plain glyph. */
@@ -1537,9 +2200,13 @@ export function rowAlpha(ch: string, seed: number, r: number, n: number): number
   return subAlpha(ch, seed, r);
 }
 
-export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics) {
+export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics, dirty?: DirtyRect) {
   const { cw, ch, fontPx, font } = m;
-  const level = hiresLevel(fontPx, m.dpr ?? 1);
+  const level = effectiveHiresLevel(fontPx, m.dpr ?? 1, m.hires ?? true);
+  const X0 = Math.max(0, dirty?.x0 ?? 0);
+  const Y0 = Math.max(0, dirty?.y0 ?? 0);
+  const X1 = Math.min(frame[0]?.length ?? 0, dirty?.x1 ?? frame[0]?.length ?? 0);
+  const Y1 = Math.min(frame.length, dirty?.y1 ?? frame.length);
   const mx: number[] = [];
   const my: number[] = [];
   const ms: string[] = [];
@@ -1552,22 +2219,30 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
   g.save();
   g.textBaseline = 'middle';
   g.shadowBlur = 0;
-  for (let y = 0; y < frame.length; y++) {
+  // backgrounds go down in runs of equal colour: one rectangle per run, not per cell
+  for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
-    for (let x = 0; x < row.length; x++) {
-      g.fillStyle = row[x].bg;
+    let x0 = X0;
+    for (let x = X0 + 1; x <= X1; x++) {
+      if (x < X1 && row[x].bg === row[x0].bg) continue;
+      g.fillStyle = row[x0].bg;
       // +1px overlap on both axes so scaled canvases show no seams between cells
-      g.fillRect(Math.floor(x * cw), Math.floor(y * ch), Math.ceil(cw) + 1, Math.ceil(ch) + 1);
+      g.fillRect(Math.floor(x0 * cw), Math.floor(y * ch), Math.ceil((x - x0) * cw) + 1, Math.ceil(ch) + 1);
+      x0 = x;
     }
   }
   let curFont = '';
   let glowOn = false;
-  for (let y = 0; y < frame.length; y++) {
+  for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
-    for (let x = 0; x < row.length; x++) {
+    for (let x = X0; x < X1; x++) {
       const o = row[x];
       if (o.ch === ' ' && !(o.texture && o.ch === o.textureGlyph)) continue;
       const px = (x + (o.dx ?? 0)) * cw;
+      // two-tone cells: the detail glyph sits small on the upper right, drawn with the batch
+      if (o.detail) mini(x * cw + cw * 0.48, y * ch + ch * 0.3, o.detail.ch, o.detail.fg, 1, true);
+      if (o.ch === ' ') continue;
+      const px = x * cw;
       const py = y * ch;
       if (o.label) {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
@@ -1613,9 +2288,8 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       // switches once per frame instead of once per cell.
       const spr = spritePattern(o, fontPx, level);
       if (spr) {
-        const left = px - (o.dx ?? 0) * cw; // a centred sprite spans its whole tile
         for (let r = 0; r < spr.length; r++) {
-          if (spr[r].trim() !== '') mini(left, py + r * (ch / level) + ch / (2 * level) + 0.5, spr[r], o.fg, 1, o.bold);
+          if (spr[r].trim() !== '') mini(px, py + r * (ch / level) + ch / (2 * level) + 0.5, spr[r], o.fg, 1, o.bold);
         }
         if (!SPRITE_KEEP.has(o.ch)) continue; // obstacles also draw their full-size glyph below
       }
@@ -1636,9 +2310,8 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       }
       if (o.token) {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
-        const wide = !!o.dx;
         g.beginPath();
-        g.ellipse(px + cw / 2, py + ch / 2, wide ? ch * 0.48 : cw * 0.62, ch * 0.46, 0, 0, Math.PI * 2);
+        g.ellipse(px + cw / 2, py + ch / 2, cw * 0.62, ch * 0.46, 0, 0, Math.PI * 2);
         g.fillStyle = o.token;
         g.fill();
         if (o.rim) {
@@ -1680,10 +2353,11 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
   }
 
   // shoreline foam: a thin light line where water meets land
-  const fw = Math.max(1, Math.round(ch / 12));
-  for (let y = 0; y < frame.length; y++) {
+  // at least two device pixels: single-pixel lines vanish on low-DPI screens and in recordings
+  const fw = Math.max(2 / (m.dpr ?? 1), Math.round(ch / 12));
+  for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
-    for (let x = 0; x < row.length; x++) {
+    for (let x = X0; x < X1; x++) {
       const o = row[x];
       if (!o.foam) continue;
       g.fillStyle = o.foamCol ?? '#c0c0c0';
@@ -1704,6 +2378,6 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
   // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.texture ? `${o.texture.kind}:${o.texture.x}:${o.texture.y}` : '') + (o.label ? `${o.label.text}:${o.label.scale}:${o.label.w}:${o.label.h}` : '');
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '');
   return s;
 }
