@@ -176,5 +176,6 @@ Newest first.
 
 - `README.md`: feature list, controls, colour rules and renderer overview.
 - `docs/feature-research.md`: sourced backlog of gameplay/graphics ideas with implementation notes and a recommended order.
+- `docs/ascii-art-pack.md`: title plate, crop/animal/tool/building ASCII art and a farm vignette with Isotope colour maps.
 - `src/game/enhanced.test.ts`: precise spec of the visual behaviour.
 - `git log`: commit bodies and merged PRs describe each player-visible change.
