@@ -534,7 +534,10 @@ function rockFace(F: Frame, x: number, y: number, wx: number, wy: number): OutCe
   if (!up) {
     const cap = snow && hash(wx * 2, wy, 160) < 0.85;
     const weathered = valueNoise(wx / 4, wy, 164) * 0.45; // the lit brow is not one even line
-    return { ch: '▀', fg: cap ? '#f4f8ff' : mix('#aca08a', '#6a6052', weathered), bg: down ? face : '#26211c', bold: false };
+    const rock = mix('#aca08a', '#6a6052', weathered);
+    // winter: a thin line of snow lying on the lit rock, not a solid white band
+    if (cap) return { ch: '▔', fg: '#eef2f8', bg: mix(rock, '#26211c', 0.25), bold: false };
+    return { ch: '▀', fg: rock, bg: down ? face : '#26211c', bold: false };
   }
   // bedding planes run along the band, each stretch with its own kind of layer
   const bed = valueNoise(wx / 6, wy, 161);
