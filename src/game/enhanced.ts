@@ -345,6 +345,8 @@ type Frame = {
   amb: number;
   /** Minutes since midnight. */
   minutes: number;
+  /** 0 = dry, 1 = fresh rain; used for lingering puddles. */
+  wetness: number;
   /** The open sea, where nothing grows on the water. */
   sea: boolean;
 };
@@ -417,10 +419,11 @@ function isTorch(F: Frame, x: number, y: number, tag: CellTag): boolean {
 const INTEREST = new Set(['bin', 'sign', 'doghouse', 'stable', 'mill', 'maker', 'incub', 'phone', 'vase', 'cave', 'bath']);
 
 const isRainy = (F: Frame) => !F.indoor && (F.weather === 'Rain' || F.weather === 'Typhoon');
+const isWet = (F: Frame) => isRainy(F) || (!F.indoor && F.wetness > 0.06);
 
-function puddle(F: Frame, wx: number, wy: number, ground: string): OutCell {
-  const bg = mix(ground, '#1a3456', 0.55);
-  const ripple = hash(wx * 2, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3;
+function puddle(F: Frame, wx: number, wy: number, ground: string, strength = 1): OutCell {
+  const bg = mix(ground, '#1a3456', 0.25 + 0.45 * Math.min(1, strength));
+  const ripple = hash(wx * 2, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3 * Math.min(1, strength);
   return { ch: ripple ? '◦' : ' ', fg: '#8ab8e8', bg, bold: false };
 }
 
@@ -532,13 +535,14 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     }
     case 'field': {
       const soil = groundBg(F, tag);
-      if (isRainy(F) && hash(wx, wy, 70) < 0.06) return puddle(F, wx, wy, soil);
+      if (isWet(F) && hash(wx, wy, 70) < 0.06 * Math.max(0.25, F.wetness)) return puddle(F, wx, wy, soil, F.wetness || 1);
       if (th.snow) return { ch: hs < 0.35 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
       return { ch: hs < 0.45 ? '·' : ' ', fg: th.soilDot, bg: soil, bold: false };
     }
     case 'path': {
       const pb = groundBg(F, tag);
-      if (isRainy(F) && hash(wx, wy, 70) < 0.16) return puddle(F, wx, wy, pb);
+      if (th.snow && hs < 0.1) return { ch: '▁', fg: '#eef4fc', bg: pb, bold: false };
+      if (isWet(F) && hash(wx, wy, 70) < 0.16 * Math.max(0.3, F.wetness)) return puddle(F, wx, wy, pb, F.wetness || 1);
       return { ch: hs < 0.25 ? '▪' : hs < 0.55 ? '·' : ' ', fg: th.snow ? '#7a8494' : '#5a534b', bg: pb, bold: false };
     }
     case 'sand':
@@ -549,7 +553,9 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       return { ch: hs < 0.3 ? '╱' : ' ', fg: '#d8f0ff', bg: mix('#5a8aa8', '#6a9ab8', hash(wx, wy, 7)), bold: false };
     case 'cliff': {
       const rock = th.snow ? '#c8d0dc' : '#8a8070';
-      return { ch: '▲', fg: rock, bg: '#24201c', bold: false };
+      const above = F.tags[y - 1]?.[x];
+      const exposed = !above || above.t !== 'cliff';
+      return { ch: exposed ? '▔' : hs < 0.25 ? '▴' : '▲', fg: rock, bg: '#24201c', bold: false };
     }
     case 'cave':
       return { ch: '●', fg: '#050505', bg: '#3a342c', bold: false };
@@ -794,7 +800,7 @@ export function computeFrame(
   const motion = !ctx?.reducedMotion;
   const skyNow = ctx ? skyFor(ctx) : null;
   // with reduced motion every tile animation (sway, ripples, twinkles) holds its first frame
-  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, sea: ctx?.mapName === 'beach' };
+  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: ctx?.mapName === 'beach' };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -905,23 +911,27 @@ export function computeFrame(
     out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: true };
   }
 
-  // ---- contact shadows: ground below/right of buildings, trees and cliffs is darker.
-  // At dawn and dusk the shadow reaches one cell farther, like a low sun.
+  // ---- contact shadows: buildings and trees throw away from the sun.
+  // Morning sun casts west (left), afternoon sun casts east (right).
   const sunHour = (((ctx.minutes / 60) % 24) + 24) % 24;
   const longShadow = sunHour < 8 || sunHour > 17;
+  const sunWest = sunHour >= 12;
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !SHADOW_RECEIVERS.has(tag.t) || (tag.k || '').startsWith('obj:boulder')) continue;
       const up = y > 0 ? tags[y - 1][x] : null;
       const up2 = longShadow && y > 1 ? tags[y - 2][x] : null;
-      const left = x > 0 ? tags[y][x - 1] : null;
-      const left2 = longShadow && x > 1 ? tags[y][x - 2] : null;
+      const side1 = tags[y]?.[x + (sunWest ? -1 : 1)];
+      const side2 = longShadow ? tags[y]?.[x + (sunWest ? -2 : 2)] : null;
       let k = 0;
       if (up && up.t !== 'ui' && SHADOW_CASTERS.has(up.t)) k = up.t === 'tree' ? 0.22 : 0.34;
       else if (up2 && up2.t !== 'ui' && SHADOW_CASTERS.has(up2.t)) k = up2.t === 'tree' ? 0.1 : 0.16;
-      else if (left && left.t !== 'ui' && (left.t === 'wall' || left.t === 'door')) k = 0.16;
-      else if (left2 && left2.t !== 'ui' && (left2.t === 'wall' || left2.t === 'door')) k = 0.09;
+      else if (side1 && side1.t !== 'ui' && (side1.t === 'wall' || side1.t === 'door' || side1.t === 'tree')) {
+        k = side1.t === 'tree' ? 0.12 : 0.16;
+      } else if (side2 && side2.t !== 'ui' && (side2.t === 'wall' || side2.t === 'door' || side2.t === 'tree')) {
+        k = side2.t === 'tree' ? 0.07 : 0.09;
+      }
       if (k) {
         const o = out[y][x];
         o.bg = mix(o.bg, '#000000', k);
@@ -956,11 +966,13 @@ export function computeFrame(
     }
   }
 
-  // ---- chimney smoke, butterflies, falling leaves
+  // ---- chimney smoke, butterflies, falling leaves, wildlife, water life
   if (outdoor && motion) {
     chimneys(out, tags, v, t, W, H, ctx.weather);
     critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
+    wildlife(out, tags, v, t, season, ctx.weather, ctx.mapName, sky.amb);
   }
+  if (outdoor) waterLife(out, tags, v, season);
   if (outdoor && (ctx.weather === 'Rain' || ctx.weather === 'Typhoon')) {
     // everything looks wet and a touch darker in the rain
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
@@ -1426,6 +1438,76 @@ function critters(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['vi
       glow: undefined,
       accent: true,
     };
+  }
+}
+
+/** Reeds and lily pads: small signs that the water is alive. */
+function waterLife(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], season: number) {
+  for (let y = v.y; y < v.y + v.h && y < tags.length; y++) {
+    for (let x = v.x; x < v.x + v.w && x < tags[y].length; x++) {
+      const tg = tags[y][x];
+      if (!tg || tg.t === 'ui' || tg.ent) continue;
+      const wx = tg.wx ?? x;
+      const wy = tg.wy ?? y;
+      if (WATERY.has(tg.t)) {
+        if (season !== 3 && hash(wx, wy, 190) < 0.035) {
+          const o = out[y][x];
+          o.ch = 'o';
+          o.fg = '#4fa86a';
+          o.bold = true;
+          o.accent = true;
+          o.plain = true;
+          o.seed = undefined;
+        }
+        continue;
+      }
+      if (season === 3 || !GROUND.has(tg.t)) continue;
+      const nearWater = [[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => {
+        const n = tags[y + dy]?.[x + dx];
+        return !!n && WATERY.has(n.t);
+      });
+      if (nearWater && hash(wx, wy, 191) < 0.08) {
+        const o = out[y][x];
+        o.ch = pick(['Y', '╵', '|'], hash(wx, wy, 192));
+        o.fg = '#6aa870';
+        o.bold = true;
+        o.accent = true;
+        o.plain = true;
+        o.seed = undefined;
+      }
+    }
+  }
+}
+
+/** A little non-interactive wildlife: beach crabs, farm rabbits, town cats. */
+function wildlife(
+  out: OutCell[][],
+  tags: (CellTag | null)[][],
+  v: RenderCtx['view'],
+  t: number,
+  season: number,
+  weather: string,
+  mapName: string,
+  amb: number
+) {
+  if (weather !== 'Sunny' && weather !== 'Cloudy' && weather !== 'Snow') return;
+  if (!['beach', 'farm', 'mountain', 'town'].includes(mapName) || amb < 0.4) return;
+  const count = mapName === 'beach' ? 2 : 1;
+  for (let i = 0; i < count; i++) {
+    const x = v.x + Math.floor(hash(i, mapName.length, 201) * v.w);
+    const y = v.y + Math.floor(hash(i, mapName.length, 202) * v.h);
+    const tg = tags[y]?.[x];
+    if (!tg || tg.t === 'ui' || tg.ent) continue;
+    const o = out[y][x];
+    if (mapName === 'beach' && tg.t === 'sand') {
+      const flip = Math.floor(t * 4 + i) % 2 === 0;
+      out[y][x] = { ...o, ch: flip ? 'v' : 'w', fg: '#e08040', bold: true, accent: true, plain: true, seed: undefined };
+    } else if ((mapName === 'farm' || mapName === 'mountain') && tg.t === 'grass') {
+      const hop = Math.floor(t * 1.5 + i) % 3 === 0;
+      out[y][x] = { ...o, ch: hop ? 'ᵣ' : 'r', fg: season === 3 ? '#e8f4ff' : '#d8c8a8', bold: true, accent: true, plain: true, seed: undefined };
+    } else if (mapName === 'town' && (tg.t === 'path' || tg.t === 'grass')) {
+      out[y][x] = { ...o, ch: 'c', fg: '#ffb050', bold: true, accent: true, plain: true, seed: undefined };
+    }
   }
 }
 
