@@ -3105,3 +3105,168 @@ export const RIVAL_PAIRS: [string, string, string][] = [
   ["Ann", "Cliff", "Ann brings Cliff a warm lunch from Doug's Inn and encourages him to make Mineral Town his home."],
 ];
 
+
+// ---------------------------------------------------------------- outer-region content
+// Original forage, fish and landmark text for the four outer regions:
+// Cedar Hollow (woods), Skyline Ridge (ridge), Willow Bend (river) and Lighthouse Point (point).
+
+Object.assign(ITEMS, {
+  // Cedar Hollow: woodland greens, berries and mushrooms
+  "Fiddlehead": [60, 5, "forage"],
+  "Blackberry": [60, 5, "forage"],
+  "Chanterelle": [150, 7, "forage"],
+  "Cedar Cone": [40, 0, "forage"],
+  // Skyline Ridge: alpine herbs and flowers
+  "Mountain Thyme": [80, 6, "forage"],
+  "Edelweiss": [150, 0, "forage"],
+  "Juniper Berry": [90, 4, "forage"],
+  // Willow Bend: riverbank plants
+  "Watercress": [60, 6, "forage"],
+  "Cattail": [70, 0, "forage"],
+  "Willow Catkin": [80, 0, "forage"],
+  // Lighthouse Point: shoreline finds
+  "Kelp": [50, 5, "forage"],
+  "Samphire": [70, 6, "forage"],
+  "Spiral Shell": [80, 0, "forage"],
+  "Sea Glass": [120, 0, "forage"],
+  // Willow Bend river fish
+  "Willow Chub": [70, 6, "fish"],
+  "Speckled Trout": [160, 10, "fish"],
+  "Burbot": [180, 11, "fish"],
+  "Elder Sturgeon": [800, 50, "fish"],
+  // Lighthouse Point sea fish
+  "Mackerel": [90, 7, "fish"],
+  "Rockfish": [130, 9, "fish"],
+  "Sea Bass": [220, 13, "fish"],
+  "Storm Marlin": [900, 55, "fish"],
+});
+
+FRUITS.add("Blackberry");
+
+Object.assign(FORAGE_GLYPH, {
+  "Fiddlehead": ["f", "0B"],
+  "Blackberry": ["%", "0F"],
+  "Chanterelle": ["n", "09"],
+  "Cedar Cone": ["o", "09"],
+  "Mountain Thyme": ["t", "0E"],
+  "Edelweiss": ["*", "07"],
+  "Juniper Berry": ["%", "0D"],
+  "Watercress": ["w", "0B"],
+  "Cattail": ["!", "09"],
+  "Willow Catkin": ["*", "04"],
+  "Kelp": ["&", "0B"],
+  "Samphire": ["\"", "0B"],
+  "Spiral Shell": ["@", "0A"],
+  "Sea Glass": ["o", "0C"],
+});
+
+/** Seasonal forage for each outer region (other maps use the valley-wide FORAGE lists). */
+export const REGION_FORAGE: Record<string, Record<string, string[]>> = {
+  woods: {
+    Spring: ["Fiddlehead", "Bamboo Shoot", "Medicinal Herb", "Moondrop Flower"],
+    Summer: ["Blackberry", "Wild Grape", "Medicinal Herb", "Green Grass"],
+    Fall: ["Chanterelle", "Mushroom", "Truffle", "Poisonous Mushroom"],
+    Winter: ["Cedar Cone", "Black Grass", "Blue Grass"],
+  },
+  ridge: {
+    Spring: ["Mountain Thyme", "Medicinal Herb", "Yellow Grass", "Toy Flower"],
+    Summer: ["Edelweiss", "Mountain Thyme", "Indigo Grass", "Purple Grass"],
+    Fall: ["Juniper Berry", "Red Grass", "Orange Grass", "Mushroom"],
+    Winter: ["Juniper Berry", "White Grass", "Blue Grass"],
+  },
+  river: {
+    Spring: ["Watercress", "Willow Catkin", "Green Grass", "Blue Grass"],
+    Summer: ["Watercress", "Cattail", "Pink Cat Flower", "Blue Grass"],
+    Fall: ["Cattail", "Wild Grape", "Red Grass", "Mushroom"],
+    Winter: ["Willow Catkin", "Blue Grass", "Black Grass"],
+  },
+  point: {
+    Spring: ["Kelp", "Spiral Shell", "Sea Glass"],
+    Summer: ["Samphire", "Kelp", "Spiral Shell", "Sea Glass"],
+    Fall: ["Kelp", "Spiral Shell", "Sea Glass"],
+    Winter: ["Spiral Shell", "Sea Glass"],
+  },
+};
+
+/** One weighted line in a catch table. `seasons` limits it (0 Spring .. 3 Winter); `rod` adds weight per rod level. */
+export interface CatchEntry {
+  item: string;
+  w: number;
+  seasons?: number[];
+  rod?: number;
+}
+
+/** A region's catch table: a weighted, seasonal draw, plus a rare catch that needs a better rod. */
+export interface CatchTable {
+  fish: CatchEntry[];
+  rare: string;
+  /** Minimum Fishing Rod level for the rare catch. */
+  rareRod: number;
+  /** Chance per catch at that level (+1% for each level above it). */
+  rareChance: number;
+  /** Multiplier on the rare chance on rainy or stormy days. */
+  stormBoost?: number;
+}
+
+/** Waters with their own fish: the river at Willow Bend and the sea off Lighthouse Point. */
+export const REGION_CATCH: Record<string, CatchTable> = {
+  river: {
+    fish: [
+      { item: "Small Fish", w: 30 },
+      { item: "Willow Chub", w: 26 },
+      { item: "Medium Fish", w: 18, rod: 2 },
+      { item: "Speckled Trout", w: 12, seasons: [0, 2], rod: 2 },
+      { item: "Burbot", w: 14, seasons: [3], rod: 2 },
+      { item: "Large Fish", w: 6, rod: 3 },
+      { item: "Boot", w: 3 },
+      { item: "Empty Can", w: 3 },
+    ],
+    rare: "Elder Sturgeon",
+    rareRod: 2,
+    rareChance: 0.04,
+  },
+  point: {
+    fish: [
+      { item: "Small Fish", w: 22 },
+      { item: "Mackerel", w: 24, seasons: [0, 1] },
+      { item: "Rockfish", w: 20, rod: 1 },
+      { item: "Medium Fish", w: 14, rod: 2 },
+      { item: "Sea Bass", w: 12, seasons: [1, 2], rod: 2 },
+      { item: "Large Fish", w: 6, rod: 3 },
+      { item: "Fish Bones", w: 4 },
+    ],
+    rare: "Storm Marlin",
+    rareRod: 3,
+    rareChance: 0.03,
+    stormBoost: 3,
+  },
+};
+
+/** Skyline Ridge lookout: what tomorrow's weather looks like from the top. */
+export const LOOKOUT_VIEW: Record<string, string> = {
+  Sunny: "The sky is clear all the way to the sea. Tomorrow looks fine.",
+  Rain: "Grey cloud is banking up over the sea. It will rain tomorrow.",
+  Typhoon: "A dark wall of cloud is wheeling in off the sea. A storm is coming tomorrow!",
+  Snow: "Heavy snow clouds sit on the far hills. Expect snow tomorrow.",
+  Blizzard: "The far peaks have vanished into white. A blizzard is coming tomorrow!",
+};
+/** The lookout's once-a-day lift. */
+export const LOOKOUT_STAMINA = 30;
+export const LOOKOUT_FATIGUE = 10;
+
+/** Cedar Hollow's mossy pond: chance that a forage pickup finds a second one on a lucky day. */
+export const HOLLOW_LUCK_CHANCE = 0.3;
+
+/** Lighthouse Point: the old keeper's log, read one page a day at the sign. */
+export const LIGHTHOUSE_INTRO =
+  "Lighthouse Point — The keeper left years ago, but the light still turns on stormy nights. A weathered logbook hangs on a nail under the sign.";
+export const LIGHTHOUSE_LOG: string[] = [
+  "First night. I lit the lamp at dusk, and a little green boat with a white stripe came round the Point and blinked its lantern twice. Thank you, I think it meant.",
+  "Every storm since, the green boat comes back: two blinks, then gone. I have started leaving a lantern on the rocks for it, in case its own goes out.",
+  "I asked down at the harbour. Nobody in the valley owns a green boat with a white stripe. The oldest net-mender says nobody ever did.",
+  "My last night here. I have rigged the lamp to light itself whenever a storm comes in. If you ever see two blinks out at sea, blink back for me.",
+];
+
+/** What you see in a Lighthouse Point tide pool. */
+export const TIDE_POOL_TEXT =
+  "A tide pool among the rocks. Tiny crabs scuttle under the weed, and a red anemone opens and closes like a slow heartbeat.";

@@ -15,7 +15,11 @@ import {
   checkSecretCropUnlock,
   getBasketTotal,
   BASKET_CAPACITY,
+  rollRegionCatch,
+  rollStoneSkips,
+  MAX_STONE_SKIPS,
 } from './rules';
+import { REGION_CATCH } from './constants';
 
 describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
   test('Power Berries scale max stamina from 150 to 250 (+10 each)', () => {
@@ -135,3 +139,58 @@ describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
   });
 });
 
+describe('outer-region fishing and stone skipping', () => {
+  /** Every result of the weighted draw, sweeping the roll across [0, 1). */
+  const sweep = (region: string, season: number, rodLvl: number) => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const r = i / 400;
+      seen.add(rollRegionCatch(REGION_CATCH[region], { season, weather: 'Sunny', rodLvl }, () => r));
+    }
+    return seen;
+  };
+
+  test('Willow Bend fish follow the seasons; the sturgeon needs a Silver rod', () => {
+    const spring = sweep('river', 0, 0);
+    assert.ok(spring.has('Willow Chub') && spring.has('Speckled Trout'));
+    assert.ok(!spring.has('Burbot'), 'burbot only bite in winter');
+    assert.ok(!spring.has('Elder Sturgeon'), 'no rare catch on a basic rod');
+    const winter = sweep('river', 3, 0);
+    assert.ok(winter.has('Burbot') && !winter.has('Speckled Trout'));
+    const river = REGION_CATCH.river;
+    assert.equal(rollRegionCatch(river, { season: 0, weather: 'Sunny', rodLvl: 1 }, () => 0), 'Small Fish');
+    assert.equal(rollRegionCatch(river, { season: 0, weather: 'Sunny', rodLvl: 2 }, () => 0), 'Elder Sturgeon');
+    assert.notEqual(rollRegionCatch(river, { season: 0, weather: 'Sunny', rodLvl: 2 }, () => 0.05), 'Elder Sturgeon');
+  });
+
+  test('the sea off Lighthouse Point has its own fish, and storms bring the marlin in', () => {
+    const summer = sweep('point', 1, 0);
+    assert.ok(summer.has('Mackerel') && summer.has('Sea Bass') && summer.has('Rockfish'));
+    const winter = sweep('point', 3, 0);
+    assert.ok(!winter.has('Mackerel') && !winter.has('Sea Bass') && winter.has('Rockfish'));
+    const sea = REGION_CATCH.point;
+    const at = (weather: string, rodLvl: number) => rollRegionCatch(sea, { season: 0, weather, rodLvl }, () => 0.05);
+    assert.notEqual(at('Sunny', 3), 'Storm Marlin', '3% on a fair day');
+    assert.equal(at('Rain', 3), 'Storm Marlin', 'tripled in the rain');
+    assert.notEqual(at('Rain', 2), 'Storm Marlin', 'needs a Gold rod');
+  });
+
+  test('a better rod shifts the odds toward bigger fish', () => {
+    // below the sturgeon's rod level the draw uses a single roll, so a sweep counts each fish's share
+    const share = (rodLvl: number) => {
+      let n = 0;
+      for (let i = 0; i < 1000; i++) {
+        if (rollRegionCatch(REGION_CATCH.river, { season: 0, weather: 'Sunny', rodLvl }, () => i / 1000) === 'Large Fish') n++;
+      }
+      return n;
+    };
+    assert.ok(share(1) > share(0));
+  });
+
+  test('stone skips: calm water skips further than rain-chopped water', () => {
+    assert.equal(rollStoneSkips(() => 0), MAX_STONE_SKIPS);
+    assert.equal(rollStoneSkips(() => 0.99), 1);
+    assert.equal(rollStoneSkips(() => 0.6, true), MAX_STONE_SKIPS);
+    assert.equal(rollStoneSkips(() => 0.6, false), 1);
+  });
+});

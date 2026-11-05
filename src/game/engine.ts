@@ -71,6 +71,15 @@ import {
   TV_SHOPPING_ITEMS,
   HEART_EVENTS,
   RIVAL_PAIRS,
+  REGION_FORAGE,
+  REGION_CATCH,
+  LOOKOUT_VIEW,
+  LOOKOUT_STAMINA,
+  LOOKOUT_FATIGUE,
+  HOLLOW_LUCK_CHANCE,
+  LIGHTHOUSE_INTRO,
+  LIGHTHOUSE_LOG,
+  TIDE_POOL_TEXT,
 } from './constants';
 import {
   CoordSet,
@@ -114,6 +123,8 @@ import {
   WON_EXCLUSIVE_CROPS,
   BASKET_CAPACITY,
   getBasketTotal,
+  rollRegionCatch,
+  rollStoneSkips,
 } from './rules';
 
 export interface VillagerRequest {
@@ -291,6 +302,12 @@ export class Game {
   house_flags: string[] = [];
   project: [string, number] | null = null;
   bathed: boolean = false;
+  /** Outer-region landmarks. The *_day fields hold an absday(), so they lapse on their own overnight. */
+  lookout_day: number = -1;
+  hollow_luck_day: number = -1;
+  skip_best: number = 0;
+  lighthouse_log: number = 0;
+  lighthouse_day: number = -1;
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -309,6 +326,8 @@ export class Game {
     // barn animals, and today's once-per-day flags (a mid-day save/load must not reset them)
     'animals', 'talked', 'gifted', 'honey_picked', 'prayed', 'bathed', 'fireplace_lit',
     'tv_watched_saturday', 'zack_paid_today', 'fest_attended', 'fest_declined',
+    // outer-region landmarks
+    'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -426,6 +445,11 @@ export class Game {
     this.requests_done = 0;
     this.mastery_xp = Object.fromEntries(MASTERY_DISCIPLINES.map((d) => [d, 0]));
     this.mastery_claimed = [];
+    this.lookout_day = -1;
+    this.hollow_luck_day = -1;
+    this.skip_best = 0;
+    this.lighthouse_log = 0;
+    this.lighthouse_day = -1;
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -1639,38 +1663,48 @@ export class Game {
     }
     this.last = Date.now() / 1000;
     if (result === 'catch') {
-      const rodLvl = this.levels['Fishing Rod'] || 0;
-      const r = py_rng().random();
-      let caught = 'Small Fish';
-      if (this.mapname === 'mine' && this.mine_type === 'lake' && this.mine_floor === 9) {
-        caught = 'Coelacanth';
-      } else if (this.mapname === 'beach' && rodLvl >= 4 && r < 0.12) {
-        caught = this.season === 1 ? 'Pirate Treasure' : this.season === 2 ? 'Fossil of Ancient Fish' : 'Squid';
-        if (this.season === 3 && !this.berry_sources.includes('ocean_fish')) {
-          this.give_power_berry('ocean_fish');
-        }
-      } else if (rodLvl >= 3 && r < 0.08) {
-        caught = this.mapname === 'mountain' ? 'Carp' : 'Catfish';
-      } else if (r < 0.06) {
-        caught = py_rng().choice(['Boot', 'Empty Can']);
-      } else if (r < 0.25 + rodLvl * 0.08) {
-        caught = 'Large Fish';
-      } else if (r < 0.6) {
-        caught = 'Medium Fish';
-      }
+      const caught = this.roll_catch();
+      const [tx, ty] = this.target();
       this.give(caught);
-      this.fx_add('splash', this.px + this.face[0], this.py + this.face[1], 0.7);
+      this.fx_add('splash', tx, ty, 0.7);
       if (ITEMS[caught]?.[2] === 'fish') {
         this.fish_caught[caught] = (this.fish_caught[caught] || 0) + 1;
         this.mastery_add('fishing');
       }
-      this.msg(`You caught a ${caught}!`, '0C');
+      if (caught === REGION_CATCH[this.mapname]?.rare) {
+        this.fx_add('sparkle', tx, ty, 0.9);
+        this.msg(`A rare catch: ${caught}!`, '0C');
+      } else {
+        this.msg(`You caught a ${caught}!`, '0C');
+      }
     } else if (result === 'early') {
       this.msg('You reeled in too early.');
     } else if (result === 'miss') {
       this.msg('It got away...');
     }
     await this.spend(3);
+  }
+
+  /** What bites here: Willow Bend and Lighthouse Point have their own tables; elsewhere the valley-wide odds. */
+  roll_catch(): string {
+    const rodLvl = this.levels['Fishing Rod'] || 0;
+    const table = REGION_CATCH[this.mapname];
+    if (table) {
+      return rollRegionCatch(table, { season: this.season, weather: this.weather, rodLvl }, () => py_rng().random());
+    }
+    const r = py_rng().random();
+    if (this.mapname === 'mine' && this.mine_type === 'lake' && this.mine_floor === 9) return 'Coelacanth';
+    if (this.mapname === 'beach' && rodLvl >= 4 && r < 0.12) {
+      if (this.season === 3 && !this.berry_sources.includes('ocean_fish')) {
+        this.give_power_berry('ocean_fish');
+      }
+      return this.season === 1 ? 'Pirate Treasure' : this.season === 2 ? 'Fossil of Ancient Fish' : 'Squid';
+    }
+    if (rodLvl >= 3 && r < 0.08) return this.mapname === 'mountain' ? 'Carp' : 'Catfish';
+    if (r < 0.06) return py_rng().choice(['Boot', 'Empty Can']);
+    if (r < 0.25 + rodLvl * 0.08) return 'Large Fish';
+    if (r < 0.6) return 'Medium Fish';
+    return 'Small Fish';
   }
 
   async interact(): Promise<void> {
@@ -1720,6 +1754,13 @@ export class Game {
       return;
     }
 
+    // Cedar Hollow's mossy pond and Lighthouse Point's tide pools are not the Goddess Pond
+    if (tile === 'pond' && this.mapname !== 'mountain') {
+      if (this.mapname === 'woods') await this.hollow_offering();
+      else await this.say(TIDE_POOL_TEXT, 'Tide Pool');
+      return;
+    }
+
     // Goddess Pond Offering
     if (tile === 'pond') {
       if (!this.held) {
@@ -1759,6 +1800,12 @@ export class Game {
       return;
     }
 
+    // Willow Bend: skip a flat stone across the river
+    if (this.mapname === 'river' && tile === 'water') {
+      await this.skip_stone();
+      return;
+    }
+
     // Farm Crop Harvesting
     if (this.mapname === 'farm' && pKey in this.crops) {
       const [crop, age] = this.crops[pKey];
@@ -1794,7 +1841,13 @@ export class Game {
       const item = py_pop(fr, pKey);
       this.give(item);
       this.mastery_add('foraging');
-      this.msg(`You picked up ${item}.`, '0B');
+      if (this.hollow_luck_day === this.absday() && py_rng().random() < HOLLOW_LUCK_CHANCE) {
+        this.give(item);
+        this.fx_add('sparkle', tx, ty, 0.7);
+        this.msg(`You picked up ${item}, and found a second one beside it! (Hollow luck)`, '0B');
+      } else {
+        this.msg(`You picked up ${item}.`, '0B');
+      }
       return;
     }
 
@@ -1836,6 +1889,14 @@ export class Game {
       await this.inn_phone_menu();
       return;
     }
+    if (signId === 'ridge_lookout') {
+      await this.ridge_lookout();
+      return;
+    }
+    if (signId === 'lighthouse_log') {
+      await this.lighthouse_read();
+      return;
+    }
 
     if (tile === 'bin') {
       await this.ship();
@@ -1866,6 +1927,81 @@ export class Game {
     } else if (this.held) {
       this.msg(`You're holding ${this.held}. Face someone and press X to give it.`);
     }
+  }
+
+  // ---------------------------------------------------------------- outer-region landmarks
+
+  /** Skyline Ridge lookout: the view reads tomorrow's weather, and once a day the cold air revives you. */
+  async ridge_lookout(): Promise<void> {
+    let text = `${this.lookout_scene()} ${LOOKOUT_VIEW[this.tomorrow] || LOOKOUT_VIEW.Sunny}`;
+    if (this.lookout_day !== this.absday()) {
+      this.lookout_day = this.absday();
+      this.stamina = Math.min(this.max_stamina, this.stamina + LOOKOUT_STAMINA);
+      this.fatigue = Math.max(0, this.fatigue - LOOKOUT_FATIGUE);
+      text += ` The thin, cold air clears your head. (+${LOOKOUT_STAMINA} Stamina, -${LOOKOUT_FATIGUE} Fatigue)`;
+    }
+    await this.say(text, 'Skyline Ridge Lookout');
+  }
+
+  lookout_scene(): string {
+    const h = Math.floor(this.minutes / 60);
+    if (h < 9) return 'Morning mist is lifting off the valley below.';
+    if (h < 17) return 'The whole valley lies below you: the farm, the town, the river and the sea.';
+    if (h < 20) return 'The valley glows gold in the evening light.';
+    return 'Far below, the lights of town twinkle in the dark.';
+  }
+
+  /** Lighthouse Point: the old keeper's log, one new page a day. The last page leaves a keepsake. */
+  async lighthouse_read(): Promise<void> {
+    const total = LIGHTHOUSE_LOG.length;
+    const fresh = this.lighthouse_log < total && this.lighthouse_day !== this.absday();
+    if (fresh) {
+      this.lighthouse_log += 1;
+      this.lighthouse_day = this.absday();
+    }
+    const page = clamp(this.lighthouse_log, 1, total);
+    const intro = page === 1 ? `${LIGHTHOUSE_INTRO}\n` : '';
+    const more = this.lighthouse_log < total ? '\n(The next page is stuck fast with salt. Come back tomorrow.)' : '';
+    const lamp = this.weather === 'Rain' || this.weather === 'Typhoon' ? '\nHigh above you, the old lamp is turning.' : '';
+    await this.say(`${intro}${LIGHTHOUSE_LOG[page - 1]}${more}${lamp}`, `Keeper's Log ${page}/${total}`);
+    if (fresh && this.lighthouse_log === total) {
+      this.give('Sea Glass');
+      this.msg('Tucked behind the last page: a smooth piece of green Sea Glass.', '0C');
+    }
+  }
+
+  /** Cedar Hollow's mossy pond: give back something that grew wild for a lucky day of foraging. */
+  async hollow_offering(): Promise<void> {
+    if (this.hollow_luck_day === this.absday()) {
+      await this.say('Rings are still spreading from your last gift. The Hollow is listening; come back tomorrow.', 'Mossy Pond');
+      return;
+    }
+    const item = this.held;
+    if (!item || ITEMS[item]?.[2] !== 'forage') {
+      await this.say('Moss-green water, very still. Folk say the Hollow smiles on anyone who gives back something that grew wild. Hold a forage item and press X.', 'Mossy Pond');
+      return;
+    }
+    this.take(item, 1);
+    this.hollow_luck_day = this.absday();
+    const [tx, ty] = this.target();
+    this.fx_add('sparkle', tx, ty, 0.9);
+    await this.say(`You drop the ${item} into the pond. It sinks without a ripple... then the whole pond shivers. Today, wild things seem to find you. (Lucky foraging until tonight)`, 'Mossy Pond');
+  }
+
+  /** Willow Bend: skip a flat stone across the river and try to beat your record. */
+  async skip_stone(): Promise<void> {
+    const calm = this.weather !== 'Rain' && this.weather !== 'Typhoon';
+    const n = rollStoneSkips(() => py_rng().random(), calm);
+    const [tx, ty] = this.target();
+    this.fx_add('splash', tx, ty, 0.6);
+    this.fx_add('text', tx, ty, 1.1, { text: `${n}x` });
+    if (n > this.skip_best) {
+      this.skip_best = n;
+      this.msg(`Skip, skip, skip... ${n} skip${n === 1 ? '' : 's'}! A new Willow Bend record!`, '0C');
+    } else {
+      this.msg(`Your stone skips ${n} time${n === 1 ? '' : 's'}. (Record: ${this.skip_best})`, '0D');
+    }
+    await this.spend(1);
   }
 
   async dog_menu(): Promise<void> {
@@ -3452,7 +3588,7 @@ export class Game {
     }
     const tile = m.tile(tx, ty);
     if (tile === 'spring') return { key: 'x', label: 'SOAK' };
-    if (tile === 'pond') return { key: 'x', label: 'OFFER' };
+    if (tile === 'pond') return { key: 'x', label: this.mapname === 'point' ? 'LOOK' : 'OFFER' };
     if (this.mapname === 'farm' && pKey in this.crops) {
       const [crop, age] = this.crops[pKey];
       if (age < CROPS[crop][2] && this.tool === 'Watering Can' && !this.wet.has(pKey)) return { key: 'space', label: 'WATER' };
@@ -3467,6 +3603,7 @@ export class Game {
       return { key: 'x', label: 'USE' };
     }
     if (this.tool === 'Fishing Rod' && (tile === 'water' || tile === 'pond')) return { key: 'space', label: 'CAST' };
+    if (this.mapname === 'river' && tile === 'water' && this.tool !== 'Watering Can') return { key: 'x', label: 'SKIP' };
     const short = this.tool.endsWith(' Seeds') ? this.tool.slice(0, -6) : this.tool;
     return { key: 'space', label: short.length > 7 ? 'USE' : `USE ${short.toUpperCase()}` };
   }
@@ -4567,12 +4704,17 @@ export class Game {
     this.last = Date.now() / 1000;
   }
 
+  /** Today's forage list for a map: an outer region's own pool, or the valley-wide seasonal list. */
+  forage_pool(mapKey: string): string[] {
+    return REGION_FORAGE[mapKey]?.[this.season_name] || FORAGE[this.season_name] || ['Blue Grass'];
+  }
+
   spawn_forage(): void {
-    const items = FORAGE[this.season_name] || ['Blue Grass'];
     const rng = py_rng();
     for (const mapKey of ['mountain', 'beach', 'woods', 'ridge', 'river', 'point']) {
       const m = this.maps[mapKey];
       if (!m) continue;
+      const items = this.forage_pool(mapKey);
       const fr: Record<string, string> = {};
       let tries = 0;
       const target = (FORAGE_TARGET[mapKey] ?? 6) * (this.season === 3 && mapKey !== 'beach' && mapKey !== 'point' ? 0.55 : 1);
