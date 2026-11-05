@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, windowLit, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -333,11 +333,55 @@ describe('computeFrame', () => {
     assert.equal(ripples(still, 0), ripples(still, 4));
   });
 
-  test('summer lily pads keep a touch of colour on ponds, not the sea', () => {
-    const out = computeFrame(lake({ season: 1 }), 0).flat().filter((o) => o.ch === '◒');
-    assert.ok(out.length > 3);
-    assert.ok(out.every((o) => o.accent && grey(o.fg) !== o.fg));
-    assert.equal(computeFrame(lake({ season: 1, mapName: 'beach' }), 0).flat().filter((o) => o.ch === '◒').length, 0, 'none on the sea');
+  test('lily pads and reeds keep a touch of colour on ponds, but not on the sea or in winter', () => {
+    const pads = (over: Partial<RenderCtx>) => computeFrame(lake(over), 0).flat().filter((o) => '◡⌓'.includes(o.ch));
+    const reeds = (over: Partial<RenderCtx>) => computeFrame(lake(over), 0).flat().filter((o) => '¦ʸ╽'.includes(o.ch));
+    const summer = pads({ season: 1 });
+    assert.ok(summer.length > 3);
+    assert.ok(summer.every((o) => o.accent && grey(o.fg) !== o.fg));
+    assert.ok(pads({ season: 0 }).length > 3, 'spring too');
+    assert.ok(reeds({ season: 1 }).length > 0, 'reeds along the bank');
+    assert.equal(pads({ season: 1, mapName: 'beach' }).length, 0, 'no pads on the sea');
+    assert.equal(reeds({ season: 1, mapName: 'beach' }).length, 0, 'no reeds on the beach');
+    assert.equal(pads({ season: 3 }).length, 0, 'bare in winter');
+  });
+
+  test('surf rolls in toward the beach in lines', () => {
+    const surf = (s: Screen, t: number) => computeFrame(s, t).slice(2, 7).map((r) => r.slice(5, 40).filter((o) => o.ch === '≈' && o.bold).length);
+    const beach = lake({ mapName: 'beach' });
+    const frames = [0, 0.4, 0.8, 1.2, 1.6, 2].map((t) => surf(beach, t));
+    assert.ok(frames.some((rows) => rows.some((n) => n > 8)), 'a breaker spans the shore');
+    assert.notDeepEqual(frames[0], frames[2], 'and moves');
+    assert.ok([0, 0.4, 0.8, 1.2].every((t) => surf(lake(), t).every((n) => n === 0)), 'ponds have no surf');
+  });
+
+  test('storms whip up whitecaps on open water', () => {
+    const caps = (weather: string) => computeFrame(lake({ weather }), 0).flat().filter((o) => o.ch === '≋').length;
+    assert.ok(caps('Typhoon') > 5);
+    assert.equal(caps('Sunny'), 0);
+  });
+
+  test('a door swings open while the player stands at it', () => {
+    const s = scene();
+    s.put(10, 5, '+', '09', '00');
+    s.tag(10, 5, { t: 'door', wx: 10, wy: 5 });
+    assert.equal(computeFrame(s, 0)[5][10].ch, '▮', 'closed');
+    s.put(10, 6, '@', '0F', '00', true);
+    s.tag(10, 6, { t: 'grass', wx: 10, wy: 6, ent: 'player' });
+    const open = computeFrame(s, 0)[5][10];
+    assert.equal(open.ch, '▯');
+    assert.ok(open.glow, 'warm light from inside');
+  });
+
+  test('late at night households go to bed one by one', () => {
+    const lit = (m: number) => Array.from({ length: 200 }, (_, i) => windowLit(m, i, 3)).filter(Boolean).length;
+    assert.equal(lit(21 * 60), 200, 'all lit in the evening');
+    assert.ok(lit(23 * 60) < 160 && lit(23 * 60) > 80);
+    assert.ok(lit(60) < lit(23 * 60), 'fewer after midnight');
+    const s = scene({ minutes: 60 });
+    for (let x = 0; x < 50; x++) { s.put(x, 3, '=', '0C', '01'); s.tag(x, 3, { t: 'wall', wx: x, wy: 3, k: 'deco', dch: '=', dfg: '0C' }); }
+    const row = computeFrame(s, 0)[3];
+    assert.ok(row.some((o) => o.glow) && row.some((o) => !o.glow), 'some windows lit, some dark');
   });
 
   test('walls under the eaves are shaded and building ends get corner posts', () => {
