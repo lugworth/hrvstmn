@@ -111,6 +111,24 @@ describe('engine + renderer', () => {
     assert.equal(g.farm, 'Willow');
   });
 
+  test('breaking a boulder flashes, shakes, throws debris and floats the reward', async () => {
+    const { g } = farm();
+    g.face = [0, 1];
+    const [tx, ty] = g.target();
+    g.objs.farm[`${tx},${ty}`] = 'boulder';
+    g.hp[`${tx},${ty}`] = 1;
+    g.levels['Hammer'] = 1;
+    g.tool = 'Hammer';
+    g.fx = [];
+    await g.use_tool();
+    const kinds = g.fx.map((f: { kind: string }) => f.kind);
+    for (const k of ['swing', 'flash', 'debris', 'text']) assert.ok(kinds.includes(k), k);
+    assert.equal(g.fx.find((f: { kind: string }) => f.kind === 'text').text, '+1');
+    assert.equal(g.shake_fx.strength, 2);
+    g.render();
+    assert.ok(g.scr.ctx.fx.some((f: { kind: string; stuff?: string }) => f.kind === 'debris' && f.stuff === 'stone'), 'extras reach the renderer');
+  });
+
   test('an upgraded tool tags its area-of-effect cells', () => {
     const { s, g } = farm();
     g.levels['Hoe'] = 1;

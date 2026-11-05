@@ -1,6 +1,6 @@
 // Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
-import { Screen, CellTag } from './screen';
+import { Screen, CellTag, FxExtra, FxKind } from './screen';
 import {
   GameMap,
   build_farm,
@@ -256,7 +256,8 @@ export class Game {
   fest_attended: boolean = false;
   fest_declined: boolean = false;
   npc_pos: Record<string, [number, number]> = {};
-  fx: { kind: 'dust' | 'sparkle' | 'splash' | 'coin'; map: string; x: number; y: number; born: number; life: number }[] = [];
+  fx: (FxExtra & { kind: FxKind; map: string; x: number; y: number; born: number; life: number })[] = [];
+  shake_fx: { born: number; strength: number } | null = null;
   wetness: Record<string, number> = {};
   mine_type: 'spring' | 'lake' = 'spring';
   mine_floor: number = 0;
@@ -411,6 +412,7 @@ export class Game {
     this.fest_declined = false;
     this.npc_pos = {};
     this.fx = [];
+    this.shake_fx = null;
     this.wetness = { farm: 0, town: 0, mountain: 0, beach: 0 };
     this.mine_type = 'spring';
     this.mine_floor = 0;
@@ -1081,9 +1083,25 @@ export class Game {
     this.move_indoor_npcs();
   }
 
-  fx_add(kind: 'dust' | 'sparkle' | 'splash' | 'coin', x: number, y: number, life: number = 0.55): void {
-    this.fx.push({ kind, map: this.mapname, x, y, born: Date.now() / 1000, life });
+  fx_add(kind: FxKind, x: number, y: number, life: number = 0.55, extra: FxExtra = {}): void {
+    const born = Date.now() / 1000;
+    this.fx.push({ kind, map: this.mapname, x, y, born, life: life + (extra.delay ?? 0), seed: (this.fx_seq = (this.fx_seq + 1) % 997), ...extra });
     if (this.fx.length > 36) this.fx.shift();
+  }
+
+  fx_seq: number = 0;
+
+  /** Game feel for a tool striking something: a flash, and for heavy blows a shake. */
+  fx_hit(x: number, y: number, strength: number): void {
+    this.fx_add('flash', x, y, 0.14);
+    if (strength > 0) this.shake_fx = { born: Date.now() / 1000, strength };
+  }
+
+  /** Something breaks: a beat of hit-pause, then debris flies and the reward floats up. */
+  fx_break(x: number, y: number, stuff: 'stone' | 'wood' | 'plant', text?: string, strength: number = 1): void {
+    this.fx_hit(x, y, strength);
+    this.fx_add('debris', x, y, 0.55, { stuff, delay: 0.12 });
+    if (text) this.fx_add('text', x, y, 1.1, { text, delay: 0.12 });
   }
 
   target(): [number, number] {
@@ -1283,7 +1301,11 @@ export class Game {
 
     this.record_tool_use(t);
     if (t === 'Watering Can') this.fx_add('splash', tx, ty);
-    else if (['Hoe', 'Hammer', 'Axe', 'Sickle'].includes(t)) this.fx_add('dust', tx, ty);
+    else if (['Hoe', 'Hammer', 'Axe', 'Sickle'].includes(t)) {
+      this.fx_add('dust', tx, ty);
+      // the swing itself, in the tool's tier colour (copper, silver, gold...)
+      this.fx_add('swing', tx, ty, 0.2, { dir: [this.face[0], this.face[1]], tier: this.levels[t] || 0 });
+    }
 
     if (t === 'Sickle') {
       let cutCount = 0;
@@ -1292,6 +1314,7 @@ export class Game {
         const qk = pkey(qx, qy);
         if (objs[qk] === 'weed') {
           delete objs[qk];
+          this.fx_add('debris', qx, qy, 0.45, { stuff: 'plant' });
           cutCount += 1;
         } else if (this.mapname === 'farm' && this.crops[qk] && this.crops[qk][0] === 'Grass') {
           const [, age] = this.crops[qk];
@@ -1345,6 +1368,7 @@ export class Game {
     } else if (t === 'Hammer') {
       if (obj === 'stone') {
         delete objs[pKey];
+        this.fx_break(tx, ty, 'stone', undefined, 0);
         this.msg('Crack! The stone shatters.');
       } else if (obj === 'boulder') {
         if ((this.levels['Hammer'] || 0) < 1) {
@@ -1355,13 +1379,16 @@ export class Game {
             delete objs[pKey];
             delete this.hp[pKey];
             this.give('Stone', 1);
+            this.fx_break(tx, ty, 'stone', '+1', 2);
             this.msg('BOOM! The boulder breaks apart.');
           } else {
+            this.fx_hit(tx, ty, 1);
             this.msg('Clang! The boulder cracks.');
           }
         }
       } else if (obj === 'rock') {
         delete objs[pKey];
+        this.fx_break(tx, ty, 'stone', undefined, 0);
         const drop = this.mine_drop();
         if (drop) {
           this.give(drop);
@@ -1381,6 +1408,7 @@ export class Game {
       if (obj === 'branch') {
         delete objs[pKey];
         this.give('Lumber');
+        this.fx_break(tx, ty, 'wood', '+1', 0);
         this.msg('Chop! +1 Lumber.');
       } else if (obj === 'stump') {
         if ((this.levels['Axe'] || 0) < 1) {
@@ -1391,8 +1419,10 @@ export class Game {
             delete objs[pKey];
             delete this.hp[pKey];
             this.give('Lumber', 6);
+            this.fx_break(tx, ty, 'wood', '+6', 2);
             this.msg('The stump splits! +6 Lumber.', '09');
           } else {
+            this.fx_hit(tx, ty, 1);
             this.msg('Thunk!');
           }
         }
@@ -3556,6 +3586,7 @@ export class Game {
     this.friend[request.npc] = clamp((this.friend[request.npc] || 0) + 5, 0, 100);
     this.requests_done += 1;
     this.fx_add('coin', this.px, this.py, 0.8);
+    this.fx_add('text', this.px, this.py, 1.1, { text: `+${request.reward}G` });
     this.requests.splice(index, 1);
     return `${request.npc} got ${request.qty} × ${request.item}! You earned ${request.reward}G and +5 friendship.`;
   }
@@ -4747,7 +4778,8 @@ export class Game {
       const now = Date.now() / 1000;
       s.ctx.fx = this.fx
         .filter((f) => f.map === this.mapname)
-        .map((f) => ({ kind: f.kind, x: ox + f.x - cx, y: oy + f.y - cy, age: now - f.born, life: f.life }));
+        .map((f) => ({ ...f, x: ox + f.x - cx, y: oy + f.y - cy, age: now - f.born, life: f.life }));
+      s.ctx.shake = this.shake_fx && now - this.shake_fx.born < 0.3 ? { age: now - this.shake_fx.born, strength: this.shake_fx.strength } : undefined;
     }
     const hour = this.minutes / 60;
     const classic = s.style === 'classic';
