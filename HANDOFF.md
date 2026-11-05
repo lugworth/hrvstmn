@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 96/96 tests pass, typecheck clean, production build passes.
+- **State:** working. 98/98 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** offscreen static-world cache/layered HUD, greenhouse, optional animated doors/windows and CRT mode. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 96 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 98 passed, 5 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -77,7 +77,7 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 96 tests: renderer, engine, rules and integration coverage
+src/game/*.test.ts             node:test — 98 tests: renderer, engine, rules and integration coverage
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -91,7 +91,7 @@ Inside `computeFrame`: style each tagged cell -> Isotope neon-on-black pass -> g
 ## Conventions and user preferences
 
 1. **Colours come from base16 Isotope Dark only.** Inside the renderer you may mix intermediate hex values; `snapFrame()` maps every fg/bg onto ramps built from the 16 palette colours. Don't add colours after `snapFrame()`. The test `every output colour comes from the Isotope ramps` enforces this.
-2. **The world is black-and-white; colour is for things of interest:** people, animals, ripe crops, flowers/forage, doors, lit windows, fixtures, torches and ore. Set `accent: true` to preserve colour through `monochrome()`.
+2. **The world is black-and-white (with a time-of-day duotone: sepia at dawn/golden hour, moonlit blue at night, via `toneFor()` and the tinted neutral ramps); colour is for things of interest:** people, animals, ripe crops, flowers/forage, doors, lit windows, fixtures, torches and ore. Set `accent: true` to preserve colour through `monochrome()`.
 3. **Keep text, HUD, people, crops and obstacles full-size and readable.** New detail belongs in textures/small-object clusters, never in shrinking sprites or UI.
 4. **Keep frames ~15-20 ms.** Batch canvas work, avoid per-glyph font/fillStyle churn, use seeded `hash()`/`valueNoise()` rather than `Math.random()` in the renderer, and let `frameSignature()` skip unchanged frames.
 5. **Reuse existing passes.** Don't add a parallel system when a pass already does the job.
@@ -136,6 +136,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #39: blue-noise dithering (`blueNoise()`, 32x32 void-and-cluster tile) for light falloff, vignette and margins; time-of-day duotone in `monochrome()`; foam/kerb lines at least 2 device px.
 - #38: doors swing open with warm light when the player stands at them; windows go dark one by one after 10 PM; surf rolls onto the beach; storm whitecaps and wind-driven ripples; one lily-pad/reed system (none on the sea or in winter).
 - #36 `ea02386`: colourblind-safe Accessible Cues (`!` ripe crops, `≈` wet soil) in the Diary menu.
 - #35 `66d44c4`: dirty-rect cell repaint for the Enhanced canvas; full repaint on resize/font/style changes.

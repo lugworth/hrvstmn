@@ -89,19 +89,25 @@ export function isotopeRamps(): RGB[] {
     const g = (i / 24) ** 1.4 * 255;
     set.push([g, g, g]);
   }
-  rampSet = set.map((c) => c.map(Math.round) as RGB);
+  searchSet = set.map((c) => c.map(Math.round) as RGB);
+  // Warm (sepia) and cool (moonlit) neutrals for the time-of-day duotone. They are only ever
+  // produced on purpose by toned(), so they are allowed but never picked by nearest-colour search.
+  rampSet = [...searchSet, ...TONE_HEXES.map(hexToRgb)];
   return rampSet;
 }
+let searchSet: RGB[] = [];
 
 const quantCache = new Map<string, string>();
 /** Snap a colour to the nearest Isotope ramp colour (perceptually weighted RGB). */
 export function toIsotope(hex: string): string {
   let q = quantCache.get(hex);
   if (q) return q;
+  if (TONE_SET.has(hex)) return hex;
   const [r, g, b] = hexToRgb(hex);
   let best = 0;
   let bestD = Infinity;
-  const set = isotopeRamps();
+  isotopeRamps();
+  const set = searchSet;
   for (let i = 0; i < set.length; i++) {
     const c = set[i];
     const dr = r - c[0];
@@ -162,27 +168,90 @@ export function grey(hex: string): string {
   return rgbToHex([y, y, y]);
 }
 
+// A 32x32 blue-noise threshold tile (void-and-cluster, generated offline). Unlike white
+// noise it has no clumps, so dithered gradients read as an even stipple.
+const BLUE_NOISE = Uint8Array.from(atob('Qsh93zGOVu3MZqp8w4ia+XjHVYZB6nEvwAC0Rrs3BesosAlPbBi4KH0DTf8/EkvTMhrxBbEhooPlVncl+n/PjOBolLvlnthEl7vXIZ/LZrCCo23blFzUSByc2qgTYUulEkryHj17CmX0MolZcecsC+w/wU8v+wm17mgxj+fEIXbLMn/OXfunwlERrvEGqIzZXh+REbh+Y4s7yghObzqz+GGtmQW2NiWD4mzORn40U7V3y/Nv3kHNFal4/rXUmAOKJt1R6G6T2xWhLY4c4L74FEegNFajJJf1K1mIFilY7ETAEnchRchadUDrxl6bayeJ4wGA0Q7nc0y51j6c332vbZ/9jK/wCqX3uAJMrRA70KRjv/4ssmDDBJId7GrBNQ7aKTxb1S+ETiqUZ4X7ynjxUB8+bZNIhznwfFytB032klKCugGbab/kEcbfMyBJlgy3hd+nGu3NI5vYMMh7piJnzfNy3EkcqHNfQHyiuWLjL27JB1W6eA2ralAW/EGK4bISRiSP7ss4/ZjUGfUF0n+s6zqa9zNi4UL0vqBl2gtZNZu8YK4OWYYTK65TbJBBJFYUZNkdiNKXKoQAOI4mwvBt1QfiOXWe203lhb803sef/cSTd0eqCFKzcMrprHRPkyh8VIjF9yesx2QK7x55XwyDSim07l3D/R3kW0ca1bcUpv8xoRdKawM9eqZJlrPzMLvjAtM0FnWLN50NhfpkO+pIybRi7IC+6JD5LdFaEEOocVqYfmmi4EfXa8KnLJgEiXMbjgbPLpkbVLEYg7rgj9QV70DC9SS5CqwjUc92473RW+bXdkaqX8w52W7nNWsgUoEsrxBVO4Jc+JDmPBVXRSakOFS39w/kdooMmUkApfm/nthlj8zmnMYxcAKE9q2VcPoToB9okUIl/sBg8sd5WjoHS/8ieQZoG03No7xmIN0IxYDtyS7dvJ9PGqkqhxfQjeVyuqND1bPvleEqRNaNNrRhPJRzUIEDY9J7Qty3TvAjsDMXXusohzpjF35dDfJShugZvQvWpvQ2su6SDW43nWKB2ZLEf1GrEMX0sJrAcKQn0Epl/EAib4wTLluk+cEEzEQP7zkCz/tykUgw0x4/3AF6qx6NsVzO5lPD3oAmVXriqld0tmaXHFjbBHlX/5W4V/I15HTED5k9q3EGPa/pG40t/Jwi6D6yK6HB6YsLai2HxZ4IMlDzKYQZ/JHWaZY+vWkRzk6K13rtQ2cntkvK6RhDYdOp3Hu22mC8TCDJCfVM2II3vgleGMiJFKneNp10rvaBFpA8ZABFpS7hhli1cqIjsepsp/gzmlP6fV8d0g5UK71Y/h+hxvZ1D5046hkw4l0BRZYl0Wq5DNA/lfFni92gbw=='), (c) => c.charCodeAt(0));
+
+/** Blue-noise threshold in [0, 1) for a cell, tiled every 32 cells. */
+export function blueNoise(x: number, y: number): number {
+  return BLUE_NOISE[((y & 31) << 5) | (x & 31)] / 256;
+}
+
+/** How far the black-and-white world leans warm (dawn, golden hour) or cool (night), 0..1. */
+export function toneFor(minutes: number, weather: string, indoor: boolean, mapName: string): { warm: number; cool: number } {
+  if (indoor || mapName === 'mine') return { warm: 0, cool: 0 };
+  const h = (((minutes / 60) % 24) + 24) % 24;
+  const bump = (c: number, w: number) => Math.max(0, 1 - Math.abs(h - c) / w);
+  const fair = weather !== 'Rain' && weather !== 'Typhoon' && weather !== 'Blizzard';
+  const warm = fair ? Math.min(1, Math.max(bump(6.25, 1.25), bump(17.6, 1.4)) * 1.4) : 0;
+  const cool = h >= 19 ? Math.min(1, (h - 19) / 1.5) : h < 5 ? 1 : h < 6 ? 6 - h : 0;
+  return { warm, cool };
+}
+
+// Duotone tints for the grey world: a sepia lean toward Isotope orange and a moonlit lean
+// toward Isotope blue. isotopeRamps() carries matching tinted neutral ramps.
+const TONE_S = 0.28;
+const toneHue = (code: string): RGB => {
+  const c = hexToRgb(`#${PALETTE[code]}`);
+  const m = Math.max(c[0], c[1], c[2]) || 1;
+  return [c[0] / m, c[1] / m, c[2] / m];
+};
+const WARM_TONE = toneHue('09');
+const COOL_TONE = toneHue('0D');
+const tintGrey = (y: number, t: RGB): RGB => [y * (1 - TONE_S + TONE_S * t[0]), y * (1 - TONE_S + TONE_S * t[1]), y * (1 - TONE_S + TONE_S * t[2])];
+// The neutral levels (palette black/white and the grey ramp) and their tinted twins.
+const TONE_LEVELS = [0, ...Array.from({ length: 23 }, (_, i) => ((i + 1) / 24) ** 1.4 * 255), 255];
+const tintHex = (level: number, t: RGB) => rgbToHex(tintGrey(level, t).map(Math.round) as RGB);
+const TONE_HEXES = [...TONE_LEVELS.map((l) => tintHex(l, WARM_TONE)), ...TONE_LEVELS.map((l) => tintHex(l, COOL_TONE))];
+const TONE_SET = new Set(TONE_HEXES);
+
+/** Grey, or the tinted twin of the nearest neutral level (an exact ramp colour, so snapping keeps it). */
+function toned(hex: string, t: RGB | null): string {
+  if (!t) return grey(hex);
+  const [r, g, b] = hexToRgb(hex);
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  let best = 0;
+  for (const l of TONE_LEVELS) if (Math.abs(l - y) < Math.abs(best - y)) best = l;
+  return tintHex(best, t);
+}
+
+type Tone = { warm: number; cool: number; light: Float32Array | null; tags: (CellTag | null)[][] };
+
 /**
  * Black-and-white world with colour reserved for things of interest: everything not
  * flagged as an accent goes grey (keeping its light and shade); accents keep their hue,
  * pushed to a clear Isotope neon, over a grey background.
  */
-function monochrome(out: OutCell[][], boxes: Screen['boxes']) {
+function monochrome(out: OutCell[][], boxes: Screen['boxes'], tone?: Tone) {
   const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
+  const W = out[0]?.length ?? 0;
   for (let y = 0; y < out.length; y++) {
     for (let x = 0; x < out[y].length; x++) {
       const o = out[y][x];
       if (o.ui || inBox(x, y)) continue;
-      o.bg = grey(o.bg);
-      if (o.token) o.token = grey(o.token);
-      if (o.foamCol) o.foamCol = grey(o.foamCol);
+      // Time of day leans the greys warm or cool; lamplight keeps its own warm pool at night.
+      // Blue noise (anchored to the world) dithers the change in and out.
+      let t: RGB | null = null;
+      if (tone) {
+        const lit = tone.light ? Math.min(1, tone.light[y * W + x] * 3) : 0;
+        const warm = Math.max(tone.warm, lit);
+        const cool = tone.cool * (1 - lit);
+        if (warm > 0 || cool > 0) {
+          const tg = tone.tags[y]?.[x];
+          const bn = blueNoise(tg?.wx ?? x, tg?.wy ?? y);
+          t = warm > bn ? WARM_TONE : cool > bn ? COOL_TONE : null;
+        }
+      }
+      o.bg = toned(o.bg, t);
+      if (o.token) o.token = toned(o.token, t);
+      if (o.foamCol) o.foamCol = toned(o.foamCol, t);
       if (o.accent) {
         o.fg = neon(o.fg, 0.35);
         continue;
       }
-      o.fg = grey(o.fg);
-      if (o.glow) o.glow = grey(o.glow);
-      if (o.rim) o.rim = grey(o.rim);
+      o.fg = toned(o.fg, t);
+      if (o.glow) o.glow = toned(o.glow, t);
+      if (o.rim) o.rim = toned(o.rim, t);
     }
   }
 }
@@ -370,7 +439,7 @@ const roofShades = (fgCode: string) => {
  * with a little per-cell grain, stretched back to the full 0..1 range.
  */
 function mottle(wx: number, wy: number, s: number): number {
-  const n = valueNoise(wx / 5, wy / 2.5, s) * 0.8 + hash(wx, wy, s) * 0.2;
+  const n = valueNoise(wx / 5, wy / 2.5, s) * 0.8 + blueNoise(wx + s * 7, wy + s * 13) * 0.2;
   return Math.max(0, Math.min(1, (n - 0.5) * 1.6 + 0.5));
 }
 
@@ -1007,6 +1076,7 @@ export function computeFrame(
   if (outdoorFx && w === 'Sunny' && sky.amb > 0.85 && motion) birds(out, tags, v, t);
 
   // ---- lighting (with lightning flashes in a typhoon)
+  let lightMap: Float32Array | null = null;
   const flash = motion && outdoor && ctx.weather === 'Typhoon' && lightning(t);
   if (flash) {
     sky.amb = Math.min(1.1, sky.amb + 0.65);
@@ -1028,6 +1098,7 @@ export function computeFrame(
         if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x, y: y + 1, r: 5, col: hexToRgb('#ff9900'), k: 0.85 });
       }
     }
+    lightMap = new Float32Array(W * H);
     const tintRgb = hexToRgb(sky.tint);
     const vignette = flash ? 0 : Math.max(0, 0.8 - sky.amb) * 0.6;
     const shade = (col: string, lr: number, lg: number, lb: number, ls: number) => {
@@ -1071,10 +1142,19 @@ export function computeFrame(
         }
         // Entities stay a little brighter so the player can always find them.
         const entBoost = tag.ent ? 0.35 : 0;
+        const bn = blueNoise(tag.wx ?? x, tag.wy ?? y);
+        if (ls > 0) {
+          // blue-noise dither on the falloff turns banded rings into an even stipple
+          const f = Math.max(0, 1 + (bn - 0.5) * 0.3);
+          lr *= f;
+          lg *= f;
+          lb *= f;
+          ls *= f;
+        }
+        lightMap[y * W + x] = ls;
         o.bg = shade(o.bg, lr, lg, lb, ls);
         // the rim of each light pool fades out through ':' and '.' (an ASCII gradient)
-        if (ls > 0.04 && ls < 0.32 && o.ch === ' ' && SHADOW_RECEIVERS.has(tag.t) && !tag.ent
-          && hash((tag.wx ?? x) * 2, tag.wy ?? y, 73) < 0.45) {
+        if (ls > 0.04 && ls < 0.32 && o.ch === ' ' && SHADOW_RECEIVERS.has(tag.t) && !tag.ent && bn < 0.45) {
           o.ch = ls < 0.14 ? '.' : ':';
           o.fg = mix(o.bg, '#ffe0a0', 0.22 + ls * 0.6);
         }
@@ -1085,7 +1165,7 @@ export function computeFrame(
           const nx = (x - (v.x + v.w / 2)) / (v.w / 2);
           const ny = (y - (v.y + v.h / 2)) / (v.h / 2);
           const d = Math.sqrt(nx * nx + ny * ny) / 1.25;
-          const k = Math.max(0, Math.min(1, (d - 0.5) / 0.5)) * vignette;
+          const k = Math.max(0, Math.min(1, (d - 0.5) / 0.5 + (bn - 0.5) * 0.18)) * vignette;
           if (k > 0) {
             o.bg = mix(o.bg, '#000000', k);
             o.fg = mix(o.fg, '#000000', k * 0.8);
@@ -1126,7 +1206,8 @@ export function computeFrame(
   if (ctx.fx?.length) drawFx(out, ctx.fx, v, W, H);
   if (!ctx.indoor) worldMargin(out, tags, buf, v, ctx.divX, ctx.divY, boxes);
 
-  monochrome(out, boxes);
+  const tod = toneFor(ctx.minutes, ctx.weather, !!ctx.indoor, ctx.mapName);
+  monochrome(out, boxes, { ...tod, light: lightMap, tags });
   decorateBoxes(out, boxes, W, H, t);
   snapFrame(out);
   return out;
@@ -1258,7 +1339,7 @@ function worldMargin(out: OutCell[][], tags: (CellTag | null)[][], buf: Cell[][]
       const sy = y < v.y ? v.y + j : y > y1 ? y1 - j : Math.max(v.y, Math.min(y1, y + n));
       const src = out[sy][sx];
       const st = tags[sy][sx];
-      const sparse = hash(x, y, 212) < (d - 1) * 0.15; // glyphs thin out toward the far edge
+      const sparse = blueNoise(x, y) < (d - 1) * 0.15; // glyphs thin out toward the far edge
       out[y][x] = {
         ch: !st || st.ent || sparse ? ' ' : src.ch,
         fg: mix(src.fg, '#000000', fade),
@@ -1875,7 +1956,8 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
   }
 
   // shoreline foam: a thin light line where water meets land
-  const fw = Math.max(1, Math.round(ch / 12));
+  // at least two device pixels: single-pixel lines vanish on low-DPI screens and in recordings
+  const fw = Math.max(2 / (m.dpr ?? 1), Math.round(ch / 12));
   for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
     for (let x = X0; x < X1; x++) {

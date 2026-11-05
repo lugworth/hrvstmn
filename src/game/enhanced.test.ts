@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, windowLit, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, windowLit, blueNoise, toneFor, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -448,11 +448,51 @@ describe('computeFrame', () => {
 
   test('monochrome world: plain terrain is pure grey', () => {
     const isGrey = (h: string) => { const [r, g, b] = hexToRgb(h); return r === g && g === b; };
-    for (const s of [scene(), scene({ season: 2 }), scene({ minutes: 22 * 60 })]) {
+    for (const s of [scene(), scene({ season: 2 }), scene({ minutes: 13 * 60, weather: 'Rain' })]) {
       for (const o of computeFrame(s, 0).slice(1, 20).flatMap((r) => r.slice(0, 50))) {
         if (!o.accent) assert.ok(isGrey(o.fg) && isGrey(o.bg), `${o.ch} ${o.fg}/${o.bg}`);
       }
     }
+  });
+
+  test('the grey world leans sepia at golden hour and moonlit blue at night, lamplight stays warm', () => {
+    const lean = (over: Partial<RenderCtx>, pick = (o: { bg: string }) => o) => {
+      const cells = computeFrame(scene(over), 0).slice(2, 18).flatMap((r) => r.slice(2, 48)).filter((o) => !o.accent).map(pick);
+      let warm = 0;
+      let cool = 0;
+      for (const o of cells) {
+        const [r, , b] = hexToRgb(o.bg);
+        if (r > b) warm++;
+        else if (b > r) cool++;
+      }
+      return { warm: warm / cells.length, cool: cool / cells.length };
+    };
+    assert.deepEqual(toneFor(12 * 60, 'Sunny', false, 'farm'), { warm: 0, cool: 0 });
+    assert.equal(toneFor(17.6 * 60, 'Sunny', false, 'farm').warm, 1);
+    assert.equal(toneFor(17.6 * 60, 'Rain', false, 'farm').warm, 0, 'no golden hour under cloud');
+    assert.equal(toneFor(23 * 60, 'Sunny', true, 'house').cool, 0, 'rooms are not tinted');
+    assert.ok(lean({ minutes: 17.6 * 60 }).warm > 0.6, 'golden hour');
+    assert.ok(lean({ minutes: 23 * 60 }).cool > 0.6, 'night');
+    // the player's lantern keeps a warm pool in the blue night
+    const s = scene({ minutes: 23 * 60 });
+    s.put(25, 10, '@', '0F', '00', true);
+    s.tag(25, 10, { t: 'grass', wx: 25, wy: 10, ent: 'player' });
+    const near = computeFrame(s, 0)[10].slice(22, 29).filter((o) => !o.accent);
+    assert.ok(near.every((o) => { const [r, , b] = hexToRgb(o.bg); return r >= b; }), 'lamplight is warm');
+  });
+
+  test('blue noise: every level once per 4 cells of the tile, no clumps', () => {
+    const vals: number[] = [];
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) vals.push(blueNoise(x, y));
+    const counts = new Map<number, number>();
+    for (const v of vals) counts.set(v, (counts.get(v) ?? 0) + 1);
+    assert.equal(counts.size, 256);
+    assert.ok([...counts.values()].every((n) => n === 4));
+    assert.equal(blueNoise(3, 5), blueNoise(35, 37), 'tiles every 32 cells');
+    // neighbours differ more than white noise would (mean |diff| of uniform noise is 1/3)
+    let diff = 0;
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) diff += Math.abs(blueNoise(x, y) - blueNoise(x + 1, y));
+    assert.ok(diff / 1024 > 0.36);
   });
 
   test('things of interest keep their colour as accents', () => {
