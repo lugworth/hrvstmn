@@ -699,65 +699,6 @@ const WEATHER_ICON: Record<string, [string, string]> = {
 const CREATURE_GLYPH: Record<string, string> = { H: '♞', C: '♉', S: '☁' };
 const BOX: Record<string, string> = { 'box:h': '─', 'box:v': '│', 'box:tl': '╭', 'box:tr': '╮', 'box:bl': '╰', 'box:br': '╯' };
 
-// ---------------------------------------------------------------- composed sprites
-// A 3x3 silhouette is stamped around the entity's anchor cell. Collision still uses
-// the single anchor cell; the extra cells are pure presentation and keep the world
-// monochrome while the character stays a colour accent.
-function composeSprites(
-  out: OutCell[][],
-  tags: (CellTag | null)[][],
-  v: { x: number; y: number; w: number; h: number },
-  t: number,
-  W: number,
-  H: number
-) {
-  const shapes: Record<string, [string, string, string]> = {
-    down: ['   ', '/|\\', '/_\\'],
-    up: ['   ', '\\|/', '/_\\'],
-    left: ['   ', '/|<', '/_\\'],
-    right: ['   ', '>|\\', '/_\\'],
-  };
-  for (let y = v.y; y < v.y + v.h && y < H; y++) {
-    for (let x = v.x; x < v.x + v.w && x < W; x++) {
-      const tag = tags[y][x];
-      if (!tag?.ent || (tag.ent !== 'player' && tag.ent !== 'npc')) continue;
-      const dir = tag.dir || 'down';
-      const pattern = shapes[dir] || shapes.down;
-      const anchor = out[y][x];
-      const head = tag.ent === 'player' ? '@' : anchor.ch;
-      const frame = Math.floor(t * 5 + hash(x, y, 41)) % 2;
-      const body = frame ? ['   ', '/|\\', '|_|'] : pattern;
-      const rows = [body[0].slice(0, 1) + head + body[0].slice(2), body[1], body[2]];
-      for (let ry = 0; ry < 3; ry++) {
-        const yy = y - 2 + ry;
-        if (yy < v.y || yy >= v.y + v.h || yy >= H) continue;
-        for (let rx = 0; rx < 3; rx++) {
-          const xx = x - 1 + rx;
-          if (xx < v.x || xx >= v.x + v.w || xx >= W) continue;
-          const ch = rows[ry][rx];
-          if (ch === ' ') continue;
-          const nt = tags[yy][xx];
-          if (nt?.t === 'ui' || (nt?.ent && nt.ent !== tag.ent)) continue;
-          const o = out[yy][xx];
-          o.ch = ch;
-          o.fg = anchor.fg;
-          o.bold = true;
-          o.accent = true;
-          o.plain = true;
-          o.seed = undefined;
-          o.foam = undefined;
-          o.token = undefined;
-          o.rim = undefined;
-          if (tag.ent === 'player') {
-            o.glow = anchor.fg;
-            o.glowR = 4;
-          }
-        }
-      }
-    }
-  }
-}
-
 function drawFx(
   out: OutCell[][],
   fx: NonNullable<RenderCtx['fx']>,
@@ -1130,7 +1071,6 @@ export function computeFrame(
   // ---- reflections in calm water (after lighting, so lit windows reflect too)
   if (outdoor && ctx.weather === 'Sunny') reflections(out, tags, v, t, W, H);
   shoreFoam(out, tags, v, W, H, motion ? t : 0);
-  composeSprites(out, tags, v, motion ? t : 0, W, H);
   if (ctx.fx?.length) drawFx(out, ctx.fx, v, W, H);
   if (!ctx.indoor) worldMargin(out, tags, buf, v, ctx.divX, ctx.divY, boxes);
 
