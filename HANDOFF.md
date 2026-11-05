@@ -109,6 +109,21 @@ Inside `computeFrame`: style each tagged cell -> Isotope neon-on-black pass -> g
 - **`next.config.ts`** disables build-time type-checking and linting, keeps `reactStrictMode: false` for the canvas loop, and uses `output: "standalone"`.
 - **No backend.** Saves are local to the browser; export/import is the portability escape hatch.
 
+## Project subagents
+
+`.claude/agents/` defines eight helpers that any Claude Code session in this repo can delegate to (they are picked up automatically; restart if the session started before the folder existed):
+
+| Agent | Use it for |
+|-------|-----------|
+| `renderer-artist` | Graphics changes in `src/game/enhanced.ts`, under the palette, B&W and frame-budget rules |
+| `gameplay-engineer` | Maps/regions, engine systems, rules, content (original, never a replica) |
+| `test-guardian` | Running tests/typecheck/build, root-causing failures, adding regression tests |
+| `visual-qa` | Playwright screenshots, before/after diffs, frame timing, mobile device checks |
+| `mobile-ux` | Responsive layout and touch controls in `components/GameScreen.tsx` and `app/` |
+| `pr-shepherd` | Commit, push to the designated branch, draft PR, Vercel status, conflicts, squash-merge |
+| `web-researcher` | Sourced research on techniques before building |
+| `handoff-keeper` | Refreshing this file and writing continuity briefs (context compression) |
+
 ## Workflow
 
 The user wants changes merged, not left open. One feature per PR, squash-merge, sync `main` often.
@@ -136,6 +151,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #43: eight project subagents in `.claude/agents/` (renderer-artist, gameplay-engineer, test-guardian, visual-qa, mobile-ux, pr-shepherd, web-researcher, handoff-keeper).
 - #42: shape-matched terrain edges (`edgeGlyph()`: 6 staggered sampling circles, geometric glyph vectors, contrast curve, nearest match) and two-tone cells (`OutCell.detail`, drawn small top-right; used for blossom/fruit on trees).
 - #41: four new original outdoor regions (`woods` Cedar Hollow, `ridge` Skyline Ridge, `river` Willow Bend, `point` Lighthouse Point) built in `map.ts` and joined by `link_regions()`; `OUTDOOR_MAPS`/`FORAGE_TARGET` in engine; daily branches in the woods; sea surf/no lilies via `SEA_MAPS`.
 - #40: game feel: tier-coloured swing slashes, hit flash + hit-pause, debris bursts, floating reward text, CSS-transform screen shake (`fx_hit`/`fx_break`, `shakeOffset`).
