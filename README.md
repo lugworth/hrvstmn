@@ -71,3 +71,8 @@ and menus drawn over the map always render as UI.
 
 The bundled font is a subset of DejaVu Sans Mono (`public/fonts`, see `LICENSE-DejaVu.txt`), so the
 block and symbol glyphs look the same on every device.
+
+### ASCII art pack
+
+`docs/ascii-art-pack.md` holds the terminal-safe title plate, crop/item icons, animal portraits,
+tool marks, building badges and a 40×13 farm vignette, with Isotope colour codes and sizing notes.
