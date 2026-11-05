@@ -1533,6 +1533,44 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
 
 export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number; hires?: boolean };
 
+export type DirtyRect = { x0: number; y0: number; x1: number; y1: number };
+
+/** Bounding box of cells that changed between two frames, including glyph overhang. */
+export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): DirtyRect | null {
+  if (!prev || prev.length !== next.length) return { x0: 0, y0: 0, x1: next[0]?.length ?? 0, y1: next.length };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < next.length; y++) {
+    const a = prev[y];
+    const b = next[y];
+    if (!a || a.length !== b.length) return { x0: 0, y0: 0, x1: b.length, y1: next.length };
+    for (let x = 0; x < b.length; x++) {
+      const p = a[x];
+      const n = b[x];
+      if (
+        p.ch !== n.ch || p.fg !== n.fg || p.bg !== n.bg || p.bold !== n.bold ||
+        p.glow !== n.glow || p.glowR !== n.glowR || p.token !== n.token || p.rim !== n.rim ||
+        p.plain !== n.plain || p.ui !== n.ui || p.accent !== n.accent || p.seed !== n.seed ||
+        p.foam !== n.foam || p.foamCol !== n.foamCol
+      ) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return {
+    x0: Math.max(0, minX - 1),
+    y0: Math.max(0, minY - 1),
+    x1: Math.min(next[0]?.length ?? 0, maxX + 2),
+    y1: Math.min(next.length, maxY + 2),
+  };
+}
+
 /** Paint a computed frame. Block shapes are drawn as rects/paths so they tile without seams. */
 // ---------------------------------------------------------------- high-resolution textures
 //
@@ -1650,9 +1688,13 @@ export function rowAlpha(ch: string, seed: number, r: number, n: number): number
   return subAlpha(ch, seed, r);
 }
 
-export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics) {
+export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Metrics, dirty?: DirtyRect) {
   const { cw, ch, fontPx, font } = m;
   const level = effectiveHiresLevel(fontPx, m.dpr ?? 1, m.hires ?? true);
+  const X0 = Math.max(0, dirty?.x0 ?? 0);
+  const Y0 = Math.max(0, dirty?.y0 ?? 0);
+  const X1 = Math.min(frame[0]?.length ?? 0, dirty?.x1 ?? frame[0]?.length ?? 0);
+  const Y1 = Math.min(frame.length, dirty?.y1 ?? frame.length);
   const mx: number[] = [];
   const my: number[] = [];
   const ms: string[] = [];
@@ -1666,11 +1708,11 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
   g.textBaseline = 'middle';
   g.shadowBlur = 0;
   // backgrounds go down in runs of equal colour: one rectangle per run, not per cell
-  for (let y = 0; y < frame.length; y++) {
+  for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
-    let x0 = 0;
-    for (let x = 1; x <= row.length; x++) {
-      if (x < row.length && row[x].bg === row[x0].bg) continue;
+    let x0 = X0;
+    for (let x = X0 + 1; x <= X1; x++) {
+      if (x < X1 && row[x].bg === row[x0].bg) continue;
       g.fillStyle = row[x0].bg;
       // +1px overlap on both axes so scaled canvases show no seams between cells
       g.fillRect(Math.floor(x0 * cw), Math.floor(y * ch), Math.ceil((x - x0) * cw) + 1, Math.ceil(ch) + 1);
@@ -1679,9 +1721,9 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
   }
   let curFont = '';
   let glowOn = false;
-  for (let y = 0; y < frame.length; y++) {
+  for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
-    for (let x = 0; x < row.length; x++) {
+    for (let x = X0; x < X1; x++) {
       const o = row[x];
       if (o.ch === ' ') continue;
       const px = x * cw;
@@ -1781,9 +1823,9 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 
   // shoreline foam: a thin light line where water meets land
   const fw = Math.max(1, Math.round(ch / 12));
-  for (let y = 0; y < frame.length; y++) {
+  for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
-    for (let x = 0; x < row.length; x++) {
+    for (let x = X0; x < X1; x++) {
       const o = row[x];
       if (!o.foam) continue;
       g.fillStyle = o.foamCol ?? '#c0c0c0';
