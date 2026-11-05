@@ -431,6 +431,13 @@ export default function GameScreen() {
           </button>
           <button
             type="button"
+            onClick={() => sendKey('n')}
+            className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#00ffff] cursor-pointer"
+          >
+            [N] Map
+          </button>
+          <button
+            type="button"
             onClick={() => sendKey('r')}
             className="px-2 py-0.5 rounded bg-[#202020] hover:bg-[#404040] border border-[#404040] text-[#ff0099] cursor-pointer"
           >
