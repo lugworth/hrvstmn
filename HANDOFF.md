@@ -1,6 +1,6 @@
 # Handoff: HRVSTMN
 
-> Snapshot of `main` @ `fba5983` (PR #28) plus this HANDOFF refresh, 2026-11-04.
+> Snapshot of `main` @ `ea02386` (PR #36) plus this HANDOFF refresh, 2026-11-05.
 > Read this file before changing anything. If it contradicts the code, trust the code and update this file.
 
 ## Kickoff prompt
@@ -10,7 +10,7 @@ You're picking up HRVSTMN, an ASCII farming sim (Next.js 15 + TypeScript, HTML c
 github.com/lugworth/hrvstmn, live at https://hrvstmn.vercel.app (Vercel deploys main).
 
 Read HANDOFF.md fully before changing anything. Enhanced is the only visible visual style;
-Classic remains as a code-only/test path. Large was removed in #18. All PRs through #28 are merged.
+Classic remains as a code-only/test path. Large was removed in #18. All PRs through #36 are merged.
 
 Rules most likely to be broken: every colour must come from base16 Isotope Dark (toIsotope());
 the world is black-and-white, colour only on things of interest; text/HUD/people/crops/obstacles
@@ -21,9 +21,9 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 88/88 tests pass, typecheck clean, production build passes.
+- **State:** working. 92/92 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
-- **Next up:** roadmap release 3 (offscreen/layered renderer), then greenhouse and accessibility settings. See `docs/feature-research.md`.
+- **Next up:** offscreen static-world cache/layered HUD, greenhouse, optional animated doors/windows and CRT mode. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
 
 ## Quick start
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 88 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 92 passed, 5 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -77,7 +77,7 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 88 tests: enhanced 64, render 14, rules 7, engine 3
+src/game/*.test.ts             node:test — 92 tests: renderer, engine, rules and integration coverage
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -136,6 +136,13 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #36 `ea02386`: colourblind-safe Accessible Cues (`!` ripe crops, `≈` wet soil) in the Diary menu.
+- #35 `66d44c4`: dirty-rect cell repaint for the Enhanced canvas; full repaint on resize/font/style changes.
+- #34 `e15661c`: short top-down menu/dialog reveal, disabled with reduced motion.
+- #33 `cba7a68`: `N` minimap toggle with centred, edge-preserving sampling and door markers.
+- #32 `3aec1cc`: reverted composed stick-figure sprites; characters are single full-size tokens again. Action feedback remains.
+- #31 `fc77a46`: persistent rain wetness/puddles, directional sun shadows, reeds/lily pads, wildlife, snow caps, cliff tops.
+- #30 `3ac19bd`: action feedback queue (dust, sparkle, splash, coin); composed sprite portion was reverted in #32.
 - #28 `fba5983`: Farm Mastery; five disciplines, XP from real actions, one-time rank rewards, Diary page.
 - #26 `98ee873`: Achievements & Journal; 14 derived milestones with progress, Diary menu page, persisted request completion count.
 - #24 `ae42356`: Rose Square request board; timed villager requests, delivery rewards, overnight expiry, Today's Plan integration.
