@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, windowLit, blueNoise, toneFor, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -766,6 +766,50 @@ describe('computeFrame', () => {
     const s = lake();
     const foam = (t: number) => computeFrame(s, t)[2].slice(10, 35).map((o) => o.foamCol).join();
     assert.notEqual(foam(0), foam(1.5));
+  });
+
+  test('a tool swing flashes a slash in the swing direction, coloured by tool tier', () => {
+    const swing = (tier: number, dir: [number, number]) => computeFrame(scene({ fx: [{ kind: 'swing', x: 10, y: 5, age: 0.05, life: 0.2, dir, tier }] }), 0)[5][10];
+    assert.equal(swing(0, [1, 0]).ch, '╲');
+    assert.equal(swing(0, [-1, 0]).ch, '╱');
+    assert.ok(swing(3, [1, 0]).accent);
+    assert.notEqual(swing(0, [1, 0]).fg, swing(3, [1, 0]).fg, 'gold is not basic');
+    assert.equal(TIER_COLOURS.length, 7);
+  });
+
+  test('a struck object flashes, then debris bursts out after a short hit-pause', () => {
+    const at = (age: number, reducedMotion = false) => computeFrame(scene({ reducedMotion, fx: [
+      { kind: 'flash', x: 20, y: 10, age: Math.min(age, 0.13), life: 0.14 },
+      { kind: 'debris', x: 20, y: 10, age, life: 0.67, delay: 0.12, stuff: 'stone', seed: 5 },
+    ] }), 0);
+    const plain = computeFrame(scene(), 0);
+    const flash = at(0.05)[10][20];
+    assert.equal(flash.fg, '#ffffff');
+    assert.ok(lum(flash.bg) > lum(plain[10][20].bg));
+    const bits = (out: ReturnType<typeof computeFrame>) => out.flat().filter((o) => '•∙'.includes(o.ch)).length;
+    assert.equal(bits(at(0.05)), 0, 'nothing flies during the hit-pause');
+    assert.ok(bits(at(0.35)) >= 2, 'then a burst');
+    assert.equal(bits(at(0.35, true)), 0, 'no debris with reduced motion');
+  });
+
+  test('rewards float up off the spot', () => {
+    const row = (age: number) => {
+      const out = computeFrame(scene({ fx: [{ kind: 'text', x: 20, y: 10, age, life: 1.22, delay: 0.12, text: '+6' }] }), 0);
+      return out.findIndex((r) => r.slice(18, 22).map((o) => o.ch).join('').includes('+6'));
+    };
+    assert.equal(row(0.05), -1, 'waits for the hit-pause');
+    assert.equal(row(0.2), 9, 'starts just above');
+    assert.ok(row(0.9) < 9, 'and rises');
+  });
+
+  test('screen shake is a few pixels that die away, never with reduced motion', () => {
+    const mag = (s: { age: number; strength: number }) => Math.hypot(...shakeOffset(s));
+    assert.ok(mag({ age: 0.02, strength: 2 }) > 0);
+    assert.ok(mag({ age: 0.02, strength: 2 }) <= 4.5);
+    assert.deepEqual(shakeOffset({ age: 0.3, strength: 2 }), [0, 0], 'over within a quarter second');
+    assert.deepEqual(shakeOffset({ age: 0.13, strength: 1 }), [0, 0], 'light hits are shorter');
+    assert.deepEqual(shakeOffset({ age: 0.02, strength: 2 }, true), [0, 0]);
+    assert.deepEqual(shakeOffset(undefined), [0, 0]);
   });
 
   test('hash is deterministic and in range', () => {

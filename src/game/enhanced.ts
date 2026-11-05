@@ -793,22 +793,78 @@ const WEATHER_ICON: Record<string, [string, string]> = {
 const CREATURE_GLYPH: Record<string, string> = { H: '♞', C: '♉', S: '☁' };
 const BOX: Record<string, string> = { 'box:h': '─', 'box:v': '│', 'box:tl': '╭', 'box:tr': '╮', 'box:bl': '╰', 'box:br': '╯' };
 
+/** Effect colour by tool tier (Cogmind's rule: colour shows strength). Basic to Blessed. */
+export const TIER_COLOURS = ['#d8d8d8', '#ff9933', '#c8d8f0', '#ffd700', '#33ffcc', '#cc00ff', '#ffffff'];
+const SWING: Record<string, string> = { '1,0': '╲', '-1,0': '╱', '0,-1': '╱', '0,1': '╲' };
+const DEBRIS: Record<string, string[]> = { stone: ['•', '·', '∙', ','], wood: ['╱', '`', '·', ','], plant: ['ʷ', ',', '`', '·'] };
+const DEBRIS_COL: Record<string, string> = { stone: '#b8b8c0', wood: '#c58a4a', plant: '#7ad04a' };
+
 function drawFx(
   out: OutCell[][],
   fx: NonNullable<RenderCtx['fx']>,
   v: { x: number; y: number; w: number; h: number },
   W: number,
-  H: number
+  H: number,
+  motion = true
 ) {
   const glyph: Record<string, string> = { dust: '·', sparkle: '*', splash: '≈', coin: '$' };
   const colour: Record<string, string> = { dust: '#d8c8a8', sparkle: '#fff0a0', splash: '#9cc8ff', coin: '#ffd45a' };
+  const inView = (x: number, y: number) => x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h && x < W && y < H;
   for (const f of fx) {
-    const p = f.age / Math.max(0.01, f.life);
-    if (p >= 1) continue;
+    const delay = f.delay ?? 0;
+    const p = (f.age - delay) / Math.max(0.01, f.life - delay);
+    if (p >= 1 || (p < 0 && f.kind !== 'flash')) continue;
+    if (f.kind === 'flash') {
+      // the struck thing blinks white; it holds through the hit-pause before any debris flies
+      if (!inView(f.x, f.y)) continue;
+      const o = out[f.y][f.x];
+      o.fg = '#ffffff';
+      o.bg = mix(o.bg, '#ffffff', 0.35);
+      o.bold = true;
+      o.accent = true;
+      continue;
+    }
+    if (f.kind === 'swing') {
+      if (!inView(f.x, f.y)) continue;
+      const col = TIER_COLOURS[Math.max(0, Math.min(6, f.tier ?? 0))];
+      const o = out[f.y][f.x];
+      out[f.y][f.x] = { ...o, ch: SWING[`${f.dir?.[0] ?? 0},${f.dir?.[1] ?? 1}`] ?? '╲', fg: mix(o.bg, col, 1 - p * 0.6), bold: true, glow: col, glowR: 4, accent: true, plain: true };
+      continue;
+    }
+    if (f.kind === 'debris') {
+      if (!motion) continue;
+      // a short burst that arcs out and falls back under gravity
+      const pool = DEBRIS[f.stuff ?? 'stone'];
+      const col = DEBRIS_COL[f.stuff ?? 'stone'];
+      const n = f.stuff === 'plant' ? 4 : 8;
+      for (let i = 0; i < n; i++) {
+        const a = hash(i, f.seed ?? 0, 91) * Math.PI * 2;
+        const sp = 0.8 + hash(i, f.seed ?? 0, 92) * 1.4;
+        const x = Math.round(f.x + Math.cos(a) * sp * 2 * p);
+        const y = Math.round(f.y + Math.sin(a) * sp * 0.6 * p - 0.8 * p + 2.2 * p * p);
+        if (!inView(x, y) || out[y][x].token) continue;
+        const o = out[y][x];
+        out[y][x] = { ...o, ch: pool[i % pool.length], fg: mix(o.bg, col, 0.95 - p * 0.6), bold: true, glow: undefined, accent: true, plain: true };
+      }
+      continue;
+    }
+    if (f.kind === 'text') {
+      // the reward floats up off the spot and fades
+      const txt = f.text ?? '';
+      const y = f.y - 1 - (motion ? Math.floor(p * 1.6) : 0);
+      const x0 = f.x - Math.floor(txt.length / 2);
+      for (let i = 0; i < txt.length; i++) {
+        const x = x0 + i;
+        if (!inView(x, y)) continue;
+        const o = out[y][x];
+        out[y][x] = { ...o, ch: txt[i], fg: mix(o.bg, '#ffe27a', p < 0.6 ? 1 : 1 - (p - 0.6) * 2), bold: true, glow: undefined, accent: true, plain: true };
+      }
+      continue;
+    }
     const jitter = hash(f.x, f.y, 88);
     const x = f.x + (f.kind === 'dust' ? (jitter < 0.5 ? -1 : 1) : 0);
     const y = f.y - (p > 0.45 ? 1 : 0);
-    if (x < v.x || x >= v.x + v.w || y < v.y || y >= v.y + v.h || x >= W || y >= H) continue;
+    if (!inView(x, y)) continue;
     const o = out[y][x];
     o.ch = glyph[f.kind] || '·';
     o.fg = mix(o.bg, colour[f.kind] || '#ffffff', 0.55 + (1 - p) * 0.4);
@@ -817,6 +873,19 @@ function drawFx(
     o.glowR = 5;
     o.accent = true;
   }
+}
+
+/**
+ * Screen-shake offset in CSS pixels for a heavy hit: a few pixels that die away within a
+ * quarter second (1-2 px for a crack, up to 4 for a break). None with reduced motion.
+ */
+export function shakeOffset(shake: RenderCtx['shake'], reducedMotion = false): [number, number] {
+  if (!shake || reducedMotion) return [0, 0];
+  const life = shake.strength > 1 ? 0.25 : 0.12;
+  if (shake.age >= life) return [0, 0];
+  const amp = (shake.strength > 1 ? 4 : 2) * (1 - shake.age / life);
+  const k = Math.floor(shake.age * 60);
+  return [Math.round(Math.sin(k * 2.3) * amp), Math.round(Math.cos(k * 1.7) * amp * 0.5)];
 }
 
 /**
@@ -1203,7 +1272,7 @@ export function computeFrame(
   // ---- reflections in calm water (after lighting, so lit windows reflect too)
   if (outdoor && ctx.weather === 'Sunny') reflections(out, tags, v, t, W, H);
   shoreFoam(out, tags, v, W, H, motion ? t : 0);
-  if (ctx.fx?.length) drawFx(out, ctx.fx, v, W, H);
+  if (ctx.fx?.length) drawFx(out, ctx.fx, v, W, H, motion);
   if (!ctx.indoor) worldMargin(out, tags, buf, v, ctx.divX, ctx.divY, boxes);
 
   const tod = toneFor(ctx.minutes, ctx.weather, !!ctx.indoor, ctx.mapName);

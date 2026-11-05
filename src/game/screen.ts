@@ -33,8 +33,13 @@ export type CellTag = {
   ent?: string;
 };
 
-export type RenderFx = {
-  kind: 'dust' | 'sparkle' | 'splash' | 'coin';
+export type FxKind = 'dust' | 'sparkle' | 'splash' | 'coin' | 'swing' | 'flash' | 'debris' | 'text';
+
+/** Optional detail for an effect: swing direction, tool tier colour, floating text, debris material. */
+export type FxExtra = { dir?: [number, number]; tier?: number; text?: string; stuff?: 'stone' | 'wood' | 'plant'; delay?: number; seed?: number };
+
+export type RenderFx = FxExtra & {
+  kind: FxKind;
   x: number;
   y: number;
   age: number;
@@ -68,6 +73,8 @@ export type RenderCtx = {
   icons: HudIcon[];
   /** Transient action-feedback glyphs, in screen cells. */
   fx?: RenderFx[];
+  /** A heavy hit shakes the view: seconds since the hit and its strength (1 light, 2 heavy). */
+  shake?: { age: number; strength: number };
 };
 
 export class Screen {
