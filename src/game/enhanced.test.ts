@@ -849,6 +849,152 @@ describe('computeFrame', () => {
     assert.equal(trees(3).filter((o) => o.detail).length, 0, 'bare in winter');
   });
 
+  type Row = ReturnType<typeof computeFrame>[number];
+  const avgLum = (row: Row, of: 'fg' | 'bg') => row.reduce((a, o) => a + lum(o[of]), 0) / row.length;
+
+  test('Skyline Ridge cliffs are rock faces lit from above, snow-capped in winter', () => {
+    const band = (over: Partial<RenderCtx>) => {
+      const s = scene({ mapName: 'ridge', ...over });
+      for (let x = 0; x < 50; x++) for (const y of [8, 9]) { s.put(x, y, '^', '03', '00'); s.tag(x, y, { t: 'cliff', wx: x, wy: y }); }
+      const out = computeFrame(s, 0);
+      return { brow: out[8].slice(0, 50), base: out[9].slice(0, 50) };
+    };
+    const spring = band({});
+    assert.ok(spring.brow.every((o) => o.ch === '▀'), 'a lit brow along the top');
+    assert.ok(avgLum(spring.brow, 'fg') > avgLum(spring.base, 'fg') + 30, 'the brow is brighter than the face');
+    assert.ok(avgLum(spring.brow, 'bg') > avgLum(spring.base, 'bg'), 'the face darkens toward its base');
+    assert.ok(new Set(spring.base.map((o) => o.ch).filter((c) => '─═≡'.includes(c))).size >= 2, 'bedded strata');
+    const dither = spring.base.filter((o) => '░▒'.includes(o.ch)).length;
+    assert.ok(dither > 3 && dither < 25, `a dithered base (${dither})`);
+    assert.ok(!spring.base.some((o) => lum(o.fg) > 200), 'no snow on the ledges in spring');
+    const winter = band({ season: 3 });
+    assert.ok(avgLum(winter.brow, 'fg') > avgLum(spring.brow, 'fg') + 40, 'snow caps the brow in winter');
+    assert.ok(winter.base.some((o) => '─═≡'.includes(o.ch) && lum(o.fg) > 200), 'and lies on some ledges');
+    // other maps keep their plain cliff rows
+    const s = scene({ mapName: 'mountain' });
+    for (let x = 0; x < 50; x++) for (const y of [8, 9]) s.tag(x, y, { t: 'cliff', wx: x, wy: y });
+    const plain = computeFrame(s, 0);
+    assert.ok(plain[8].slice(0, 50).every((o) => o.ch === '▔'));
+    assert.ok(plain[9].slice(0, 50).every((o) => '▲▴'.includes(o.ch)));
+  });
+
+  test('Willow Bend ripples ride the current downstream, quickest mid-channel', () => {
+    const channel = (mapName: string, over: Partial<RenderCtx> = {}) => {
+      const s = scene({ mapName, ...over });
+      for (let y = 1; y < 20; y++) for (let x = 20; x < 25; x++) { s.put(x, y, '~', '0D', '00'); s.tag(x, y, { t: 'water', wx: x, wy: y }); }
+      return s;
+    };
+    // how many rows a lane's ripples moved south between t = 0 and t = 3: the best-matching shift
+    const drift = (s: Screen, x: number) => {
+      const lane = (t: number) => computeFrame(s, t).slice(1, 20).map((r) => ('≈∼'.includes(r[x].ch) ? r[x].ch : ' '));
+      const [a, b] = [lane(0), lane(3)];
+      let best = { k: 0, score: -1 };
+      for (let k = -6; k <= 8; k++) {
+        let same = 0;
+        let n = 0;
+        for (let y = Math.max(0, k); y < 19 && y - k < 19; y++, n++) if (b[y] === a[y - k]) same++;
+        if (same / n > best.score) best = { k, score: same / n };
+      }
+      return best;
+    };
+    const river = channel('river');
+    const mid = drift(river, 22);
+    const bank = drift(river, 20);
+    assert.ok(mid.score > 0.85 && bank.score > 0.85, 'each lane carries its ripples along intact');
+    assert.ok(bank.k > 0, `downstream (${bank.k})`);
+    assert.ok(mid.k > bank.k, `faster mid-channel (${mid.k} vs ${bank.k})`);
+    const streaks = (s: Screen) => computeFrame(s, 0).flat().filter((o) => '╎╲╱'.includes(o.ch)).length;
+    assert.ok(streaks(river) > 0, 'flow streaks trace the current');
+    // a farm pond of the same shape only drifts sideways, and reduced motion holds the river still
+    const pond = drift(channel('farm'), 22);
+    assert.ok(pond.k <= 0 || pond.score < mid.score - 0.1, `ponds don't flow (${pond.k}, ${pond.score})`);
+    assert.equal(streaks(channel('farm')), 0);
+    assert.deepEqual(drift(channel('river', { reducedMotion: true }), 22), { k: 0, score: 1 });
+  });
+
+  test('Cedar Hollow lies in gloom under the canopy, broken by shafts of sun on fine days', () => {
+    // a dense grove on the left, an open clearing on the right
+    const grove = (mapName: string, weather: string) => {
+      const s = scene({ mapName, weather, minutes: 15 * 60 });
+      for (let y = 1; y < 20; y++) for (let x = 0; x < 30; x++) if ((x + 2 * y) % 3) { s.put(x, y, 'T', '0B', '00', true); s.tag(x, y, { t: 'tree', wx: x, wy: y }); }
+      return computeFrame(s, 0);
+    };
+    const under: [number, number][] = [];
+    for (let y = 3; y < 18; y++) for (let x = 3; x < 27; x++) if ((x + 2 * y) % 3 === 0) under.push([x, y]);
+    const compare = (weather: string) => {
+      const [woods, farm] = [grove('woods', weather), grove('farm', weather)];
+      const darker = under.filter(([x, y]) => lum(woods[y][x].bg) < lum(farm[y][x].bg)).length;
+      const lit = under.filter(([x, y]) => lum(woods[y][x].bg) > lum(farm[y][x].bg)).length;
+      const clearing = woods.slice(2, 18).every((r, y) => r.slice(36, 48).every((o, x) => o.bg === farm[y + 2][x + 36].bg));
+      return { darker, lit, clearing };
+    };
+    const sun = compare('Sunny');
+    assert.ok(sun.darker > under.length / 2, `ground under the canopy is gloomy (${sun.darker}/${under.length})`);
+    assert.ok(sun.lit > 0 && sun.lit < under.length / 3, `with a few shafts of sun (${sun.lit})`);
+    assert.ok(sun.clearing, 'the open clearing is untouched');
+    const rain = compare('Rain');
+    assert.ok(rain.darker > under.length / 2, 'still gloomy in the rain');
+    assert.equal(rain.lit, 0, 'but no shafts of sun');
+  });
+
+  test('the lighthouse sweeps a beam over the sea at night and in storms, held still with reduced motion', () => {
+    const coast = (over: Partial<RenderCtx>) => {
+      const s = scene({ mapName: 'point', minutes: 23 * 60, ...over });
+      for (let y = 1; y < 20; y++) {
+        for (let x = 0; x < 50; x++) {
+          const sea = y >= 9;
+          s.put(x, y, sea ? '~' : '.', sea ? '0D' : '09', '00');
+          s.tag(x, y, { t: sea ? 'water' : 'sand', wx: x, wy: y });
+        }
+      }
+      for (let y = 3; y < 7; y++) for (let x = 10; x < 13; x++) s.tag(x, y, { t: 'wall', wx: x, wy: y });
+      s.put(11, 5, '=', '0C', '01');
+      s.tag(11, 5, { t: 'wall', wx: 11, wy: 5, k: 'deco', dch: '=', dfg: '0C' });
+      return s;
+    };
+    // the beam starts out pointing south-east, out to sea, through (27, 13)
+    const probe = (over: Partial<RenderCtx>, t: number) => lum(computeFrame(coast(over), t)[13][27].bg);
+    const night = probe({}, 0);
+    assert.ok(night > probe({ mapName: 'beach' }, 0) + 20, 'the beam brightens the sea');
+    assert.ok(probe({}, 5) < night - 20, 'half a turn later it points inland');
+    const window = computeFrame(coast({ minutes: 60 }), 0)[5][11];
+    assert.ok(window.glow && window.accent, 'the lantern stays lit after the households sleep');
+    const still = probe({ reducedMotion: true }, 0);
+    assert.equal(probe({ reducedMotion: true }, 5), still, 'with reduced motion the beam holds still');
+    assert.ok(still > probe({ mapName: 'beach', reducedMotion: true }, 0) + 20);
+    const storm = { minutes: 12 * 60, weather: 'Typhoon', reducedMotion: true };
+    assert.ok(probe(storm, 0) > probe({ ...storm, mapName: 'beach' }, 0) + 15, 'storms light it by day');
+    assert.equal(probe({ minutes: 12 * 60 }, 0), probe({ minutes: 12 * 60, mapName: 'beach' }, 0), 'but not on a fair day');
+    const beam = computeFrame(coast({}), 0).flat().filter((o) => o.accent && grey(o.fg) !== o.fg && lum(o.bg) > 40);
+    assert.equal(beam.length, 0, 'the beam is light, not a new colour');
+  });
+
+  test('tide pools on Lighthouse Point glint now and then on fine days', () => {
+    const pools = (over: Partial<RenderCtx>) => {
+      const s = scene({ mapName: 'point', ...over });
+      for (let y = 1; y < 20; y++) for (let x = 0; x < 50; x++) s.tag(x, y, { t: 'sand', wx: x, wy: y });
+      const at: [number, number][] = [];
+      for (let y = 3; y < 18; y += 4) {
+        for (let x = 3; x < 48; x += 5) {
+          s.put(x, y, '~', '0B', '00');
+          s.tag(x, y, { t: 'pond', wx: x, wy: y });
+          at.push([x, y]);
+        }
+      }
+      return (t: number) => {
+        const out = computeFrame(s, t);
+        return at.filter(([x, y]) => out[y][x].ch === '✦').map(([x, y]) => `${x},${y}`).join(' ');
+      };
+    };
+    const frames = (over: Partial<RenderCtx>) => [0, 0.7, 1.4, 2.1, 2.8, 3.5, 4.2, 4.9].map(pools(over));
+    const sunny = frames({});
+    const count = (f: string[]) => f.reduce((n, s) => n + (s ? s.split(' ').length : 0), 0);
+    assert.ok(sunny.every((s) => !s || s.split(' ').length < 12), 'only a few at a time');
+    assert.ok(new Set(sunny).size > 3, 'the glints come and go');
+    assert.ok(count(sunny) > 3 * count(frames({ mapName: 'farm' })), `more than a plain pond's sparkle (${count(sunny)})`);
+    assert.equal(count(frames({ weather: 'Rain' })), 0, 'none under rain clouds');
+  });
+
   test('hash is deterministic and in range', () => {
     for (let i = 0; i < 50; i++) {
       const v = hash(i, i * 3, 2);

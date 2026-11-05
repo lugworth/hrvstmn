@@ -404,6 +404,10 @@ const WALKABLE_OPEN = new Set(['grass', 'field', 'path', 'sand', 'flower', 'brid
 const WATERY = new Set(['water', 'fountain', 'spring', 'pond']);
 /** Maps whose water is open sea: surf rolls in and nothing grows on it. */
 const SEA_MAPS = new Set(['beach', 'point']);
+/** The lighthouse beam: seconds per turn, cone half-width (as a slope) and reach in rows. */
+const BEAM_PERIOD = 10;
+const BEAM_SPREAD = 0.16;
+const BEAM_R = 24;
 /** Water colour by distance to the shore: lighter shallows (> 0), darker deeps (< 0). */
 const WATER_DEPTH = [0, 0.18, 0.02, -0.3, -0.55];
 /**
@@ -433,6 +437,8 @@ type Frame = {
   wetness: number;
   /** The open sea, where nothing grows on the water. */
   sea: boolean;
+  /** Which map is drawn (regions dress some tiles their own way). */
+  map: string;
 };
 
 const roofShades = (fgCode: string) => {
@@ -509,6 +515,78 @@ function puddle(F: Frame, wx: number, wy: number, ground: string, strength = 1):
   const bg = mix(ground, '#1a3456', 0.25 + 0.45 * Math.min(1, strength));
   const ripple = hash(wx * 2, wy, 71 + (Math.floor(F.t * 2) % 50)) < 0.3 * Math.min(1, strength);
   return { ch: ripple ? '◦' : ' ', fg: '#8ab8e8', bg, bold: false };
+}
+
+/**
+ * Skyline Ridge's cliff bands as rock faces lit from above: a bright brow along the top,
+ * bedded strata across a face that darkens downward, and a base that dithers into shadow.
+ * In winter snow caps the brow and lies on some of the ledges.
+ */
+function rockFace(F: Frame, x: number, y: number, wx: number, wy: number): OutCell {
+  const cliff = (dy: number) => F.tags[y + dy]?.[x]?.t === 'cliff';
+  let up = 0;
+  while (up < 6 && cliff(-up - 1)) up++;
+  let down = 0;
+  while (down < 6 && cliff(down + 1)) down++;
+  const snow = !!F.theme.snow;
+  const depth = up + down ? up / (up + down) : 1; // 0 at the brow, 1 at the base
+  const face = mix('#5e5548', '#26211c', depth);
+  if (!up) {
+    const cap = snow && hash(wx * 2, wy, 160) < 0.85;
+    const weathered = valueNoise(wx / 4, wy, 164) * 0.45; // the lit brow is not one even line
+    const rock = mix('#aca08a', '#6a6052', weathered);
+    // winter: a thin line of snow lying on the lit rock, not a solid white band
+    if (cap) return { ch: '▔', fg: '#eef2f8', bg: mix(rock, '#26211c', 0.25), bold: false };
+    return { ch: '▀', fg: rock, bg: down ? face : '#26211c', bold: false };
+  }
+  // bedding planes run along the band, each stretch with its own kind of layer
+  const bed = valueNoise(wx / 6, wy, 161);
+  let ch = bed < 0.36 ? '─' : bed < 0.7 ? '═' : '≡';
+  let fg = mix(face, '#b0a48e', 0.6 - depth * 0.25);
+  if (!down) {
+    // the foot of the face falls away into shadow through a blue-noise dither
+    const bn = blueNoise(wx, wy);
+    if (bn < 0.14) ch = '░';
+    else if (bn < 0.27) ch = '▒';
+  }
+  if (hash(wx, wy, 162) < 0.06) {
+    ch = '│'; // a joint in the rock
+    fg = mix(face, '#000000', 0.5);
+  } else if (snow && hash(wx * 2, wy, 163) < 0.3) fg = '#e8eef8'; // snow on a ledge
+  return { ch, fg, bg: face, bold: false };
+}
+
+/**
+ * The current at a Willow Bend river cell. The river runs south; `lane` is the offset from
+ * mid-channel, `u` the same as a share of the half-width (-1..1), `dc` how many columns the
+ * channel shifts per row downstream, and `speed` rows per second: quickest mid-channel and
+ * where the channel narrows, slowest along the banks.
+ */
+function riverFlow(F: Frame, x: number, y: number) {
+  const span = (yy: number, xx: number): [number, number] | null => {
+    const row = F.tags[yy];
+    if (!row) return null;
+    for (const d of [0, -1, 1, -2, 2, -3, 3]) {
+      if (row[xx + d]?.t !== 'water') continue;
+      let a = xx + d;
+      let b = a;
+      while (row[a - 1]?.t === 'water' && b - a < 16) a--;
+      while (row[b + 1]?.t === 'water' && b - a < 16) b++;
+      return [a, b];
+    }
+    return null;
+  };
+  const [a, b] = span(y, x) ?? [x, x];
+  const c = (a + b) / 2;
+  const w = b - a + 1;
+  const up = span(y - 1, Math.round(c));
+  const dn = span(y + 1, Math.round(c));
+  const cu = up ? (up[0] + up[1]) / 2 : c;
+  const cd = dn ? (dn[0] + dn[1]) / 2 : c;
+  const dc = up && dn ? (cd - cu) / 2 : cd - cu;
+  const u = w > 1 ? (x - c) / (w / 2) : 0;
+  const speed = 2 * (1 - 0.8 * u * u) * Math.max(0.7, Math.min(1.4, 5 / w));
+  return { lane: x - c, u, dc, speed };
 }
 
 /** Style one tagged map cell (terrain, objects, crops, structures). */
@@ -637,6 +715,7 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
     case 'ice':
       return { ch: hs < 0.3 ? '╱' : ' ', fg: '#d8f0ff', bg: mix('#5a8aa8', '#6a9ab8', hash(wx, wy, 7)), bold: false };
     case 'cliff': {
+      if (F.map === 'ridge') return rockFace(F, x, y, wx, wy);
       const rock = th.snow ? '#c8d0dc' : '#8a8070';
       const above = F.tags[y - 1]?.[x];
       const exposed = !above || above.t !== 'cliff';
@@ -749,15 +828,32 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (tint) bg = mix(bg, tint, 0.6);
       const dk = WATER_DEPTH[depth];
       bg = dk > 0 ? mix(bg, '#3a6ab0', dk) : mix(bg, '#000000', -dk);
+      // Willow Bend's river runs south, so its surface moves with the current
+      const flow = F.map === 'river' && tag.t === 'water' ? riverFlow(F, x, y) : null;
       // the surface colour wanders a little around its depth colour, never drifting away from it
-      const shimmer = valueNoise(wx / 6 + T * 0.25, wy / 3 - T * 0.1, 22) - 0.5;
+      const shimmer = (flow ? valueNoise(wx / 6, (wy - T * 1.2) / 3, 22) : valueNoise(wx / 6 + T * 0.25, wy / 3 - T * 0.1, 22)) - 0.5;
       bg = shimmer > 0 ? mix(bg, '#5a8ad0', shimmer * 0.18) : mix(bg, '#000000', -shimmer * 0.18);
       if (g === '-') return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
       const glint = hash(wx * 2, wy, 80 + (Math.floor(T * 3) % 97));
       if (!F.indoor && F.weather === 'Sunny' && F.amb > 0.85 && glint < 0.014) return { ch: '✦', fg: '#ffffff', bg, bold: true, glow: '#cfe8ff', glowR: 5 };
+      // Lighthouse Point's tide pools catch the sun now and then
+      if (F.map === 'point' && tag.t === 'pond' && F.weather === 'Sunny' && F.amb > 0.6 && hash(wx, wy, 170 + (Math.floor(F.t * 1.5) % 53)) < 0.14) {
+        return { ch: '✦', fg: '#ffffff', bg, bold: true, glow: '#cfe8ff', glowR: 5 };
+      }
       if (!F.indoor && F.weather === 'Sunny' && F.amb < 0.5 && hash(wx * 2, wy, 85 + (Math.floor(T * 1.5) % 61)) < 0.012) return { ch: '·', fg: '#e8eeff', bg, bold: true };
       if (tag.t === 'spring' && hash(wx * 2, wy, 20 + (Math.floor(T * 1.2) % 64)) < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
-      if (F.sea) {
+      if (flow) {
+        // each lane of the current carries its ripples downstream at its own speed, a whole
+        // row at a time; thin streaks in the fast middle trace the line of the channel
+        const s = wy - Math.floor(F.t * flow.speed);
+        const r = valueNoise(flow.lane * 1.7, s / 1.6, 26);
+        if (Math.abs(flow.u) < 0.5 && valueNoise(flow.lane * 1.7 + 9.3, s / 2.6, 27) > 0.74) {
+          return { ch: flow.dc > 0.5 ? '╲' : flow.dc < -0.5 ? '╱' : '╎', fg: mix(fgc, '#ffffff', 0.2), bg, bold: false };
+        }
+        if (F.weather === 'Typhoon' && depth >= 3 && r > 0.66) return { ch: '≋', fg: '#eef2ff', bg, bold: true };
+        return { ch: r > 0.64 ? '≈' : r > 0.54 ? '∼' : ' ', fg: depth <= 1 ? mix(fgc, '#ffffff', 0.25) : fgc, bg, bold: false };
+      }
+      if (F.sea && tag.t === 'water') {
         // breakers: lines of surf roll in toward the beach, a row at a time
         let rows = 6;
         for (let d = 1; d < rows; d++) {
@@ -911,7 +1007,7 @@ export function computeFrame(
   const motion = !ctx?.reducedMotion;
   const skyNow = ctx ? skyFor(ctx) : null;
   // with reduced motion every tile animation (sway, ripples, twinkles) holds its first frame
-  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? '') };
+  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? ''), map: ctx?.mapName ?? '' };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -1048,10 +1144,15 @@ export function computeFrame(
   const sunHour = (((ctx.minutes / 60) % 24) + 24) % 24;
   const longShadow = sunHour < 8 || sunHour > 17;
   const sunWest = sunHour >= 12;
+  const sunny = sky.amb > 0.85 && ctx.weather === 'Sunny';
+  const woods = ctx.mapName === 'woods';
+  const shaftT = motion ? Math.floor(t * 2) / 2 : 0;
   for (let y = v.y; y < v.y + v.h && y < H; y++) {
     for (let x = v.x; x < v.x + v.w && x < W; x++) {
       const tag = tags[y][x];
       if (!tag || tag.t === 'ui' || !SHADOW_RECEIVERS.has(tag.t) || (tag.k || '').startsWith('obj:boulder')) continue;
+      const wx = tag.wx ?? x;
+      const wy = tag.wy ?? y;
       const up = y > 0 ? tags[y - 1][x] : null;
       const up2 = longShadow && y > 1 ? tags[y - 2][x] : null;
       const side1 = tags[y]?.[x + (sunWest ? -1 : 1)];
@@ -1064,13 +1165,33 @@ export function computeFrame(
       } else if (side2 && side2.t !== 'ui' && (side2.t === 'wall' || side2.t === 'door' || side2.t === 'tree')) {
         k = side2.t === 'tree' ? 0.07 : 0.09;
       }
-      if (k) {
+      // Cedar Hollow: ground hemmed in by trees lies in the canopy's gloom, except where a
+      // slanting shaft of sun breaks through on a fine day
+      let gloom = 0;
+      let shaft = 0;
+      if (woods) {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const row = tags[y + dy];
+          if (row) for (let dx = -2; dx <= 2; dx++) if ((dx || dy) && row[x + dx]?.t === 'tree') n++;
+        }
+        // blue noise dithers the gloom so it deepens evenly between the dark ramp steps
+        const g0 = Math.min(1, Math.max(0, (n - 2) / 7));
+        gloom = g0 ? Math.max(0, g0 * 0.55 + (blueNoise(wx, wy) - 0.5) * 0.18) : 0;
+        if (gloom && sunny) {
+          const beam = valueNoise((wx + (sunWest ? -1.6 : 1.6) * wy) / 3.2, wy / 9 + shaftT * 0.03, 155);
+          shaft = Math.min(1, Math.max(0, (beam - 0.68) / 0.1));
+        }
+      }
+      const kb = 1 - (1 - k) * (1 - gloom * (1 - shaft));
+      if (kb || shaft) {
         const o = out[y][x];
-        o.bg = mix(o.bg, '#000000', k);
-        o.fg = mix(o.fg, '#000000', k * 0.6);
+        o.bg = mix(o.bg, '#000000', kb);
+        // the gloom only darkens the ground under people and things, so they stay readable
+        o.fg = mix(o.fg, '#000000', (tag.ent || tag.k ? k : kb) * 0.6);
+        if (shaft) o.bg = mix(o.bg, '#fff4d8', shaft * 0.1);
         // sunlight dapples through the leaves onto the shaded ground
-        if (up && up.t === 'tree' && o.ch === ' ' && sky.amb > 0.85 && ctx.weather === 'Sunny'
-          && hash((tag.wx ?? x) * 2, tag.wy ?? y, 150) < 0.5) {
+        if (o.ch === ' ' && sunny && ((up?.t === 'tree' && hash(wx * 2, wy, 150) < 0.5) || (shaft > 0.4 && hash(wx * 2, wy, 151) < 0.4))) {
           o.ch = '˙';
           o.fg = mix(o.bg, '#fff4d8', 0.55);
         }
@@ -1162,6 +1283,9 @@ export function computeFrame(
   }
   const fireflies = motion && outdoorFx && sky.amb < 0.62 && (season === 0 || season === 1) && w === 'Sunny';
   const FIREFLY = '#fff27a';
+  // Lighthouse Point: at night and in storms the lighthouse window turns a beam over the sea
+  const beamOn = outdoor && ctx.mapName === 'point' && (sky.windowsLit || w === 'Typhoon' || w === 'Blizzard');
+  let beacon: [number, number] | null = null;
   if (sky.amb < 0.999 || flash) {
     const lights: Light[] = [];
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
@@ -1169,13 +1293,22 @@ export function computeFrame(
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
         if (tag.ent === 'player' && sky.lanterns) lights.push({ x, y, r: ctx.mapName === 'mine' ? 8 : 10, col: hexToRgb('#ffd890'), k: 1.15 });
-        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=' && windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) lights.push({ x, y, r: 3.4, col: hexToRgb('#ffb050'), k: 0.75 });
+        const pane = tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=';
+        if (pane && beamOn && !beacon) {
+          beacon = [x, y];
+          lights.push({ x, y, r: 6, col: hexToRgb('#fff0d0'), k: 1 });
+        } else if (sky.windowsLit && pane && windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) lights.push({ x, y, r: 3.4, col: hexToRgb('#ffb050'), k: 0.75 });
         if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x, y, r: 4, col: hexToRgb('#ffa040'), k: 0.8 });
         if (tag.t === 'fireplace') lights.push({ x, y, r: 5, col: hexToRgb('#ff8a40'), k: 0.8 });
         if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x, y: y + 1, r: 5, col: hexToRgb('#ff9900'), k: 0.85 });
       }
     }
     lightMap = new Float32Array(W * H);
+    // The beam turns once every BEAM_PERIOD seconds in small steps; with reduced motion it
+    // holds still, pointing out to sea. It brightens what it crosses rather than tinting it.
+    const beamA = Math.PI / 4 + (motion ? (Math.floor(t * 12) / 12 / BEAM_PERIOD) * Math.PI * 2 : 0);
+    const beamCos = Math.cos(beamA);
+    const beamSin = Math.sin(beamA);
     const tintRgb = hexToRgb(sky.tint);
     const vignette = flash ? 0 : Math.max(0, 0.8 - sky.amb) * 0.6;
     const shade = (col: string, lr: number, lg: number, lb: number, ls: number) => {
@@ -1209,7 +1342,7 @@ export function computeFrame(
           const d = Math.sqrt(dx * dx + dy * dy);
           if (d < L.r) {
             // flames flicker a little; each light has its own rhythm
-            const flick = 0.9 + 0.1 * Math.sin(Math.floor(t * 8) * 0.9 + L.x * 1.7 + L.y * 2.3);
+            const flick = 0.9 + 0.1 * Math.sin(Math.floor(F.t * 8) * 0.9 + L.x * 1.7 + L.y * 2.3);
             const k = (1 - d / L.r) ** 1.1 * L.k * flick;
             lr += L.col[0] * k;
             lg += L.col[1] * k;
@@ -1248,12 +1381,32 @@ export function computeFrame(
             o.fg = mix(o.fg, '#000000', k * 0.8);
           }
         }
-        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') {
-          if (windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) {
-            o.fg = '#ffd27a';
+        if (beacon) {
+          // a cone that widens away from the window, strongest on the water and the shore
+          const bx = (x - beacon[0]) * 0.5;
+          const by = y - beacon[1];
+          const along = bx * beamCos + by * beamSin;
+          const across = Math.abs(by * beamCos - bx * beamSin);
+          const half = along * BEAM_SPREAD + 0.6;
+          const surface = WATERY.has(tag.t) ? 1 : GROUND.has(tag.t) || tag.t === 'cliff' || tag.t === 'bridge' ? 0.55 : 0;
+          if (surface && along > 1 && along < BEAM_R && across < half) {
+            const kb = surface * (1 - across / half) ** 0.7 * (1 - along / BEAM_R) ** 0.6;
+            o.bg = mix(o.bg, '#e8e8e8', kb * 0.4);
+            o.fg = mix(o.fg, '#ffffff', kb * 0.55);
+            if (tag.t === 'pond' && kb > 0.3) {
+              o.ch = '✦'; // a tide pool flashes as the beam passes
+              o.fg = '#ffffff';
+              o.bold = true;
+            }
+          }
+        }
+        const beaconHere = !!beacon && beacon[0] === x && beacon[1] === y;
+        if ((sky.windowsLit || beaconHere) && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') {
+          if (beaconHere || windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) {
+            o.fg = beaconHere ? '#fff2c8' : '#ffd27a';
             o.bg = '#5a3410';
             o.glow = '#ffb040';
-            o.glowR = 10;
+            o.glowR = beaconHere ? 14 : 10;
             o.accent = true;
           } else {
             // that household has gone to bed: dark glass
