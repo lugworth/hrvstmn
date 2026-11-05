@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 105/105 tests pass, typecheck clean, production build passes.
+- **State:** working. 107/107 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** offscreen static-world cache/layered HUD, greenhouse, optional animated doors/windows and CRT mode. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 105 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 107 passed, 5 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -77,7 +77,7 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 105 tests: renderer, engine, rules and integration coverage
+src/game/*.test.ts             node:test — 107 tests: renderer, engine, rules and integration coverage
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -136,6 +136,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #42: shape-matched terrain edges (`edgeGlyph()`: 6 staggered sampling circles, geometric glyph vectors, contrast curve, nearest match) and two-tone cells (`OutCell.detail`, drawn small top-right; used for blossom/fruit on trees).
 - #41: four new original outdoor regions (`woods` Cedar Hollow, `ridge` Skyline Ridge, `river` Willow Bend, `point` Lighthouse Point) built in `map.ts` and joined by `link_regions()`; `OUTDOOR_MAPS`/`FORAGE_TARGET` in engine; daily branches in the woods; sea surf/no lilies via `SEA_MAPS`.
 - #40: game feel: tier-coloured swing slashes, hit flash + hit-pause, debris bursts, floating reward text, CSS-transform screen shake (`fx_hit`/`fx_break`, `shakeOffset`).
 - #39: blue-noise dithering (`blueNoise()`, 32x32 void-and-cluster tile) for light falloff, vignette and margins; time-of-day duotone in `monochrome()`; foam/kerb lines at least 2 device px.
