@@ -7,6 +7,11 @@ import {
   build_town,
   build_mountain,
   build_beach,
+  build_woods,
+  build_ridge,
+  build_river,
+  build_point,
+  link_regions,
   build_house,
   build_interior,
   build_house_upgraded,
@@ -142,6 +147,11 @@ export const MASTERY_REWARD_ITEMS: Record<MasteryDiscipline, string> = {
   mining: 'Copper',
   ranching: 'Chicken Feed',
 };
+
+/** Every outdoor map, for weather and wetness bookkeeping. */
+const OUTDOOR_MAPS = ['farm', 'town', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point'];
+/** Forage spots spawned per map each day (winter thins the inland ones). */
+const FORAGE_TARGET: Record<string, number> = { mountain: 11, beach: 4, woods: 10, ridge: 8, river: 6, point: 4 };
 
 export class Game {
   [key: string]: any;
@@ -307,8 +317,13 @@ export class Game {
       town: build_town(),
       mountain: build_mountain(),
       beach: build_beach(),
+      woods: build_woods(),
+      ridge: build_ridge(),
+      river: build_river(),
+      point: build_point(),
       house: build_house(),
     };
+    link_regions(this.maps);
     this.last = Date.now() / 1000;
     this.acc = 0.0;
     this.npc_acc = 0.0;
@@ -413,7 +428,7 @@ export class Game {
     this.npc_pos = {};
     this.fx = [];
     this.shake_fx = null;
-    this.wetness = { farm: 0, town: 0, mountain: 0, beach: 0 };
+    this.wetness = Object.fromEntries(OUTDOOR_MAPS.map((m) => [m, 0]));
     this.mine_type = 'spring';
     this.mine_floor = 0;
     this.max_spring_floor = 0;
@@ -950,6 +965,10 @@ export class Game {
       ["Mother's Hill Hot Spring", 'mountain', 8, 14],
       ['Goddess Pond & Spring Mine', 'mountain', 50, 6],
       ['Lake Mine Island (Mother\'s Hill Lake)', 'mountain', 14, 6],
+      ['Cedar Hollow Clearing', 'woods', 44, 19],
+      ['Skyline Ridge Lookout', 'ridge', 32, 3],
+      ['Willow Bend Bridge', 'river', 30, 12],
+      ['Lighthouse Point', 'point', 40, 12],
     ];
     const sel = await this.menu(
       'Teleport Stone — Warp Where?',
@@ -4410,7 +4429,7 @@ export class Game {
     }
 
     this.weather = this.tomorrow;
-    for (const map of ['farm', 'town', 'mountain', 'beach']) {
+    for (const map of OUTDOOR_MAPS) {
       const wet = this.weather === 'Rain' || this.weather === 'Typhoon' ? 1 : (this.wetness[map] || 0) * 0.55;
       this.wetness[map] = wet < 0.06 ? 0 : wet;
     }
@@ -4541,12 +4560,12 @@ export class Game {
   spawn_forage(): void {
     const items = FORAGE[this.season_name] || ['Blue Grass'];
     const rng = py_rng();
-    for (const mapKey of ['mountain', 'beach'] as const) {
+    for (const mapKey of ['mountain', 'beach', 'woods', 'ridge', 'river', 'point']) {
       const m = this.maps[mapKey];
       if (!m) continue;
       const fr: Record<string, string> = {};
       let tries = 0;
-      const target = mapKey === 'beach' ? 4 : this.season === 3 ? 6 : 11;
+      const target = (FORAGE_TARGET[mapKey] ?? 6) * (this.season === 3 && mapKey !== 'beach' && mapKey !== 'point' ? 0.55 : 1);
       while (Object.keys(fr).length < target && tries < 400) {
         tries += 1;
         const [x, y] = [rng.randint(2, m.w - 3), rng.randint(2, m.h - 3)];
@@ -4556,6 +4575,18 @@ export class Game {
         }
       }
       this.forage[mapKey] = fr;
+    }
+    // fallen branches gather in Cedar Hollow overnight (a renewable lumber source)
+    const woods = this.maps['woods'];
+    if (woods) {
+      const objs = (this.objs['woods'] ||= {});
+      let tries = 0;
+      while (Object.keys(objs).length < 9 && tries < 300) {
+        tries += 1;
+        const [x, y] = [rng.randint(2, woods.w - 3), rng.randint(2, woods.h - 3)];
+        const k = pkey(x, y);
+        if (woods.tile(x, y) === 'grass' && !woods.near(x, y, ['path', 'bridge'], 0) && !(k in (this.forage['woods'] || {}))) objs[k] = 'branch';
+      }
     }
   }
 

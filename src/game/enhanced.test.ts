@@ -364,6 +364,7 @@ describe('computeFrame', () => {
     assert.ok(pads({ season: 0 }).length > 3, 'spring too');
     assert.ok(reeds({ season: 1 }).length > 0, 'reeds along the bank');
     assert.equal(pads({ season: 1, mapName: 'beach' }).length, 0, 'no pads on the sea');
+    assert.equal(pads({ season: 1, mapName: 'point' }).length, 0, 'nor off Lighthouse Point');
     assert.equal(reeds({ season: 1, mapName: 'beach' }).length, 0, 'no reeds on the beach');
     assert.equal(pads({ season: 3 }).length, 0, 'bare in winter');
   });

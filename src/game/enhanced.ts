@@ -398,6 +398,8 @@ type Light = { x: number; y: number; r: number; col: RGB; k: number };
 
 const WALKABLE_OPEN = new Set(['grass', 'field', 'path', 'sand', 'flower', 'bridge']);
 const WATERY = new Set(['water', 'fountain', 'spring', 'pond']);
+/** Maps whose water is open sea: surf rolls in and nothing grows on it. */
+const SEA_MAPS = new Set(['beach', 'point']);
 /** Water colour by distance to the shore: lighter shallows (> 0), darker deeps (< 0). */
 const WATER_DEPTH = [0, 0.18, 0.02, -0.3, -0.55];
 /**
@@ -904,7 +906,7 @@ export function computeFrame(
   const motion = !ctx?.reducedMotion;
   const skyNow = ctx ? skyFor(ctx) : null;
   // with reduced motion every tile animation (sway, ripples, twinkles) holds its first frame
-  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: ctx?.mapName === 'beach' };
+  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? '') };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -1096,7 +1098,7 @@ export function computeFrame(
     critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
     wildlife(out, tags, v, t, season, ctx.weather, ctx.mapName, sky.amb);
   }
-  if (outdoor) waterLife(out, tags, v, season, ctx.mapName === 'beach');
+  if (outdoor) waterLife(out, tags, v, season, SEA_MAPS.has(ctx.mapName));
   if (outdoor && (ctx.weather === 'Rain' || ctx.weather === 'Typhoon')) {
     // everything looks wet and a touch darker in the rain
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
@@ -1634,18 +1636,18 @@ function wildlife(
   amb: number
 ) {
   if (weather !== 'Sunny' && weather !== 'Cloudy' && weather !== 'Snow') return;
-  if (!['beach', 'farm', 'mountain', 'town'].includes(mapName) || amb < 0.4) return;
-  const count = mapName === 'beach' ? 2 : 1;
+  if (!['beach', 'farm', 'mountain', 'town', 'woods', 'ridge', 'river', 'point'].includes(mapName) || amb < 0.4) return;
+  const count = SEA_MAPS.has(mapName) || mapName === 'woods' ? 2 : 1;
   for (let i = 0; i < count; i++) {
     const x = v.x + Math.floor(hash(i, mapName.length, 201) * v.w);
     const y = v.y + Math.floor(hash(i, mapName.length, 202) * v.h);
     const tg = tags[y]?.[x];
     if (!tg || tg.t === 'ui' || tg.ent) continue;
     const o = out[y][x];
-    if (mapName === 'beach' && tg.t === 'sand') {
+    if (SEA_MAPS.has(mapName) && tg.t === 'sand') {
       const flip = Math.floor(t * 4 + i) % 2 === 0;
       out[y][x] = { ...o, ch: flip ? 'v' : 'w', fg: '#e08040', bold: true, accent: true, plain: true, seed: undefined };
-    } else if ((mapName === 'farm' || mapName === 'mountain') && tg.t === 'grass') {
+    } else if (['farm', 'mountain', 'woods', 'ridge', 'river'].includes(mapName) && tg.t === 'grass') {
       const hop = Math.floor(t * 1.5 + i) % 3 === 0;
       out[y][x] = { ...o, ch: hop ? 'ᵣ' : 'r', fg: season === 3 ? '#e8f4ff' : '#d8c8a8', bold: true, accent: true, plain: true, seed: undefined };
     } else if (mapName === 'town' && (tg.t === 'path' || tg.t === 'grass')) {

@@ -203,6 +203,158 @@ export function build_beach(): GameMap {
   return m;
 }
 
+// ---------------------------------------------------------------- outer regions
+// Four original regions spread the valley out around the first four maps:
+//   Skyline Ridge (north of Mother's Hill), Willow Bend (east of town),
+//   Cedar Hollow (south of the farm) and Lighthouse Point (east of the beach).
+
+/** Deterministic 0..1 noise for laying out a region (same world every game). */
+function layoutNoise(x: number, y: number, s: number): number {
+  let h = (x * 374761393 + y * 668265263 + s * 2147483647) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Link two maps through a 3-wide opening: stepping onto `a`'s edge cells lands just inside `b`, and back. */
+function link(a: GameMap, b: GameMap, side: 'n' | 's' | 'e' | 'w', at: number, bAt: number): void {
+  for (let i = 0; i < 3; i++) {
+    const [ax, ay, bx, by] =
+      side === 's' ? [at + i, a.h - 1, bAt + i, 0] :
+      side === 'n' ? [at + i, 0, bAt + i, b.h - 1] :
+      side === 'e' ? [a.w - 1, at + i, 0, bAt + i] :
+      [0, at + i, b.w - 1, bAt + i];
+    a.set(ax, ay, 'path');
+    b.set(bx, by, 'path');
+    const inA: [number, number] = side === 's' ? [0, -1] : side === 'n' ? [0, 1] : side === 'e' ? [-1, 0] : [1, 0];
+    a.set(ax + inA[0], ay + inA[1], 'path');
+    b.set(bx - inA[0], by - inA[1], 'path');
+    a.warps[pkey(ax, ay)] = [b.name, bx - inA[0], by - inA[1], [-inA[0], -inA[1]]];
+    b.warps[pkey(bx, by)] = [a.name, ax + inA[0], ay + inA[1], inA];
+  }
+}
+
+/** Cedar Hollow: dense woods south of the farm, a creek with a footbridge and a mossy clearing. */
+export function build_woods(): GameMap {
+  const m = new GameMap('woods', 'Cedar Hollow', 64, 26, 'grass');
+  for (let y = 1; y < m.h - 1; y++) {
+    for (let x = 1; x < m.w - 1; x++) if (layoutNoise(x, y, 1) < 0.34) m.set(x, y, 'tree');
+  }
+  m.border('tree');
+  // the creek
+  for (let x = 1; x < m.w - 1; x++) {
+    const cy = 12 + Math.round(1.5 * Math.sin(x / 5));
+    m.rect(x, cy, 1, 2, 'water');
+  }
+  // a winding trail from the farm gate down to the clearing, on a footbridge over the creek
+  for (let y = 0; y < 20; y++) {
+    const cx = 31 + Math.round(5 * Math.sin(y / 3.2));
+    for (let x = cx - 1; x <= cx + 1; x++) m.set(x, y, m.tile(x, y) === 'water' ? 'bridge' : 'path');
+  }
+  m.rect(31, 19, 16, 2, 'path');
+  // the clearing, with a mossy pond and wildflowers
+  m.rect(40, 17, 18, 7, 'grass');
+  m.rect(48, 19, 5, 2, 'pond');
+  for (let y = 17; y < 24; y++) for (let x = 40; x < 58; x++) if (m.tile(x, y) === 'grass' && layoutNoise(x, y, 2) < 0.08) m.set(x, y, 'flower');
+  m.set(33, 2, 'sign');
+  m.signs[pkey(33, 2)] = 'Cedar Hollow — Fallen branches gather here every morning. Bring an Axe!';
+  return m;
+}
+
+/** Skyline Ridge: switchbacks through two cliff bands up to a lookout and a mountain tarn. */
+export function build_ridge(): GameMap {
+  const m = new GameMap('ridge', 'Skyline Ridge', 64, 26, 'grass');
+  for (let y = 1; y < m.h - 1; y++) {
+    for (let x = 1; x < m.w - 1; x++) {
+      const n = layoutNoise(x, y, 3);
+      if (n < 0.12) m.set(x, y, 'tree');
+      else if (n > 0.95) m.set(x, y, 'flower');
+    }
+  }
+  m.border('tree');
+  // two cliff bands, each with one gap for the trail
+  m.rect(1, 16, 62, 2, 'cliff');
+  m.rect(1, 8, 62, 2, 'cliff');
+  m.rect(49, 16, 3, 2, 'path');
+  m.rect(12, 8, 3, 2, 'path');
+  // the switchback trail
+  m.rect(20, 18, 3, 8, 'path');
+  m.rect(20, 18, 32, 2, 'path');
+  m.rect(49, 10, 3, 8, 'path');
+  m.rect(12, 10, 40, 2, 'path');
+  m.rect(12, 3, 3, 7, 'path');
+  m.rect(12, 3, 22, 2, 'path');
+  // the lookout and a cold tarn
+  m.rect(30, 2, 6, 4, 'path');
+  m.rect(44, 2, 8, 4, 'water');
+  m.set(33, 6, 'sign');
+  m.signs[pkey(33, 6)] = 'Skyline Ridge Lookout — On a clear day you can see the whole valley, from the farm to the sea.';
+  return m;
+}
+
+/** Willow Bend: a slow river east of town with a road bridge, a fishing dock and a meadow. */
+export function build_river(): GameMap {
+  const m = new GameMap('river', 'Willow Bend', 64, 26, 'grass');
+  for (let y = 1; y < m.h - 1; y++) {
+    for (let x = 1; x < m.w - 1; x++) {
+      const n = layoutNoise(x, y, 4);
+      if (n < 0.1) m.set(x, y, 'tree');
+      else if (n > 0.93) m.set(x, y, 'flower');
+    }
+  }
+  m.border('tree');
+  for (let y = 1; y < m.h - 1; y++) {
+    const cx = 36 + Math.round(5 * Math.sin(y / 4.5));
+    m.rect(cx, y, 5, 1, 'water');
+  }
+  // the road from town crosses on a bridge
+  for (let x = 0; x < m.w - 6; x++) {
+    for (let y = 11; y < 14; y++) m.set(x, y, m.tile(x, y) === 'water' ? 'bridge' : 'path');
+  }
+  // a fishing dock on the far bank
+  for (let y = 18; y < 22; y++) {
+    const cx = 36 + Math.round(5 * Math.sin(y / 4.5));
+    m.set(cx + 4, y, 'bridge');
+    m.set(cx + 5, y, 'path');
+  }
+  m.set(28, 10, 'sign');
+  m.signs[pkey(28, 10)] = 'Willow Bend — The river runs slow and deep here. Good fishing off the east-bank dock.';
+  return m;
+}
+
+/** Lighthouse Point: a rocky headland east of the beach with tide pools and the old lighthouse. */
+export function build_point(): GameMap {
+  const m = new GameMap('point', 'Lighthouse Point', 64, 24, 'sand');
+  m.border('tree');
+  m.rect(1, 17, 62, 6, 'water');
+  m.rect(54, 1, 9, 22, 'water');
+  // rocks along the shore, and tide pools among them
+  for (let y = 1; y < 23; y++) {
+    for (let x = 1; x < 63; x++) {
+      if (m.tile(x, y) !== 'sand') continue;
+      const coast = m.near(x, y, ['water'], 1);
+      const n = layoutNoise(x, y, 5);
+      if (coast && n < 0.3) m.set(x, y, 'cliff');
+      else if (n > 0.975) m.set(x, y, 'pond');
+    }
+  }
+  // the old lighthouse on the headland (closed up: no door)
+  m.rect(46, 3, 4, 2, 'roof');
+  m.rect(46, 5, 4, 6, 'wall');
+  m.deco[pkey(47, 7)] = ['=', '0C'];
+  m.rect(1, 11, 52, 3, 'path');
+  m.set(45, 12, 'sign');
+  m.signs[pkey(45, 12)] = 'Lighthouse Point — The keeper left years ago, but the light still turns on stormy nights.';
+  return m;
+}
+
+/** Open the edges between the first four maps and the outer regions. */
+export function link_regions(maps: Record<string, GameMap>): void {
+  link(maps.farm, maps.woods, 's', 30, 30);
+  link(maps.mountain, maps.ridge, 'n', 20, 20);
+  link(maps.town, maps.river, 'e', 11, 11);
+  link(maps.beach, maps.point, 'e', 11, 11);
+}
+
 export function build_house(): GameMap {
   return GameMap.fromPrebuilt('house');
 }
