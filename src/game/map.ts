@@ -255,6 +255,8 @@ export function build_woods(): GameMap {
   m.rect(40, 17, 18, 7, 'grass');
   m.rect(48, 19, 5, 2, 'pond');
   for (let y = 17; y < 24; y++) for (let x = 40; x < 58; x++) if (m.tile(x, y) === 'grass' && layoutNoise(x, y, 2) < 0.08) m.set(x, y, 'flower');
+  m.set(50, 18, 'sign');
+  m.signs[pkey(50, 18)] = 'Mossy Pond — Folk drop in a gift that grew wild (hold it, face the water, press X) for a lucky day of foraging.';
   m.set(33, 2, 'sign');
   m.signs[pkey(33, 2)] = 'Cedar Hollow — Fallen branches gather here every morning. Bring an Axe!';
   return m;
@@ -287,7 +289,7 @@ export function build_ridge(): GameMap {
   m.rect(30, 2, 6, 4, 'path');
   m.rect(44, 2, 8, 4, 'water');
   m.set(33, 6, 'sign');
-  m.signs[pkey(33, 6)] = 'Skyline Ridge Lookout — On a clear day you can see the whole valley, from the farm to the sea.';
+  m.signs[pkey(33, 6)] = 'ridge_lookout';
   return m;
 }
 
@@ -317,7 +319,7 @@ export function build_river(): GameMap {
     m.set(cx + 5, y, 'path');
   }
   m.set(28, 10, 'sign');
-  m.signs[pkey(28, 10)] = 'Willow Bend — The river runs slow and deep here. Good fishing off the east-bank dock.';
+  m.signs[pkey(28, 10)] = 'Willow Bend — The river runs slow and deep here. Good fishing off the east-bank dock, and the flat stones skip well (face the river, press X).';
   return m;
 }
 
@@ -343,7 +345,7 @@ export function build_point(): GameMap {
   m.deco[pkey(47, 7)] = ['=', '0C'];
   m.rect(1, 11, 52, 3, 'path');
   m.set(45, 12, 'sign');
-  m.signs[pkey(45, 12)] = 'Lighthouse Point — The keeper left years ago, but the light still turns on stormy nights.';
+  m.signs[pkey(45, 12)] = 'lighthouse_log';
   return m;
 }
 

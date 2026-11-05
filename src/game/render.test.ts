@@ -178,6 +178,19 @@ describe('engine + renderer', () => {
     }
   });
 
+  test('region forage draws with its own glyph and keeps its colour in Enhanced', () => {
+    const { s, g } = farm();
+    g.warp('point', 20, 12);
+    g.forage.point = { '22,12': 'Spiral Shell' };
+    g.render();
+    let cell: [number, number] | null = null;
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) if (s.tags[y][x]?.k === 'forage' && s.tags[y][x]?.wx === 22) cell = [x, y];
+    assert.ok(cell, 'the shell is tagged as forage');
+    assert.equal(s.buf[cell![1]][cell![0]][0], '@');
+    const out = computeFrame(s, 0);
+    assert.ok(out[cell![1]][cell![0]].accent, 'forage stays in colour on the black-and-white world');
+  });
+
   test('an upgraded tool tags its area-of-effect cells', () => {
     const { s, g } = farm();
     g.levels['Hoe'] = 1;
