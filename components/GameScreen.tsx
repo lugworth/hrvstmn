@@ -5,12 +5,19 @@ import { Screen, Cell } from '@/src/game/screen';
 import { Game } from '@/src/game/engine';
 import { PALETTE } from '@/src/game/constants';
 import { computeFrame, drawFrame, frameSignature, frameDirtyRect, type OutCell } from '@/src/game/enhanced';
+import { isCompact } from '@/src/game/compact';
+import {
+  chooseGrid,
+  dirToward,
+  dpadDirection,
+  firstStep,
+  lineHeight,
+  REPEAT_DELAY_MS,
+  REPEAT_MS,
+  type Dir,
+} from '@/src/game/viewport';
 
 const FONT = '"HRVSTMN Mono", "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace';
-const MIN_COLS = 80;
-const MIN_ROWS = 24;
-const MAX_COLS = 160;
-const MAX_ROWS = 50;
 
 const KEYMAP: Record<string, string> = {
   ArrowUp: 'up',
@@ -23,21 +30,88 @@ const KEYMAP: Record<string, string> = {
   ' ': 'space',
 };
 
+/** What the touch controls need to know about the engine, polled a few times a second. */
+type Hud = { label: string; modal: boolean; typing: boolean };
+type PadKey = { key: string; label: string; color: string; title: string };
+
+// Touch utility buttons (colours from base16 Isotope Dark).
+const UTIL_A: PadKey[] = [
+  { key: 'i', label: 'BAG', color: '#d0d0d0', title: 'Rucksack (I)' },
+  { key: 'y', label: 'TODAY', color: '#33ff00', title: "Today's plan (Y)" },
+  { key: 'n', label: 'MAP', color: '#00ffff', title: 'Minimap (N)' },
+  { key: 'r', label: 'NOTES', color: '#ff0099', title: 'Villager notes (R)' },
+];
+const HORSE: PadKey = { key: 'H', label: 'HORSE', color: '#ff9900', title: 'Whistle for your horse (Shift+H)' };
+const INFO: PadKey = { key: 'p', label: 'INFO', color: '#cc00ff', title: 'Show or hide the status panel' };
+const MORE_KEYS: PadKey[] = [
+  { key: 'm', label: 'MEMO', color: '#00ffff', title: 'Ranch summary & memo (M)' },
+  { key: 'b', label: 'BELL', color: '#33ff00', title: 'Ring the grazing bell (B)' },
+  { key: 'btab', label: '◂ TOOL', color: '#d0d0d0', title: 'Previous tool (Shift+Tab)' },
+  { key: '?', label: 'HELP', color: '#00ffff', title: 'Help (?)' },
+];
+
+/** A touch button: fires on pointer-down for snappy input; keyboard activation still works. */
+function PadButton({
+  label,
+  onPress,
+  className = '',
+  style,
+  title,
+  pressed,
+}: {
+  label: React.ReactNode;
+  onPress: () => void;
+  className?: string;
+  style?: React.CSSProperties;
+  title?: string;
+  pressed?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`pad-btn ${className}`}
+      style={style}
+      title={title}
+      aria-label={title}
+      aria-pressed={pressed}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        onPress();
+      }}
+      onClick={(e) => {
+        if (e.detail === 0) onPress(); // keyboard / assistive activation; taps were handled on pointer-down
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 export default function GameScreen() {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dpadRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const screenRef = useRef<Screen | null>(null);
   const gameRef = useRef<Game | null>(null);
-  const dpadTimerRef = useRef<{ timeout?: any; interval?: any }>({});
 
-  const [isTouch, setIsTouch] = useState(false);
+  const [inputMode, setInputMode] = useState<'pending' | 'touch' | 'desktop'>('pending');
+  const isTouch = inputMode === 'touch';
   const [running, setRunning] = useState(true);
   const [ready, setReady] = useState(false);
-  const [contextLabel, setContextLabel] = useState('USE');
+  const [hud, setHud] = useState<Hud>({ label: 'USE', modal: false, typing: false });
+  const [compact, setCompact] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const draftRef = useRef('');
+  const [dpadDir, setDpadDir] = useState<Dir | null>(null);
   const [reducedMotion, setReducedMotionState] = useState(false);
   const reducedMotionRef = useRef(false);
   const [hires, setHiresState] = useState(true);
   const hiresRef = useRef(true);
+  const [haptics, setHapticsState] = useState(true);
+  const hapticsRef = useRef(true);
+  const [canFullscreen, setCanFullscreen] = useState(false);
 
   // Send a key to the game engine
   const sendKey = useCallback((name: string) => {
@@ -46,27 +120,160 @@ export default function GameScreen() {
     }
   }, []);
 
-  // Handle D-pad hold to repeat
-  const handleButtonDown = useCallback(
-    (key: string, e: React.PointerEvent) => {
-      e.preventDefault();
-      sendKey(key);
-      if (dpadTimerRef.current.timeout) clearTimeout(dpadTimerRef.current.timeout);
-      if (dpadTimerRef.current.interval) clearInterval(dpadTimerRef.current.interval);
+  /** A short tick on phones that support it (Android); silently does nothing elsewhere. */
+  const buzz = useCallback((ms: number) => {
+    if (!hapticsRef.current) return;
+    try {
+      navigator.vibrate?.(ms);
+    } catch {
+      // vibration unsupported or blocked
+    }
+  }, []);
 
-      if (['up', 'down', 'left', 'right'].includes(key)) {
-        dpadTimerRef.current.timeout = setTimeout(() => {
-          dpadTimerRef.current.interval = setInterval(() => sendKey(key), 110);
-        }, 280);
-      }
+  // ---- Tap-to-walk: re-plans one step at a time so NPCs and the horse can't derail it.
+  const walkRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelWalk = useCallback(() => {
+    if (walkRef.current) clearTimeout(walkRef.current);
+    walkRef.current = null;
+  }, []);
+
+  const walkTo = useCallback(
+    (gx: number, gy: number) => {
+      const game = gameRef.current;
+      const screen = screenRef.current;
+      if (!game || !screen) return;
+      cancelWalk();
+      const map = game.mapname;
+      const m = game.map;
+      const special = (x: number, y: number) => {
+        const k = `${x},${y}`;
+        const t = m.tile(x, y);
+        return k in m.doors || k in m.warps || t === 'down' || t === 'up';
+      };
+      const passable = (x: number, y: number) => game.walkable(map, x, y) && !game.npc_at(x, y) && !special(x, y);
+      // Walk onto open ground; for anything else (crop, NPC, door, bin) stop beside it and face it.
+      const onto = passable(gx, gy) && !(map === 'farm' && `${gx},${gy}` in game.crops);
+      const isGoal = onto
+        ? (x: number, y: number) => x === gx && y === gy
+        : (x: number, y: number) => Math.abs(x - gx) + Math.abs(y - gy) === 1 && passable(x, y);
+      let budget = 160;
+      const tick = () => {
+        walkRef.current = null;
+        if (game.mapname !== map || game.modal_depth > 0 || budget-- <= 0) return;
+        if (screen.keyQueue.length) {
+          walkRef.current = setTimeout(tick, REPEAT_MS / 2);
+          return;
+        }
+        const step = firstStep([game.px, game.py], isGoal, passable);
+        if (!step) return;
+        if (step.dir === null) {
+          if (!onto) sendKey(dirToward(game.px, game.py, gx, gy));
+          return;
+        }
+        // On horseback each key moves two tiles; stop rather than overshoot the last one.
+        if (game.riding_horse && step.dist === 1 && onto && map === 'farm') {
+          return;
+        }
+        sendKey(step.dir);
+        walkRef.current = setTimeout(tick, REPEAT_MS);
+      };
+      tick();
     },
-    [sendKey]
+    [cancelWalk, sendKey],
   );
 
-  const handleButtonUp = useCallback(() => {
-    if (dpadTimerRef.current.timeout) clearTimeout(dpadTimerRef.current.timeout);
-    if (dpadTimerRef.current.interval) clearInterval(dpadTimerRef.current.interval);
+  // ---- D-pad: one surface; slide the thumb between directions, hold to keep walking.
+  const dpad = useRef<{ pointer: number | null; dir: Dir | null; modal: boolean; timer: ReturnType<typeof setTimeout> | null }>({
+    pointer: null,
+    dir: null,
+    modal: false,
+    timer: null,
+  });
+
+  const dpadSet = useCallback(
+    (dir: Dir | null) => {
+      const d = dpad.current;
+      if (dir === d.dir) return;
+      if (d.timer) clearTimeout(d.timer);
+      d.timer = null;
+      d.dir = dir;
+      setDpadDir(dir);
+      if (!dir) return;
+      cancelWalk();
+      sendKey(dir);
+      buzz(8);
+      const tick = () => {
+        const screen = screenRef.current;
+        const game = gameRef.current;
+        if (d.dir !== dir) return;
+        // Don't queue steps the engine hasn't taken yet, and pause if a dialog pops up mid-walk
+        // (a held direction would otherwise skip through its pages).
+        if (screen && game && screen.keyQueue.length === 0 && (game.modal_depth > 0) === d.modal) screen.pushKey(dir);
+        d.timer = setTimeout(tick, REPEAT_MS);
+      };
+      d.timer = setTimeout(tick, REPEAT_DELAY_MS);
+    },
+    [buzz, cancelWalk, sendKey],
+  );
+
+  const dpadStop = useCallback(() => {
+    const d = dpad.current;
+    if (d.timer) clearTimeout(d.timer);
+    d.timer = null;
+    d.dir = null;
+    d.pointer = null;
+    setDpadDir(null);
   }, []);
+
+  const dpadAt = (e: React.PointerEvent) => {
+    const el = dpadRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return dpadDirection(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2), r.width * 0.12, dpad.current.dir);
+  };
+
+  const press = useCallback(
+    (key: string) => {
+      cancelWalk();
+      buzz(10);
+      sendKey(key);
+    },
+    [buzz, cancelWalk, sendKey],
+  );
+
+  const pressAction = useCallback(() => {
+    const key = gameRef.current?.context_action().key || 'space';
+    if (key === 'enter') {
+      draftRef.current = '';
+      setDraft('');
+      inputRef.current?.blur();
+    }
+    cancelWalk();
+    buzz(14);
+    sendKey(key);
+  }, [buzz, cancelWalk, sendKey]);
+
+  // ---- Name entry on touch: mirror a real text field into the engine's text prompt.
+  const onDraft = useCallback(
+    (value: string) => {
+      const next = value.replace(/[^\x20-\x7E]/g, '').slice(0, 12);
+      const prev = draftRef.current;
+      let p = 0;
+      while (p < prev.length && p < next.length && prev[p] === next[p]) p++;
+      for (let i = prev.length; i > p; i--) sendKey('backspace');
+      for (const c of next.slice(p)) sendKey(c === ' ' ? 'space' : c);
+      draftRef.current = next;
+      setDraft(next);
+    },
+    [sendKey],
+  );
+
+  const submitDraft = useCallback(() => {
+    draftRef.current = '';
+    setDraft('');
+    inputRef.current?.blur();
+    sendKey('enter');
+  }, [sendKey]);
 
   const toggleMotion = useCallback(() => {
     const next = !reducedMotionRef.current;
@@ -99,13 +306,41 @@ export default function GameScreen() {
     }
   }, []);
 
+  const toggleHaptics = useCallback(() => {
+    const next = !hapticsRef.current;
+    hapticsRef.current = next;
+    setHapticsState(next);
+    buzz(12);
+    try {
+      window.localStorage.setItem('hrvstmn-haptics', next ? 'on' : 'off');
+    } catch {
+      // storage unavailable; the choice still applies this session
+    }
+  }, [buzz]);
+
+  const toggleFullscreen = useCallback(() => {
+    try {
+      if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => {});
+      else void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
+    } catch {
+      // fullscreen unavailable
+    }
+  }, []);
+
   useEffect(() => {
     // Detect touch
     const hasTouch =
       window.matchMedia('(pointer: coarse)').matches ||
       'ontouchstart' in window ||
       navigator.maxTouchPoints > 0;
-    setIsTouch(hasTouch);
+    setInputMode(hasTouch ? 'touch' : 'desktop');
+    setCanFullscreen(Boolean(document.fullscreenEnabled));
+    try {
+      hapticsRef.current = window.localStorage.getItem('hrvstmn-haptics') !== 'off';
+    } catch {
+      hapticsRef.current = true;
+    }
+    setHapticsState(hapticsRef.current);
 
     const canvas = canvasRef.current;
     const stage = stageRef.current;
@@ -117,10 +352,8 @@ export default function GameScreen() {
     let fontPx = 16;
     let cw = 9.6;
     let ch = 19;
-    let cols = MIN_COLS;
-    let rows = MIN_ROWS;
 
-    const screen = new Screen(cols, rows);
+    const screen = new Screen(80, 24);
     let motionOff = false;
     try {
       const savedMotion = window.localStorage.getItem('hrvstmn-motion');
@@ -151,28 +384,25 @@ export default function GameScreen() {
     };
     screenRef.current = screen;
 
-    function measure(px: number) {
-      if (!ctx) return { cw: 9.6, ch: 19 };
+    function measureCell(px: number) {
+      if (!ctx) return px * 0.6;
       ctx.font = `${px}px ${FONT}`;
-      return { cw: ctx.measureText('M').width, ch: Math.ceil(px * 1.25) };
+      return ctx.measureText('M').width;
     }
 
+    // Desktop: 16px, shrunk to fit 80x24. Touch: the full layout down to 12px, else the compact
+    // phone layout (no side panel, >= 50 columns) at the largest readable size. See viewport.ts.
     function layout() {
       if (!stage) return;
       const W = stage.clientWidth || 800;
       const H = stage.clientHeight || 500;
-      let px = 16;
-      let m = measure(px);
-      if (W / m.cw < MIN_COLS || H / m.ch < MIN_ROWS) {
-        px = Math.max(5, Math.floor(px * Math.min(W / (MIN_COLS * m.cw), H / (MIN_ROWS * m.ch))));
-        m = measure(px);
-      }
-      fontPx = px;
-      cw = m.cw;
-      ch = m.ch;
-      cols = Math.min(MAX_COLS, Math.max(MIN_COLS, Math.floor(W / cw)));
-      rows = Math.min(MAX_ROWS, Math.max(MIN_ROWS, Math.floor(H / ch)));
-      screen.setSize(cols, rows);
+      const g = chooseGrid(W, H, measureCell, hasTouch);
+      fontPx = g.fontPx;
+      cw = measureCell(fontPx);
+      ch = lineHeight(fontPx);
+      if (g.cols !== screen.w || g.rows !== screen.h) screen.setSize(g.cols, g.rows);
+      if (canvas) canvas.dataset.grid = `${screen.w}x${screen.h}@${fontPx}px`;
+      setCompact(isCompact(screen.w));
     }
 
     function sizeCanvas(w: number, h: number) {
@@ -269,22 +499,29 @@ export default function GameScreen() {
     sizeCanvas(screen.w, screen.h);
     setReady(true);
 
+    // Re-measure, rebuild the canvas and repaint (the engine redraws a resized grid itself;
+    // outside dialogs we ask for that right away so the screen never flashes blank).
+    const relayout = () => {
+      layout();
+      prevBuf = null;
+      prevFrame = null;
+      lastSig = '';
+      const game = gameRef.current;
+      if (game && game.modal_depth === 0) game.render();
+      if (screen.onRender) screen.onRender();
+    };
+
     // The bundled font may arrive after first paint: re-measure and repaint once it's ready.
     if (document.fonts && document.fonts.load) {
       Promise.all([document.fonts.load(`16px ${FONT}`), document.fonts.load(`bold 16px ${FONT}`)])
-        .then(() => {
-          layout();
-          prevBuf = null;
-          prevFrame = null;
-          lastSig = '';
-          if (screen.onRender) screen.onRender();
-        })
+        .then(relayout)
         .catch(() => {});
     }
 
     // Keyboard handling
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.altKey) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       let name: string | undefined;
 
       if (e.ctrlKey) {
@@ -306,16 +543,27 @@ export default function GameScreen() {
 
     window.addEventListener('keydown', onKeyDown);
 
-    let resizeTimer: any;
+    // Window resizes, phone rotation, browser toolbars sliding away and the touch pad appearing
+    // all change the stage size; the observer catches every one of them.
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const onResize = () => {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        layout();
-        prevBuf = null;
-        if (screen.onRender) screen.onRender();
-      }, 100);
+      resizeTimer = setTimeout(relayout, 80);
     };
     window.addEventListener('resize', onResize);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    observer?.observe(stage);
+
+    // Touch screens: no pinch/double-tap zoom, page bounce or long-press menus on the game.
+    const inField = (e: Event) => Boolean((e.target as Element | null)?.closest?.('input, textarea'));
+    const noDefault = (e: Event) => {
+      if (!inField(e)) e.preventDefault();
+    };
+    if (hasTouch) {
+      document.addEventListener('gesturestart', noDefault);
+      document.addEventListener('touchmove', noDefault, { passive: false });
+      document.addEventListener('contextmenu', noDefault);
+    }
 
     // Keep Enhanced animations (water, weather, smoke, title sky) moving even while the engine
     // is waiting in a menu or dialog. Cheap: the renderer skips the paint when nothing changed.
@@ -331,10 +579,11 @@ export default function GameScreen() {
     const game = new Game(screen, autostart);
     gameRef.current = game;
 
-    const contextTimer = setInterval(() => {
+    const hudTimer = setInterval(() => {
       const a = game.context_action();
-      setContextLabel((prev) => (prev === a.label ? prev : a.label));
-    }, 250);
+      const next: Hud = { label: a.label, modal: game.modal_depth > 0, typing: game.typing };
+      setHud((prev) => (prev.label === next.label && prev.modal === next.modal && prev.typing === next.typing ? prev : next));
+    }, 200);
 
     // Start game loop in background
     let isMounted = true;
@@ -350,20 +599,80 @@ export default function GameScreen() {
       }
     })();
 
+    const dpadState = dpad.current;
     return () => {
       isMounted = false;
       game.running = false;
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', onResize);
+      observer?.disconnect();
+      document.removeEventListener('gesturestart', noDefault);
+      document.removeEventListener('touchmove', noDefault);
+      document.removeEventListener('contextmenu', noDefault);
+      clearTimeout(resizeTimer);
       clearInterval(animTimer);
-      clearInterval(contextTimer);
+      clearInterval(hudTimer);
+      if (dpadState.timer) clearTimeout(dpadState.timer);
+      cancelWalk();
     };
-  }, [sendKey]);
+  }, [sendKey, cancelWalk]);
 
+  // Leaving the name prompt (by any button) clears the field and drops the keyboard; iOS can
+  // leave the page scrolled after its keyboard closes, so snap back.
+  useEffect(() => {
+    if (!hud.typing) {
+      draftRef.current = '';
+      setDraft('');
+      inputRef.current?.blur();
+      if (window.scrollY) window.scrollTo(0, 0);
+    }
+  }, [hud.typing]);
+
+  // Tap the map to walk there (touch only, outside menus); a tap also closes the More sheet.
+  const tapRef = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
+  const onStagePointerDown = (e: React.PointerEvent) => {
+    if (moreOpen) {
+      setMoreOpen(false);
+      tapRef.current = null;
+      return;
+    }
+    tapRef.current = e.isPrimary ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() } : null;
+  };
+  const onStagePointerUp = (e: React.PointerEvent) => {
+    const tap = tapRef.current;
+    tapRef.current = null;
+    if (!isTouch || !tap || tap.id !== e.pointerId) return;
+    if (Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 12 || performance.now() - tap.t > 600) return;
+    const canvas = canvasRef.current;
+    const screen = screenRef.current;
+    const game = gameRef.current;
+    if (!canvas || !screen || !game || game.modal_depth > 0 || !game.started) return;
+    const r = canvas.getBoundingClientRect();
+    const x = Math.floor(((e.clientX - r.left) / r.width) * screen.w);
+    const y = Math.floor(((e.clientY - r.top) / r.height) * screen.h);
+    const tag = screen.tags[y]?.[x];
+    if (!tag || tag.t === 'ui' || tag.wx === undefined || tag.wy === undefined) return;
+    if (tag.wx === game.px && tag.wy === game.py) return;
+    buzz(6);
+    walkTo(tag.wx, tag.wy);
+  };
+
+  const rootBase = 'game-root bg-[#000000] text-[#d0d0d0] overflow-hidden select-none';
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#000000] text-[#d0d0d0] overflow-hidden select-none">
+    <div className={isTouch ? `${rootBase} touch-ui` : `${rootBase} flex flex-col`}>
       {/* Canvas Area */}
-      <div ref={stageRef} id="stage" className="flex-1 min-h-0 flex items-center justify-center p-1 overflow-hidden">
+      <div
+        ref={stageRef}
+        id="stage"
+        className={
+          isTouch
+            ? 't-stage flex items-center justify-center overflow-hidden'
+            : 'flex-1 min-h-0 flex items-center justify-center p-1 overflow-hidden'
+        }
+        onPointerDown={onStagePointerDown}
+        onPointerUp={onStagePointerUp}
+        onPointerCancel={() => (tapRef.current = null)}
+      >
         <canvas
           ref={canvasRef}
           id="term"
@@ -371,10 +680,89 @@ export default function GameScreen() {
           className="block"
           style={{ imageRendering: 'pixelated' }}
         />
+
+        {/* Name entry: a real text field so the phone keyboard can type into the engine prompt */}
+        {isTouch && hud.typing && (
+          <form
+            className="type-bar"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitDraft();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => onDraft(e.target.value)}
+              maxLength={12}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="words"
+              spellCheck={false}
+              enterKeyHint="done"
+              placeholder="Tap to type (blank = default)"
+              aria-label="Type your answer"
+            />
+            <button type="submit" className="pad-btn type-done">
+              DONE
+            </button>
+          </form>
+        )}
+
+        {/* More sheet: the less frequent actions and touch settings */}
+        {isTouch && moreOpen && (
+          <div className="more-sheet" role="menu" onPointerDown={(e) => e.stopPropagation()}>
+            {MORE_KEYS.map((b) => (
+              <PadButton
+                key={b.key}
+                label={b.label}
+                title={b.title}
+                style={{ color: b.color }}
+                onPress={() => {
+                  setMoreOpen(false);
+                  press(b.key);
+                }}
+              />
+            ))}
+            <PadButton
+              label={`DETAIL ${hires ? 'HI' : 'LO'}`}
+              title="Toggle half-size high-resolution ground textures"
+              style={{ color: '#cc00ff' }}
+              pressed={hires}
+              onPress={toggleHires}
+            />
+            <PadButton
+              label={`MOTION ${reducedMotion ? 'OFF' : 'ON'}`}
+              title="Toggle ambient animation (also honors prefers-reduced-motion)"
+              style={{ color: '#cc00ff' }}
+              pressed={!reducedMotion}
+              onPress={toggleMotion}
+            />
+            <PadButton
+              label={`BUZZ ${haptics ? 'ON' : 'OFF'}`}
+              title="Toggle haptic feedback on supported phones"
+              style={{ color: '#cc00ff' }}
+              pressed={haptics}
+              onPress={toggleHaptics}
+            />
+            {canFullscreen && (
+              <PadButton
+                label="FULL"
+                title="Toggle full screen"
+                style={{ color: '#d0d0d0' }}
+                onPress={() => {
+                  setMoreOpen(false);
+                  toggleFullscreen();
+                }}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* Interactive Quick-Action Toolbar for Desktop Users */}
-      {!isTouch && (
+      {inputMode === 'desktop' && (
         <div
           id="hint"
           className="flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 border-t border-[#404040]/50 bg-[#080808] text-xs font-mono"
@@ -483,110 +871,99 @@ export default function GameScreen() {
         </div>
       )}
 
-      {/* Touch Pad / On-Screen Controls */}
-      <div
-        id="pad"
-        className={`${
-          isTouch ? 'flex' : 'hidden'
-        } justify-between items-center px-4 py-2 border-t border-[#404040]/40 bg-[#000000]/90 z-20 gap-3`}
-      >
-        {/* D-Pad */}
-        <div className="grid grid-cols-3 grid-rows-3 gap-1 w-[156px] h-[156px]">
-          <button
-            onPointerDown={(e) => handleButtonDown('up', e)}
-            onPointerUp={handleButtonUp}
-            onPointerLeave={handleButtonUp}
-            onPointerCancel={handleButtonUp}
-            className="col-start-2 row-start-1 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
-            aria-label="up"
-          >
-            &#9650;
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('left', e)}
-            onPointerUp={handleButtonUp}
-            onPointerLeave={handleButtonUp}
-            onPointerCancel={handleButtonUp}
-            className="col-start-1 row-start-2 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
-            aria-label="left"
-          >
-            &#9664;
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('right', e)}
-            onPointerUp={handleButtonUp}
-            onPointerLeave={handleButtonUp}
-            onPointerCancel={handleButtonUp}
-            className="col-start-3 row-start-2 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
-            aria-label="right"
-          >
-            &#9654;
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('down', e)}
-            onPointerUp={handleButtonUp}
-            onPointerLeave={handleButtonUp}
-            onPointerCancel={handleButtonUp}
-            className="col-start-2 row-start-3 bg-[#404040] hover:bg-[#606060] active:bg-[#808080] border border-[#606060] rounded-lg text-xl flex items-center justify-center text-[#d0d0d0] shadow"
-            aria-label="down"
-          >
-            &#9660;
-          </button>
-        </div>
+      {/* Touch controls: utility row, D-pad (left thumb) and action cluster (right thumb).
+          Portrait stacks them under the map; short landscape screens put them either side. */}
+      {isTouch && (
+        <>
+          <div className="t-util">
+            <div className="t-util-a">
+              {UTIL_A.map((b) => (
+                <PadButton key={b.key} label={b.label} title={b.title} style={{ color: b.color }} onPress={() => press(b.key)} />
+              ))}
+            </div>
+            <div className="t-util-b">
+              <PadButton label={HORSE.label} title={HORSE.title} style={{ color: HORSE.color }} onPress={() => press(HORSE.key)} />
+              {compact && (
+                <PadButton label={INFO.label} title={INFO.title} style={{ color: INFO.color }} onPress={() => press(INFO.key)} />
+              )}
+              <PadButton
+                label="•••"
+                title="More actions and settings"
+                style={{ color: '#d0d0d0' }}
+                pressed={moreOpen}
+                onPress={() => {
+                  buzz(8);
+                  setMoreOpen((o) => !o);
+                }}
+              />
+            </div>
+          </div>
 
-        {/* Action Buttons */}
-        <div className="grid grid-cols-4 gap-1.5">
-          <button
-            onPointerDown={(e) => handleButtonDown(gameRef.current?.context_action().key || 'space', e)}
-            onPointerUp={handleButtonUp}
-            className="col-span-2 bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-3 py-2.5 text-xs font-bold text-[#33ff00] shadow"
-          >
-            {contextLabel}
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('tab', e)}
-            onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
-          >
-            TOOL
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('i', e)}
-            onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
-          >
-            BAG
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('H', e)}
-            onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#ff9900] shadow"
-          >
-            HORSE
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('m', e)}
-            onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#00ffff] shadow"
-          >
-            MEMO
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('esc', e)}
-            onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#d0d0d0] shadow"
-          >
-            DIARY
-          </button>
-          <button
-            onPointerDown={(e) => handleButtonDown('?', e)}
-            onPointerUp={handleButtonUp}
-            className="bg-[#404040] hover:bg-[#606060] active:bg-[#606060] border border-[#606060] rounded-lg px-2.5 py-2.5 text-xs font-medium text-[#00ffff] shadow"
-          >
-            HELP
-          </button>
-        </div>
-      </div>
+          <div className="t-move">
+            <div
+              ref={dpadRef}
+              className="dpad"
+              role="group"
+              aria-label="Move"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                if (dpad.current.pointer !== null) return;
+                dpad.current.pointer = e.pointerId;
+                dpad.current.modal = (gameRef.current?.modal_depth ?? 0) > 0;
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                } catch {
+                  // capture unsupported; pointerleave below still ends the hold
+                }
+                dpadSet(dpadAt(e));
+              }}
+              onPointerMove={(e) => {
+                if (e.pointerId === dpad.current.pointer) dpadSet(dpadAt(e));
+              }}
+              onPointerUp={(e) => {
+                if (e.pointerId === dpad.current.pointer) dpadStop();
+              }}
+              onPointerCancel={(e) => {
+                if (e.pointerId === dpad.current.pointer) dpadStop();
+              }}
+              onLostPointerCapture={(e) => {
+                if (e.pointerId === dpad.current.pointer) dpadStop();
+              }}
+            >
+              {(['up', 'left', 'right', 'down'] as Dir[]).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  tabIndex={-1}
+                  className={`dpad-arm dpad-${d}`}
+                  data-on={dpadDir === d ? '1' : undefined}
+                  aria-label={d}
+                  onClick={(e) => {
+                    if (e.detail === 0) sendKey(d);
+                  }}
+                >
+                  {d === 'up' ? '▲' : d === 'down' ? '▼' : d === 'left' ? '◀' : '▶'}
+                </button>
+              ))}
+              <span className="dpad-hub" aria-hidden="true" />
+            </div>
+          </div>
+
+          <div className="t-act">
+            <div className="act-grid">
+              <PadButton label="TOOL ▸" title="Next tool (Tab)" className="act-tool" onPress={() => press('tab')} />
+              <PadButton label="USE" title="Use the equipped tool (Space)" className="act-use" onPress={() => press('space')} />
+              <PadButton
+                label={hud.typing ? 'SKIP' : hud.modal ? 'BACK' : 'MENU'}
+                title={hud.modal ? 'Back / cancel (Esc)' : 'Diary & pause menu (Esc)'}
+                className="act-menu"
+                onPress={() => press('esc')}
+              />
+              <PadButton label={hud.label} title={`${hud.label} (context action)`} className="act-a" onPress={pressAction} />
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Game Over / Exit Screen */}
       {!running && (

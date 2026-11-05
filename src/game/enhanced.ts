@@ -960,6 +960,7 @@ export function computeFrame(
   for (const ic of ctx.icons) {
     if (ic.y < 0 || ic.y >= H || ic.x < 0 || ic.x >= W) continue;
     if (buf[ic.y][ic.x][0] !== ' ' || tags[ic.y][ic.x]) continue;
+    if (boxes.some((b) => ic.x >= b.x && ic.x < b.x + b.w && ic.y >= b.y && ic.y < b.y + b.h)) continue; // under a dialog
     const clearNight = ctx.weather === 'Sunny' && sky.amb < 0.5 && !ctx.indoor;
     const [ch, col] =
       ic.icon === 'weather' ? (clearNight ? ['☾', '#d8e0ff'] : WEATHER_ICON[ctx.weather] || ['☀', '#ffcc33']) : ICONS[ic.icon];
