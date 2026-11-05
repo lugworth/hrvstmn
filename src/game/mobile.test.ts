@@ -36,13 +36,17 @@ function farm(cols: number, rows: number) {
 }
 
 describe('chooseGrid', () => {
-  test('desktop keeps the original rule: 16px, shrunk only to fit 80x24', () => {
+  test('desktop keeps a readable grid, grows on large screens, and shrinks to fit 80x24', () => {
     const g = chooseGrid(1272, 600, mono, false);
     assert.deepEqual(g, { fontPx: 16, cols: Math.floor(1272 / mono(16)), rows: Math.floor(600 / lineHeight(16)), compact: false });
     const small = chooseGrid(500, 400, mono, false);
     assert.ok(small.fontPx < 16);
     assert.ok(small.cols >= FULL_MIN_COLS && small.cols * mono(small.fontPx) <= 500);
     assert.equal(small.compact, false, 'desktop never switches to the compact layout');
+    const large = chooseGrid(1536, 950, mono, false);
+    assert.ok(large.fontPx > 16 && large.fontPx <= 26);
+    assert.ok(large.cols >= 96 && large.rows >= 30, 'larger glyphs retain a farm-sized view');
+    assert.ok(large.cols * mono(large.fontPx) <= 1536 && large.rows * lineHeight(large.fontPx) <= 950);
   });
 
   test('a portrait phone gets the compact layout at a readable size instead of a tiny 80-column grid', () => {
@@ -221,10 +225,17 @@ describe('compact engine layout', () => {
     assert.ok(lines.some((l) => l.endsWith('(Press Shift+H')) || lines.join(' ').includes('to dismount)'), lines.join(' | '));
   });
 
-  test('desktop layout is unchanged at 80 columns', () => {
+  test('80 columns keep the Contour panel on the right; Classic retains its reference layout', () => {
     const { s } = farm(80, 24);
-    assert.equal(s.ctx?.divX, 50);
-    assert.equal(s.buf[5][50][0], '|');
+    assert.equal(s.ctx?.view.y, 0);
+    assert.equal(s.buf[5][s.ctx!.divX][0], '|');
+    assert.ok(s.tags[1].some((tag, x) => x > s.ctx!.divX && tag?.label?.text === 'HRVSTMN'));
+    const classic = farm(80, 24);
+    classic.s.style = 'classic';
+    classic.g.render();
+    assert.equal(classic.s.ctx?.view.y, 1);
+    assert.equal(classic.s.ctx?.divX, 50);
+    assert.equal(classic.s.buf[5][50][0], '|');
   });
 
   test('paged screens re-wrap long lines on narrow screens', async () => {

@@ -3,7 +3,7 @@ import { COMPACT_MIN_COLS, FULL_MIN_COLS, MIN_ROWS } from './compact';
 
 export const MAX_COLS = 160;
 export const MAX_ROWS = 50;
-/** Desktop font size; also the largest size any layout uses. */
+/** Baseline font size; touch screens cap here and desktop can grow to 26px. */
 export const BASE_FONT = 16;
 /** Touch screens never shrink the full 80-column layout below this. */
 export const TOUCH_FULL_MIN_FONT = 12;
@@ -26,7 +26,8 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
  * Choose a font size and a cols x rows grid for a stage of `width` x `height` CSS px.
  * `measure(px)` is the advance width of one monospace cell at that font size.
  *
- * - Desktop keeps the original rule: 16px, shrunk only as far as needed to fit 80x24.
+ * - Desktop grows the Contour grid to 26px, targeting 96 columns and 31 rows before
+ *   adding more scenery. Small windows shrink to fit 80x24.
  * - Touch screens use the full layout (side panel) when it fits at 12px or more, otherwise
  *   the compact layout at the largest size (<= 14px) that still fits 50x24.
  * - Anything smaller is shrunk to fit 50x24; the canvas is scaled down if even that fails.
@@ -45,7 +46,10 @@ export function chooseGrid(width: number, height: number, measure: (px: number) 
       Math.floor(BASE_FONT * Math.min(width / (minCols * measure(BASE_FONT)), height / (MIN_ROWS * lineHeight(BASE_FONT)))),
     );
 
-  if (!touch) return grid(fits(BASE_FONT, FULL_MIN_COLS) ? BASE_FONT : shrinkTo(FULL_MIN_COLS), FULL_MIN_COLS);
+  if (!touch) {
+    const px = Math.max(BASE_FONT, Math.min(26, Math.floor(height / (31 * 1.25)), Math.floor(width / (96 * 0.61))));
+    return grid(fits(px, FULL_MIN_COLS) ? px : shrinkTo(FULL_MIN_COLS), FULL_MIN_COLS);
+  }
   for (let px = BASE_FONT; px >= TOUCH_FULL_MIN_FONT; px--) if (fits(px, FULL_MIN_COLS)) return grid(px, FULL_MIN_COLS);
   for (let px = COMPACT_MAX_FONT; px >= COMPACT_MIN_FONT; px--) if (fits(px, COMPACT_MIN_COLS)) return grid(px, COMPACT_MIN_COLS);
   return grid(shrinkTo(COMPACT_MIN_COLS), COMPACT_MIN_COLS);

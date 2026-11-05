@@ -4887,8 +4887,11 @@ export class Game {
     // Narrow (phone) grids drop the side panel: the map takes the full width and the
     // panel's essentials move into the divider row (draw_status); 'p' overlays the panel.
     const compact = isCompact(W);
-    const side = compact ? 0 : 29;
-    const [vw, vh] = [compact ? W : W - side - 1, H - 5];
+    const contour = s.style === 'enhanced' && !compact;
+    const side = compact ? 0 : contour ? clamp(Math.round(W * 0.23), 24, 36) : 29;
+    const mapY = contour ? 0 : 1;
+    const dividerY = contour ? H - 2 : H - 4;
+    const [vw, vh] = [compact ? W : W - side - 1, dividerY - mapY];
     s.ctx = {
       mapName: this.mapname,
       indoor: !!this.map.indoor,
@@ -4904,8 +4907,8 @@ export class Game {
       divY: dividerY,
       icons: [],
     };
-    this.draw_topbar(W);
-    this.draw_map(0, 1, vw, vh);
+    if (!contour) this.draw_topbar(W);
+    this.draw_map(0, mapY, vw, vh);
     if (this.show_minimap) this.draw_minimap(vw, vh);
     if (compact) {
       s.put(0, H - 4, '-'.repeat(W), '01');
@@ -4918,11 +4921,11 @@ export class Game {
       this.draw_msgs(H - 3);
       return;
     }
-    for (let y = 1; y < H - 4; y++) {
+    for (let y = mapY; y < dividerY; y++) {
       s.put(vw, y, '|', '01');
     }
     s.put(0, dividerY, '-'.repeat(W), '01');
-    if (enhanced) this.draw_contour_side(vw + 3, 1, side - 5);
+    if (contour) this.draw_contour_side(vw + 3, 1, side - 5);
     else this.draw_side(vw + 2, 2, side - 2);
     this.draw_msgs(dividerY + 1);
   }
@@ -5433,10 +5436,12 @@ export class Game {
 
   draw_msgs(y0: number): void {
     const cols = ['02', '03', null];
-    const recent = this.msgs.slice(-3);
+    const count = Math.min(3, this.scr.h - y0);
+    if (count <= 0) return;
+    const recent = this.msgs.slice(-count);
     if (isCompact(this.scr.w)) {
       // Narrow screens wrap messages instead of cutting them off; the newest always shows.
-      const lines = fitMessages(recent.map(([text]) => text), this.scr.w - 2, 3);
+      const lines = fitMessages(recent.map(([text]) => text), this.scr.w - 2, count);
       lines.forEach(({ text, age }, i) => {
         const fg = age === 0 ? recent[recent.length - 1][1] : age === 1 ? cols[1]! : cols[0]!;
         this.scr.put(1, y0 + i, text, fg);

@@ -1,5 +1,25 @@
 # Handoff: HRVSTMN
 
+## Experimental UI integration, 2026-11-05
+
+`expirimental-ui` includes `main` through `d39de25` via merge `678bce3`. The user asked
+to repair that merge after its preview failed. Keep this branch separate from `main`;
+the UI experiment has not been approved for a production merge.
+
+- Repaired duplicate JSX roots, duplicate renderer declarations/imports, and missing
+  viewport variables left by conflict resolution.
+- Restored the Contour Farm right-side HUD, its proportional panel width, large labels,
+  one latest-message row, readable desktop font sizing, and cyan action controls.
+- Retained the newer compact phone layout, touch name entry, tap-to-walk, minimap,
+  detail preference, regions, gameplay systems, duotone lighting, and water shading.
+- Incremental repaints include contour coordinates and whole heading rectangles.
+  A detail preference change forces a full repaint, even with motion disabled.
+- Validation: 171 tests pass, TypeScript is clean, production build passes. Browser
+  checks covered house-to-farm movement, tool changes, Today, minimap, detail and motion.
+  Physical phone input remains covered by logic tests rather than a device session.
+
+The main-branch reference below retains gameplay architecture and history.
+
 > Snapshot of `main` @ `ea02386` (PR #36) plus this HANDOFF refresh, 2026-11-05.
 > Read this file before changing anything. If it contradicts the code, trust the code and update this file.
 

@@ -919,7 +919,7 @@ function contourTile(F: Frame, tag: CellTag, o: OutCell): OutCell {
   }
   if (tag.t === 'tree') return { ...o, fg: mix(o.fg, '#ffffff', 0.4), texture: { x, y, kind: 'tree' } };
   if (tag.t === 'wall' && tag.k !== 'deco') return { ...o, ch: o.ch === '▀' ? '─' : o.ch, fg: mix(o.fg, '#ffffff', 0.55) };
-  if (WATERY.has(tag.t)) return { ...o, fg: '#808080', texture: { x: x + (Math.floor(F.t * 1.5) % 8) * 0.15, y, kind: 'water' } };
+  if (WATERY.has(tag.t)) return { ...o, texture: { x: x + (Math.floor(F.t * 1.5) % 8) * 0.15, y, kind: 'water' } };
   return o;
 }
 
@@ -2053,6 +2053,7 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
   let minY = Infinity;
   let maxX = -1;
   let maxY = -1;
+  const labels: DirtyRect[] = [];
   for (let y = 0; y < next.length; y++) {
     const a = prev[y];
     const b = next[y];
@@ -2060,11 +2061,20 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
     for (let x = 0; x < b.length; x++) {
       const p = a[x];
       const n = b[x];
+      if (p.label || n.label) {
+        for (const label of [p.label, n.label]) {
+          if (label) labels.push({ x0: x, y0: y, x1: x + label.w, y1: y + label.h });
+        }
+      }
       if (
         p.ch !== n.ch || p.fg !== n.fg || p.bg !== n.bg || p.bold !== n.bold ||
         p.glow !== n.glow || p.glowR !== n.glowR || p.token !== n.token || p.rim !== n.rim ||
         p.plain !== n.plain || p.ui !== n.ui || p.accent !== n.accent || p.seed !== n.seed ||
-        p.foam !== n.foam || p.foamCol !== n.foamCol || p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg
+        p.foam !== n.foam || p.foamCol !== n.foamCol || p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg ||
+        p.texture?.kind !== n.texture?.kind || p.texture?.x !== n.texture?.x || p.texture?.y !== n.texture?.y ||
+        p.textureGlyph !== n.textureGlyph || p.meter !== n.meter ||
+        p.label?.text !== n.label?.text || p.label?.scale !== n.label?.scale ||
+        p.label?.w !== n.label?.w || p.label?.h !== n.label?.h
       ) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
@@ -2074,12 +2084,30 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
     }
   }
   if (maxX < 0) return null;
-  return {
+  const dirty = {
     x0: Math.max(0, minX - 1),
     y0: Math.max(0, minY - 1),
     x1: Math.min(next[0]?.length ?? 0, maxX + 2),
     y1: Math.min(next.length, maxY + 2),
   };
+  // A heading paints beyond its anchor cell. Repaint its whole old/new rectangle whenever
+  // it changes or a neighbouring update clears part of it (including dialog open/close).
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const label of labels) {
+      if (dirty.x0 >= label.x1 || dirty.x1 <= label.x0 || dirty.y0 >= label.y1 || dirty.y1 <= label.y0) continue;
+      const x0 = Math.min(dirty.x0, Math.max(0, label.x0 - 1));
+      const y0 = Math.min(dirty.y0, Math.max(0, label.y0 - 1));
+      const x1 = Math.max(dirty.x1, Math.min(next[0].length, label.x1 + 1));
+      const y1 = Math.max(dirty.y1, Math.min(next.length, label.y1 + 1));
+      if (x0 !== dirty.x0 || y0 !== dirty.y0 || x1 !== dirty.x1 || y1 !== dirty.y1) {
+        Object.assign(dirty, { x0, y0, x1, y1 });
+        expanded = true;
+      }
+    }
+  }
+  return dirty;
 }
 
 /** Paint a computed frame. Block shapes are drawn as rects/paths so they tile without seams. */
@@ -2168,7 +2196,7 @@ export function effectiveHiresLevel(fontPx: number, dpr = 1, hires = true): numb
 
 /** The n x n high-resolution pattern for a cell (n*n glyphs, row by row), or null for a plain glyph. */
 export function subPattern(o: OutCell, fontPx: number, n = 2): string | null {
-  if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.dx || o.token || o.glow) return null;
+  if (n < 2 || fontPx < HIRES_MIN_FONT || o.ui || o.plain || o.token || o.glow) return null;
   if (o.texture && o.ch === o.textureGlyph) return contourPattern(o.texture, n);
   const v = SUBPIX[o.ch];
   if (!v) return null;
@@ -2237,11 +2265,9 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
     const row = frame[y];
     for (let x = X0; x < X1; x++) {
       const o = row[x];
-      if (o.ch === ' ' && !(o.texture && o.ch === o.textureGlyph)) continue;
-      const px = (x + (o.dx ?? 0)) * cw;
       // two-tone cells: the detail glyph sits small on the upper right, drawn with the batch
       if (o.detail) mini(x * cw + cw * 0.48, y * ch + ch * 0.3, o.detail.ch, o.detail.fg, 1, true);
-      if (o.ch === ' ') continue;
+      if (o.ch === ' ' && !(o.texture && o.ch === o.textureGlyph)) continue;
       const px = x * cw;
       const py = y * ch;
       if (o.label) {
@@ -2378,6 +2404,6 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
   // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '');
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '') + (o.texture ? `t${o.texture.kind}:${o.texture.x}:${o.texture.y}:${o.textureGlyph}` : '') + (o.label ? `l${o.label.text}:${o.label.scale}:${o.label.w}:${o.label.h}` : '') + (o.meter ? 'm' : '');
   return s;
 }

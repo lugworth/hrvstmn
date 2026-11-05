@@ -2,6 +2,27 @@
 
 final result: passed
 
+## Merge repair, 2026-11-05
+
+The failed `678bce3` integration of current main was repaired in place, retaining both
+the Contour treatment and main's newer mobile and gameplay features. The earlier
+86-test verification below describes the original pre-merge implementation.
+
+- Current checks: **171 tests passed**, `npx tsc --noEmit` clean, `npm run build` passed.
+  The static route is 106 kB / 208 kB first load with the newer game features included.
+- Repaired duplicate JSX wrappers, a duplicate canvas coordinate declaration, duplicate
+  test imports, undefined layout variables, and missing message-row bounds.
+- Restored the cyan footer, large desktop glyphs, right-side panel and heading repaint
+  metadata without removing compact mobile layout or any of the newer game systems.
+- Added regressions for heading changes/removal/partial overlap, contour-only animation
+  invalidation, and sub-cell strokes on a blank full-size terrain glyph.
+- The compiled production preview was inspected at its normal 1363x936 browser size
+  (107x30 grid, 21px glyphs). Walked out of the farmhouse, changed Hoe to Hammer,
+  opened/closed Today, toggled the minimap, and changed Detail and Motion preferences.
+- No application errors appeared; unrelated extension metadata errors were excluded.
+- Touch layout, name entry and compact status overlays pass the existing logic tests;
+  a physical phone session was not available for this repair.
+
 ## Visual evidence
 
 - Source visual truth: `docs/contour-farm-reference.png`, the approved right-side panel revision.

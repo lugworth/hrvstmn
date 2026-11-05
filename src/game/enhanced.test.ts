@@ -1,8 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameSignature, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
-import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv } from './enhanced';
+import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, drawFrame, frameSignature, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv, type OutCell } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -766,8 +765,8 @@ describe('computeFrame', () => {
     const out = computeFrame(s, 0);
     assert.equal(out[5][10].ch, "'");
     assert.equal(subPattern(out[5][10], 16, 2), null, 'not turned into grass texture');
-    const grassTick = out.flat().find((o) => o.ch === "'" && o !== out[5][10]);
-    assert.ok(grassTick && subPattern(grassTick, 16, 2), 'grass ticks still get their texture');
+    const grass = out.flat().find((o) => o.texture?.kind === 'ground');
+    assert.ok(grass && subPattern(grass, 16, 2), 'scenery still gets contour detail');
   });
 
   test('shoreline foam laps: its brightness changes over time', () => {
@@ -1123,4 +1122,55 @@ test('large HUD label changes invalidate the frame cache even with the same firs
   const before = frameSignature(computeFrame(s, 0));
   s.tag(55, 4, { t: 'ui', k: 'hud:label', label: { ...label, text: '11' } });
   assert.notEqual(frameSignature(computeFrame(s, 0)), before);
+});
+
+describe('Contour metadata with incremental repainting', () => {
+  const blank = (): OutCell[][] => Array.from({ length: 9 }, () =>
+    Array.from({ length: 18 }, () => ({ ch: ' ', fg: '#ffffff', bg: '#000000', bold: false })));
+  const heading = () => {
+    const frame = blank();
+    frame[2][4] = { ...frame[2][4], ch: '1', label: { text: '10', scale: 2.6, w: 7, h: 3 } };
+    return frame;
+  };
+
+  test('changing or removing the date repaints its whole old and new heading area', () => {
+    const before = heading();
+    const after = heading();
+    after[2][4].label = { ...after[2][4].label!, text: '11' };
+    for (const next of [after, blank()]) {
+      const rect = frameDirtyRect(before, next)!;
+      assert.ok(rect.x0 <= 4 && rect.y0 <= 2 && rect.x1 >= 11 && rect.y1 >= 5);
+    }
+    assert.equal(frameDirtyRect(before, heading()), null);
+  });
+
+  test('an update inside a heading includes its anchor so clearing backgrounds does not erase it', () => {
+    const before = heading();
+    const after = heading();
+    after[4][9].bg = '#404040';
+    const rect = frameDirtyRect(before, after)!;
+    assert.ok(rect.x0 <= 4 && rect.y0 <= 2 && rect.x1 >= 11 && rect.y1 >= 5);
+  });
+
+  test('texture movement invalidates both caches even if the full-size glyph stays the same', () => {
+    const before = blank();
+    const after = blank();
+    before[4][5].texture = { kind: 'water', x: 5, y: 4 };
+    after[4][5].texture = { kind: 'water', x: 5.15, y: 4 };
+    before[4][5].textureGlyph = after[4][5].textureGlyph = ' ';
+    assert.notEqual(frameSignature(before), frameSignature(after));
+    assert.ok(frameDirtyRect(before, after));
+  });
+
+  test('a blank full-size glyph still paints its smaller contour strokes', () => {
+    const terrain = computeFrame(scene({ reducedMotion: true }), 0).flat().find((o) =>
+      o.texture?.kind === 'ground' && o.ch === ' ' && subPattern(o, 16, 2)?.trim());
+    assert.ok(terrain, 'scene contains sub-cell detail on a blank terrain glyph');
+    const painted: string[] = [];
+    const canvas = new Proxy({ fillText: (text: string) => painted.push(text) }, {
+      get: (target, key) => key in target ? target[key as keyof typeof target] : () => {},
+    }) as unknown as CanvasRenderingContext2D;
+    drawFrame(canvas, [[terrain]], { cw: 10, ch: 20, fontPx: 16, font: 'monospace', dpr: 1 });
+    assert.ok(painted.some((text) => text.trim()), 'contour strokes reach the canvas');
+  });
 });
