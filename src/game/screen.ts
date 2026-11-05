@@ -31,6 +31,16 @@ export type CellTag = {
   zw?: number;
   /** Entity standing on this cell: 'player', 'npc', 'animal', 'pet'. */
   ent?: string;
+  /** Facing for composed character sprites. */
+  dir?: 'up' | 'down' | 'left' | 'right';
+};
+
+export type RenderFx = {
+  kind: 'dust' | 'sparkle' | 'splash' | 'coin';
+  x: number;
+  y: number;
+  age: number;
+  life: number;
 };
 
 export type HudIcon = { x: number; y: number; icon: 'stamina' | 'fatigue' | 'gold' | 'bin' | 'tool' | 'weather' };
@@ -54,6 +64,8 @@ export type RenderCtx = {
   divX: number;
   divY: number;
   icons: HudIcon[];
+  /** Transient action-feedback glyphs, in screen cells. */
+  fx?: RenderFx[];
 };
 
 export class Screen {

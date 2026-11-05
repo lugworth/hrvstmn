@@ -256,6 +256,8 @@ export class Game {
   fest_attended: boolean = false;
   fest_declined: boolean = false;
   npc_pos: Record<string, [number, number]> = {};
+  npc_face: Record<string, 'up' | 'down' | 'left' | 'right'> = {};
+  fx: { kind: 'dust' | 'sparkle' | 'splash' | 'coin'; map: string; x: number; y: number; born: number; life: number }[] = [];
   mine_type: 'spring' | 'lake' = 'spring';
   mine_floor: number = 0;
   max_spring_floor: number = 0;
@@ -407,6 +409,8 @@ export class Game {
     this.fest_attended = false;
     this.fest_declined = false;
     this.npc_pos = {};
+    this.npc_face = {};
+    this.fx = [];
     this.mine_type = 'spring';
     this.mine_floor = 0;
     this.max_spring_floor = 0;
@@ -691,6 +695,7 @@ export class Game {
     const now = Date.now() / 1000;
     const dt = Math.min(now - this.last, 0.25);
     this.last = now;
+    if (this.fx.length) this.fx = this.fx.filter((f) => now - f.born < f.life);
     if (!this.map.indoor) {
       this.acc += dt;
       while (this.acc >= SECS_PER_10MIN) {
@@ -1062,9 +1067,26 @@ export class Game {
       if (Math.abs(nx - ax) > 4 || Math.abs(ny - ay) > 3) continue;
       if (this.walkable(mp, nx, ny, true) && !this.npc_at(nx, ny) && !(nx === this.px && ny === this.py)) {
         this.npc_pos[n] = [nx, ny];
+        if (dx > 0) this.npc_face[n] = 'right';
+        else if (dx < 0) this.npc_face[n] = 'left';
+        else if (dy > 0) this.npc_face[n] = 'down';
+        else if (dy < 0) this.npc_face[n] = 'up';
       }
     }
     this.move_indoor_npcs();
+  }
+
+  face_dir(): 'up' | 'down' | 'left' | 'right' {
+    const [dx, dy] = this.face;
+    if (dx > 0) return 'right';
+    if (dx < 0) return 'left';
+    if (dy > 0) return 'down';
+    return 'up';
+  }
+
+  fx_add(kind: 'dust' | 'sparkle' | 'splash' | 'coin', x: number, y: number, life: number = 0.55): void {
+    this.fx.push({ kind, map: this.mapname, x, y, born: Date.now() / 1000, life });
+    if (this.fx.length > 36) this.fx.shift();
   }
 
   target(): [number, number] {
@@ -1263,6 +1285,8 @@ export class Game {
     }
 
     this.record_tool_use(t);
+    if (t === 'Watering Can') this.fx_add('splash', tx, ty);
+    else if (['Hoe', 'Hammer', 'Axe', 'Sickle'].includes(t)) this.fx_add('dust', tx, ty);
 
     if (t === 'Sickle') {
       let cutCount = 0;
@@ -1581,6 +1605,7 @@ export class Game {
         caught = 'Medium Fish';
       }
       this.give(caught);
+      this.fx_add('splash', this.px + this.face[0], this.py + this.face[1], 0.7);
       if (ITEMS[caught]?.[2] === 'fish') {
         this.fish_caught[caught] = (this.fish_caught[caught] || 0) + 1;
         this.mastery_add('fishing');
@@ -1702,6 +1727,7 @@ export class Game {
           delete this.crops[pKey];
         }
         this.mastery_add('farming');
+        this.fx_add('sparkle', tx, ty, 0.7);
       } else {
         this.msg(`${crop}: ${days - age} more day${days - age > 1 ? 's' : ''} to go.${this.wet.has(pKey) ? '' : ' (needs water)'}`);
       }
@@ -3532,6 +3558,7 @@ export class Game {
     this.gold += request.reward;
     this.friend[request.npc] = clamp((this.friend[request.npc] || 0) + 5, 0, 100);
     this.requests_done += 1;
+    this.fx_add('coin', this.px, this.py, 0.8);
     this.requests.splice(index, 1);
     return `${request.npc} got ${request.qty} × ${request.item}! You earned ${request.reward}G and +5 friendship.`;
   }
@@ -4712,6 +4739,12 @@ export class Game {
     }
     const cx = Math.round(this.cam_x);
     const cy = Math.round(this.cam_y);
+    if (s.ctx) {
+      const now = Date.now() / 1000;
+      s.ctx.fx = this.fx
+        .filter((f) => f.map === this.mapname)
+        .map((f) => ({ kind: f.kind, x: ox + f.x - cx, y: oy + f.y - cy, age: now - f.born, life: f.life }));
+    }
     const hour = this.minutes / 60;
     const classic = s.style === 'classic';
     const night = classic && !m.indoor && m.name !== 'mine' && (hour >= 19 || hour < 5);
@@ -4755,14 +4788,14 @@ export class Game {
         s.tag(px, oy + sy, tag);
       }
     }
-    const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc') => {
+    const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc', dir?: 'up' | 'down' | 'left' | 'right') => {
       const [sx, sy] = [x - cx, y - cy];
       if (0 <= sx && sx < Math.min(vw, m.w) && 0 <= sy && sy < Math.min(vh, m.h)) {
         const px = ox + sx;
         const bg = s.buf[oy + sy][px][2];
         const under = s.tags[oy + sy][px];
         s.put(px, oy + sy, ch, fg, bg, bold);
-        if (under) s.tag(px, oy + sy, { ...under, ent });
+        if (under) s.tag(px, oy + sy, { ...under, ent, ...(dir ? { dir } : {}) });
       }
     };
     // Draw outdoor Dog, Horse, and grazing Chickens/Cows/Sheep on the Farm
@@ -4790,12 +4823,12 @@ export class Game {
     }
     for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
       if (NPCS[n]?.where?.[0] === this.mapname) {
-        at(x, y, NPCS[n].g, NPCS[n].col);
+        at(x, y, NPCS[n].g, NPCS[n].col, true, 'npc', this.npc_face[n] || 'down');
       }
     }
     for (const [n, d] of Object.entries(this.indoor_npcs)) {
       if (d.map === this.mapname && n !== this.married) {
-        at(d.pos[0], d.pos[1], NPCS[n].g, NPCS[n].col);
+        at(d.pos[0], d.pos[1], NPCS[n].g, NPCS[n].col, true, 'npc', this.npc_face[n] || 'down');
       }
     }
     if (this.mapname === 'house' && this.married) {
@@ -4815,7 +4848,7 @@ export class Game {
             : this.riding_horse
               ? '0A'
               : '07';
-    at(this.px, this.py, '@', playerCol, true, 'player');
+    at(this.px, this.py, '@', playerCol, true, 'player', this.face_dir());
 
     if (classic && !m.indoor && m.name !== 'mine' && this.weather !== 'Sunny' && !s.reducedMotion) {
       const rng = py_rng(Math.floor((Date.now() / 1000) * 8));
