@@ -875,6 +875,7 @@ export class Game {
       'Load Diary — Slot 1',
       'Load Diary — Slot 2',
       `Graphics: High-res Detail ${this.scr.hires ? 'On' : 'Off'}`,
+      `Accessible Cues: ${this.scr.accessibleCues ? 'On' : 'Off'}`,
       'Export Save File',
       'Import Save File',
     ];
@@ -926,6 +927,9 @@ export class Game {
     } else if (choice.startsWith('Graphics: High-res Detail')) {
       this.scr.setHires(!this.scr.hires);
       this.msg(`High-res ground detail: ${this.scr.hires ? 'On' : 'Off'}.`, '0C');
+    } else if (choice.startsWith('Accessible Cues')) {
+      this.scr.accessibleCues = !this.scr.accessibleCues;
+      this.msg(`Accessible state cues: ${this.scr.accessibleCues ? 'On' : 'Off'}.`, '0C');
     } else if (choice === 'Use Teleport Stone') {
       await this.use_teleport_stone();
     } else if (choice === 'Help (?)') {
@@ -4667,6 +4671,7 @@ export class Game {
       season: this.season,
       weather: this.map.indoor ? 'Sunny' : this.weather,
       wetness: this.wetness[this.mapname] || 0,
+      cues: s.accessibleCues,
       zoom: 1,
       reducedMotion: s.reducedMotion,
       view: { x: 0, y: 1, w: vw, h: vh },
