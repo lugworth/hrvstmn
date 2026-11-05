@@ -21,7 +21,7 @@ before every PR. Workflow: branch -> PR -> green Vercel preview -> squash-merge;
 ## TL;DR
 
 - **What it is:** a browser farming sim drawn in ASCII on a canvas, built with Next.js 15 App Router, React 19 and pure TypeScript.
-- **State:** working. 92/92 tests pass, typecheck clean, production build passes.
+- **State:** working. 96/96 tests pass, typecheck clean, production build passes.
 - **Visual style:** **Enhanced** only. **Classic** is retained in `screen.ts` / `GameScreen.tsx` and tests, reachable only programmatically via `screen.setStyle('classic')`. **Large** no longer exists.
 - **Next up:** offscreen static-world cache/layered HUD, greenhouse, optional animated doors/windows and CRT mode. See `docs/feature-research.md`.
 - **Watch out for:** `next build` skips type-checking and linting (`next.config.ts`), so always run `npx tsc --noEmit`. Force-push is blocked.
@@ -34,7 +34,7 @@ Requires Node 22 (verified with v22.23.4, npm 10.9.9). No environment variables 
 |------|---------|--------|
 | Install | `npm ci` | Verified 2026-11-04 |
 | Run locally | `npm run dev` then http://localhost:3000; `?autostart=1` skips the title | Verified |
-| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 92 passed, 5 suites, ~4 s |
+| Test | `npm test` (`tsx --test src/game/*.test.ts`) | 96 passed, 5 suites, ~4 s |
 | Typecheck | `npx tsc --noEmit` | Clean; required because the build skips it |
 | Build | `npm run build` | Passes; `/` is static, ~82 kB page / 185 kB first-load |
 | Lint | not configured | `npm run lint` would start Next's interactive ESLint setup; don't run it casually |
@@ -77,7 +77,7 @@ src/game/map.ts                build_* map functions using prebuilt_maps.json
 src/game/rules.ts              Pure rule functions (stamina, tool areas, gifts, quality, mine drops)
 src/game/runtime_helpers.ts    py_* helpers retained from the Python -> TypeScript port
 src/game/enhanced.ts           Enhanced renderer: styleTile, computeFrame, drawFrame, monochrome
-src/game/*.test.ts             node:test — 92 tests: renderer, engine, rules and integration coverage
+src/game/*.test.ts             node:test — 96 tests: renderer, engine, rules and integration coverage
 public/fonts/                  DejaVu Sans Mono subset + licence
 ```
 
@@ -136,6 +136,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #38: doors swing open with warm light when the player stands at them; windows go dark one by one after 10 PM; surf rolls onto the beach; storm whitecaps and wind-driven ripples; one lily-pad/reed system (none on the sea or in winter).
 - #36 `ea02386`: colourblind-safe Accessible Cues (`!` ripe crops, `≈` wet soil) in the Diary menu.
 - #35 `66d44c4`: dirty-rect cell repaint for the Enhanced canvas; full repaint on resize/font/style changes.
 - #34 `e15661c`: short top-down menu/dialog reveal, disabled with reduced motion.

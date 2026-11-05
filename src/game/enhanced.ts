@@ -234,7 +234,6 @@ type Theme = {
   blossom?: string[];
   fruit?: string;
   wildflowers?: string[];
-  lilies?: boolean;
 };
 
 export const THEMES: Theme[] = [
@@ -252,7 +251,7 @@ export const THEMES: Theme[] = [
     trees: ['#2fd010', '#22aa0c', '#188a08'], treeBg: '#041404', treeGlyphs: ['♣', '♠'],
     soilBg: '#22180e', soilDot: '#55402a', weed: '#48b82a',
     waterBg: '#022456', waterBg2: '#053272', waterFg: '#45a0ff',
-    fruit: '#ff4a3a', wildflowers: ['#ffe27a', '#ff6a6a', '#ffffff'], lilies: true,
+    fruit: '#ff4a3a', wildflowers: ['#ffe27a', '#ff6a6a', '#ffffff'],
   },
   {
     // Fall
@@ -332,6 +331,16 @@ const WALKABLE_OPEN = new Set(['grass', 'field', 'path', 'sand', 'flower', 'brid
 const WATERY = new Set(['water', 'fountain', 'spring', 'pond']);
 /** Water colour by distance to the shore: lighter shallows (> 0), darker deeps (< 0). */
 const WATER_DEPTH = [0, 0.18, 0.02, -0.3, -0.55];
+/**
+ * Late at night households go to bed one by one: whether a window is still lit. Every
+ * window is lit until 10 PM; by about 1 AM only one in eight is.
+ */
+export function windowLit(minutes: number, wx: number, wy: number): boolean {
+  const h = (((minutes / 60) % 24) + 24) % 24;
+  const late = h >= 22 ? h - 22 : h < 6 ? h + 2 : 0;
+  return hash(wx, wy, 230) < Math.max(0.12, 1 - late * 0.3);
+}
+
 const FLOOR_INDOOR = new Set(['floor', 'mfloor', 'exit', 'up', 'down']);
 
 type Frame = {
@@ -596,8 +605,12 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       }
       return o;
     }
-    case 'door':
+    case 'door': {
+      // the door swings open while the player stands at it, showing the warm room inside
+      const open = [[0, 1], [0, -1], [-1, 0], [1, 0]].some(([dx, dy]) => F.tags[y + dy]?.[x + dx]?.ent === 'player');
+      if (open) return { ch: '▯', fg: '#ffb050', bg: '#1a0e06', bold: true, glow: '#ffb050', glowR: 6, accent: true };
       return { ch: '▮', fg: '#d08a3a', bg: '#3a2818', bold: true, accent: true };
+    }
     case 'iwall':
       return { ch: '▒', fg: '#6a5844', bg: '#4a3c2e', bold: false };
     case 'mwall':
@@ -664,13 +677,25 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       const shimmer = valueNoise(wx / 6 + T * 0.25, wy / 3 - T * 0.1, 22) - 0.5;
       bg = shimmer > 0 ? mix(bg, '#5a8ad0', shimmer * 0.18) : mix(bg, '#000000', -shimmer * 0.18);
       if (g === '-') return { ch: '∼', fg: '#a8d0ff', bg, bold: false };
-      if (th.lilies && tag.t === 'water' && !F.sea && depth > 1 && hash(wx, wy, 46) < 0.03) return { ch: '◒', fg: '#3aa040', bg, bold: false, accent: true };
       const glint = hash(wx * 2, wy, 80 + (Math.floor(T * 3) % 97));
       if (!F.indoor && F.weather === 'Sunny' && F.amb > 0.85 && glint < 0.014) return { ch: '✦', fg: '#ffffff', bg, bold: true, glow: '#cfe8ff', glowR: 5 };
       if (!F.indoor && F.weather === 'Sunny' && F.amb < 0.5 && hash(wx * 2, wy, 85 + (Math.floor(T * 1.5) % 61)) < 0.012) return { ch: '·', fg: '#e8eeff', bg, bold: true };
       if (tag.t === 'spring' && hash(wx * 2, wy, 20 + (Math.floor(T * 1.2) % 64)) < 0.12) return { ch: '°', fg: '#e8f8ff', bg, bold: false };
-      // ripples run in short streaks that drift across the surface together
-      const r = valueNoise(wx / 3 - T * 0.5, wy * 0.9, 21) * 0.8 + hash(wx, wy, 23) * 0.2;
+      if (F.sea) {
+        // breakers: lines of surf roll in toward the beach, a row at a time
+        let rows = 6;
+        for (let d = 1; d < rows; d++) {
+          const up = F.tags[y - d]?.[x];
+          const dn = F.tags[y + d]?.[x];
+          if ((up && up.t !== 'ui' && !WATERY.has(up.t)) || (dn && dn.t !== 'ui' && !WATERY.has(dn.t))) rows = d;
+        }
+        const ph = (T * 0.4 + rows * 0.3 + valueNoise(wx / 7, 0, 24) * 0.3) % 1;
+        if (rows <= 4 && ph < 0.12) return { ch: '≈', fg: '#e8f0ff', bg: mix(bg, '#5a8ad0', 0.2), bold: true };
+      }
+      // ripples run in short streaks that drift across the surface together; wind speeds them up
+      const wind = F.indoor ? 1 : F.weather === 'Typhoon' ? 2.4 : F.weather === 'Rain' || F.weather === 'Blizzard' ? 1.5 : 1;
+      const r = valueNoise(wx / 3 - T * 0.5 * wind, wy * 0.9, 21) * 0.8 + hash(wx, wy, 23) * 0.2;
+      if (wind > 2 && depth >= 3 && r > 0.66) return { ch: '≋', fg: '#eef2ff', bg, bold: true }; // whitecaps in a storm
       const ch = r > 0.64 ? '≈' : r > 0.54 ? '∼' : ' ';
       return { ch, fg: depth <= 1 ? mix(fgc, '#ffffff', 0.25) : fgc, bg, bold: false };
     }
@@ -933,7 +958,7 @@ export function computeFrame(
     critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
     wildlife(out, tags, v, t, season, ctx.weather, ctx.mapName, sky.amb);
   }
-  if (outdoor) waterLife(out, tags, v, season);
+  if (outdoor) waterLife(out, tags, v, season, ctx.mapName === 'beach');
   if (outdoor && (ctx.weather === 'Rain' || ctx.weather === 'Typhoon')) {
     // everything looks wet and a touch darker in the rain
     for (let y = v.y; y < v.y + v.h && y < H; y++) {
@@ -997,7 +1022,7 @@ export function computeFrame(
         const tag = tags[y][x];
         if (!tag || tag.t === 'ui') continue;
         if (tag.ent === 'player' && sky.lanterns) lights.push({ x, y, r: ctx.mapName === 'mine' ? 8 : 10, col: hexToRgb('#ffd890'), k: 1.15 });
-        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') lights.push({ x, y, r: 3.4, col: hexToRgb('#ffb050'), k: 0.75 });
+        if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=' && windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) lights.push({ x, y, r: 3.4, col: hexToRgb('#ffb050'), k: 0.75 });
         if (sky.windowsLit && tag.t === 'door' && !tag.ent) lights.push({ x, y, r: 4, col: hexToRgb('#ffa040'), k: 0.8 });
         if (tag.t === 'fireplace') lights.push({ x, y, r: 5, col: hexToRgb('#ff8a40'), k: 0.8 });
         if (tag.t === 'mwall' && isTorch(F, x, y, tag)) lights.push({ x, y: y + 1, r: 5, col: hexToRgb('#ff9900'), k: 0.85 });
@@ -1067,11 +1092,18 @@ export function computeFrame(
           }
         }
         if (sky.windowsLit && tag.t === 'wall' && tag.k === 'deco' && tag.dch === '=') {
-          o.fg = '#ffd27a';
-          o.bg = '#5a3410';
-          o.glow = '#ffb040';
-          o.glowR = 10;
-          o.accent = true;
+          if (windowLit(ctx.minutes, tag.wx ?? x, tag.wy ?? y)) {
+            o.fg = '#ffd27a';
+            o.bg = '#5a3410';
+            o.glow = '#ffb040';
+            o.glowR = 10;
+            o.accent = true;
+          } else {
+            // that household has gone to bed: dark glass
+            o.fg = '#3a4452';
+            o.glow = undefined;
+            o.accent = false;
+          }
         }
         if (fireflies && tag.t === 'grass' && !tag.ent) {
           const wx = tag.wx ?? x;
@@ -1402,7 +1434,8 @@ function critters(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['vi
 }
 
 /** Reeds and lily pads: small signs that the water is alive. */
-function waterLife(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], season: number) {
+function waterLife(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], season: number, sea: boolean) {
+  if (sea || season === 3) return; // nothing grows on the open sea, and winter water is bare
   for (let y = v.y; y < v.y + v.h && y < tags.length; y++) {
     for (let x = v.x; x < v.x + v.w && x < tags[y].length; x++) {
       const tg = tags[y][x];
@@ -1410,27 +1443,27 @@ function waterLife(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['v
       const wx = tg.wx ?? x;
       const wy = tg.wy ?? y;
       if (WATERY.has(tg.t)) {
-        if (season !== 3 && hash(wx, wy, 190) < 0.035) {
+        if ((tg.t === 'water' || tg.t === 'pond') && hash(wx, wy, 190) < 0.035) {
           const o = out[y][x];
-          o.ch = 'o';
-          o.fg = '#4fa86a';
-          o.bold = true;
+          o.ch = hash(wx, wy, 193) < 0.6 ? '◡' : '⌓';
+          o.fg = '#256a34';
+          o.bold = false;
           o.accent = true;
           o.plain = true;
           o.seed = undefined;
         }
         continue;
       }
-      if (season === 3 || !GROUND.has(tg.t)) continue;
+      if (!GROUND.has(tg.t)) continue;
       const nearWater = [[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => {
         const n = tags[y + dy]?.[x + dx];
         return !!n && WATERY.has(n.t);
       });
       if (nearWater && hash(wx, wy, 191) < 0.08) {
         const o = out[y][x];
-        o.ch = pick(['Y', '╵', '|'], hash(wx, wy, 192));
-        o.fg = '#6aa870';
-        o.bold = true;
+        o.ch = pick(['¦', 'ʸ', '╽'], hash(wx, wy, 192));
+        o.fg = '#4a8a52';
+        o.bold = false;
         o.accent = true;
         o.plain = true;
         o.seed = undefined;
