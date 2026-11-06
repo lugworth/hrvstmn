@@ -67,6 +67,67 @@ html, body {
     env(safe-area-inset-left, 0px);
 }
 
+/* Framed field kit: the same glyph-like geometry and cyan as the canvas HUD. */
+.tool-dock {
+  grid-area: tools;
+  display: grid;
+  grid-template-columns: minmax(100px, 150px) minmax(0, 660px) minmax(110px, 170px);
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 9px 18px;
+  border-block: 1px solid var(--base02);
+  background: var(--base00);
+  position: relative;
+}
+.tool-dock::before, .tool-dock::after {
+  content: '◇';
+  position: absolute;
+  top: -9px;
+  color: var(--base0C);
+  background: var(--base00);
+  font-size: 12px;
+  pointer-events: none;
+}
+.tool-dock::before { left: 12px; }
+.tool-dock::after { right: 12px; }
+.tool-dock-heading, .tool-dock-detail { display: grid; gap: 6px; font-size: 12px; color: var(--base04); }
+.tool-dock-heading > span { color: var(--base0C); letter-spacing: .1em; }
+.tool-dock small { font-size: 9px; color: var(--base03); letter-spacing: .06em; }
+.tool-dock-detail { text-align: right; }
+.tool-slots { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.tool-slot {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 5px 3px 3px;
+  border: 1px solid var(--base02);
+  color: var(--base04);
+  background: var(--base00);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.tool-slot kbd { position: absolute; top: 4px; left: 5px; font-size: 10px; color: var(--base03); }
+.tool-slot svg { width: 25px; height: 25px; }
+.tool-slot > span { font-size: 10px; font-weight: 700; letter-spacing: .05em; }
+.tool-slot > i { font: normal 8px/1 monospace; color: var(--base02); }
+.tool-slot[aria-pressed="true"] {
+  border-color: var(--base0C);
+  box-shadow: inset 0 0 0 2px var(--base00), inset 0 0 0 3px var(--base01);
+  color: var(--base0C);
+}
+.tool-slot[aria-pressed="true"] > i { color: var(--base0C); }
+.tool-slot:hover:not(:disabled) { border-color: var(--base0C); color: var(--base07); }
+.tool-slot:disabled { opacity: .4; cursor: default; }
+.tool-slot:focus-visible { outline: 2px solid var(--base0C); outline-offset: 2px; }
+@media (max-width: 1000px) {
+  .tool-dock { grid-template-columns: minmax(0, 660px); gap: 0; padding: 7px 12px; }
+  .tool-dock-heading, .tool-dock-detail { display: none; }
+}
+
 /* Contour Farm controls: sharp edges and one cyan primary action. */
 .game-toolbar {
   display: flex;
@@ -108,9 +169,10 @@ html, body {
   --gap: 6px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
   grid-template-areas:
     "stage stage"
+    "tools tools"
     "util util"
     "move act";
   touch-action: none;
@@ -149,10 +211,11 @@ html, body {
   .touch-ui {
     --u: clamp(36px, 11.5vh, 52px);
     grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     grid-template-areas:
       "util-a stage util-b"
-      "move stage act";
+      "move stage act"
+      "move tools act";
   }
   .touch-ui .t-util {
     display: contents;
@@ -181,6 +244,15 @@ html, body {
   .touch-ui .t-act {
     padding: 8px 10px 10px 8px;
   }
+}
+
+.touch-ui .tool-dock { padding: 6px; }
+.touch-ui .tool-slot { min-height: 44px; }
+@media (orientation: landscape) and (max-height: 540px) {
+  .touch-ui .tool-dock { padding: 4px; }
+  .touch-ui .tool-slot { gap: 1px; padding: 3px 2px; }
+  .touch-ui .tool-slot svg { width: 18px; height: 18px; }
+  .touch-ui .tool-slot > span { font-size: 8px; }
 }
 
 .pad-btn,

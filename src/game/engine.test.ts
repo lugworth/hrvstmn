@@ -15,6 +15,9 @@ import {
   LOOKOUT_VIEW,
   LOOKOUT_STAMINA,
   TIDE_POOL_TEXT,
+  RIDGE_HUB,
+  NPCS,
+  TILES,
 } from './constants';
 
 const store: Record<string, string> = {};
@@ -98,6 +101,99 @@ const pinned = async <T>(v: number, fn: () => T | Promise<T>): Promise<T> => {
 };
 
 const REGIONS = ['woods', 'ridge', 'river', 'point'];
+
+describe('Skyline Ridge destinations and tool dock controls', () => {
+  test('the mine, forge and Goddess Pond move to reachable Ridge sites without duplicating old entrances', () => {
+    const g = fresh();
+    assert.equal(g.maps.ridge.doors[RIDGE_HUB.mine.join(',')], 'mine');
+    assert.equal(g.maps.ridge.doors[RIDGE_HUB.forge.join(',')], 'blacksmith');
+    assert.ok(!Object.values(g.maps.mountain.doors).includes('mine'));
+    assert.ok(!Object.values(g.maps.town.doors).includes('blacksmith'));
+    assert.equal(g.maps.mountain.doors['15,8'], 'lakemine', 'winter Lake Mine stays on the lake');
+    const ridge = g.maps.ridge;
+    const queue = Object.keys(ridge.warps).map((key) => key.split(',').map(Number));
+    const seen = new Set<string>();
+    while (queue.length) {
+      const [x, y] = queue.pop()!;
+      const key = `${x},${y}`;
+      if (seen.has(key) || !TILES[ridge.tile(x, y)]?.[3]) continue;
+      seen.add(key);
+      queue.push([x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]);
+    }
+    for (const [x, y] of [RIDGE_HUB.mineExit, RIDGE_HUB.forgeFront, RIDGE_HUB.goddess, RIDGE_HUB.gray]) {
+      assert.ok(seen.has(`${x},${y}`), `reachable approach ${x},${y}`);
+    }
+    assert.equal(ridge.tile(RIDGE_HUB.pond.x, RIDGE_HUB.pond.y), 'pond');
+    assert.equal(NPCS.Gray.where[0], 'ridge');
+    assert.equal(NPCS['Harvest Goddess'].where[0], 'ridge');
+  });
+
+  test('the Spring Mine ladder returns to the Ridge and the Lake Mine ladder still returns to the lake', async () => {
+    const g = fresh();
+    for (const [kind, map, point] of [['spring', 'ridge', RIDGE_HUB.mineExit], ['lake', 'mountain', [15, 9]]] as const) {
+      g.enter_mine(1, kind);
+      g.px = 3; g.py = 3;
+      await g.move(0, -1);
+      assert.equal(g.mapname, map);
+      assert.deepEqual([g.px, g.py], [...point]);
+    }
+  });
+
+  test('Saibara opens the relocated forge and its door returns to Skyline Ridge', async () => {
+    const g = fresh();
+    g.day = 2;
+    g.minutes = 12 * 60;
+    g.warp('ridge', ...RIDGE_HUB.forgeFront);
+    await g.move(0, -1);
+    assert.equal(g.mapname, 'in_blacksmith');
+    assert.equal(g.keeper_of('blacksmith'), 'Saibara');
+    assert.equal(g.indoor_npcs.Saibara?.map, 'in_blacksmith');
+    const services = await g.shop_options('blacksmith');
+    assert.ok(services.some(([label]: [string]) => label.startsWith('Upgrade a Tool')));
+    await g.move(0, 1);
+    assert.equal(g.mapname, 'ridge');
+    assert.deepEqual([g.px, g.py], [...RIDGE_HUB.forgeFront]);
+  });
+
+  test('only the relocated Goddess Pond accepts Goddess offerings', async () => {
+    const g = fresh();
+    quiet(g);
+    g.warp('ridge', 24, 7, [0, -1]);
+    g.give('Egg', 2); g.held = 'Egg';
+    await g.interact();
+    assert.equal(g.goddess_gifts, 1);
+    assert.equal(g.inv.Egg, 1);
+    g.warp('point', 10, 10, [0, 1]);
+    g.maps.point.set(10, 11, 'pond');
+    await g.interact();
+    assert.equal(g.goddess_gifts, 1, 'tide pools keep their own interaction');
+    assert.equal(g.inv.Egg, 1);
+  });
+
+  test('all relocated landmarks have Teleport Stone stops on valid ground', async () => {
+    const g = fresh();
+    for (const label of ['Spring Mine (Skyline Ridge)', 'Goddess Pond (Skyline Ridge)', "Saibara's Forge (Skyline Ridge)"]) {
+      g.menu = async (_title: string, options: string[]) => options.indexOf(label);
+      await g.use_teleport_stone();
+      assert.equal(g.mapname, 'ridge');
+      assert.ok(TILES[g.map.tile(g.px, g.py)]?.[3], label);
+    }
+  });
+
+  test('older saves relocate forage covered by the forge and still reopen in the farmhouse', () => {
+    const g = fresh();
+    const data = g.snapshot();
+    data.forage.ridge = { '41,12': 'Juniper Berry' };
+    g.applySaveData(data);
+    assert.equal(g.mapname, 'house');
+    const found = Object.entries(g.forage.ridge) as [string, string][];
+    assert.equal(found.length, 1);
+    assert.equal(found[0][1], 'Juniper Berry');
+    const [x, y] = found[0][0].split(',').map(Number);
+    assert.ok(TILES[g.maps.ridge.tile(x, y)]?.[3]);
+    assert.deepEqual(data.forage.ridge, { '41,12': 'Juniper Berry' });
+  });
+});
 
 describe('outer-region content', () => {
   test('each region forages from its own seasonal pool, with full item data', () => {

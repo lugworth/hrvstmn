@@ -712,6 +712,13 @@ export const COW_NAMES = ["Bessie", "Daisy", "Clover", "Buttercup", "Moo", "Moch
 export const SHEEP_NAMES = ["Fluffy", "Cotton", "Woolly", "Snowball", "Puff", "Lamby", "Cloud", "Tuft"];
 
 export const TOOLS = ["Sickle", "Hoe", "Hammer", "Axe", "Watering Can", "Fishing Rod"];
+
+/** Shared arrival points for the relocated Skyline Ridge landmarks. */
+export const RIDGE_HUB = {
+  mine: [7, 8], mineExit: [7, 9],
+  pond: { x: 21, y: 5, w: 4, h: 2 }, goddess: [23, 7],
+  forge: [39, 14], forgeFront: [39, 15], gray: [47, 14],
+} as const;
 export const UPGRADABLE = ["Sickle", "Hoe", "Hammer", "Axe", "Watering Can", "Fishing Rod"];
 export const LEVELS = ["Basic", "Copper", "Silver", "Gold", "Mystrile", "Cursed", "Blessed", "Mythic"];
 export const LEVEL_COL = ["04", "09", "05", "0A", "0C", "0E", "07", "0B"];
@@ -1141,9 +1148,9 @@ export const NPCS: Record<string, any> = {
       19
     ],
     "where": [
-      "town",
-      21,
-      9
+      "ridge",
+      RIDGE_HUB.gray[0],
+      RIDGE_HUB.gray[1]
     ],
     "rain": false,
     "bach": false,
@@ -2498,7 +2505,7 @@ export const BOOKS: string[] = [
   "'Blessing Cursed Tools': Carter at the Church Confession Booth can remove or bless Cursed Tools. Bless Hoe/Can 10x, equip Sickle/Hammer 10 days, or swing Rod/Axe 255 times!",
   "'The Seven Harvest Sprites': Behind the Church live Chef, Nappy, Hoggy, Timid, Aqua, Staid, and Bold. Befriend them to 3 hearts with Flour or Grass to hire them or play mini-games!",
   "'Of Livestock & Makers': Saibara builds Mayonnaise, Cheese, and Yarn Makers with Adamantite. Festival winners produce Golden, P-Type, and rare X-Type goods!",
-  "'The Goddess & The Kappa': Throw offerings into the Goddess Pond on Mother's Hill for a Power Berry, and throw 10 Cucumbers into the Lake for Kappa's Blue Berry (no rain fatigue!).",
+  "'The Goddess & The Kappa': Visit the Goddess Pond on Skyline Ridge for a Power Berry, and throw 10 Cucumbers into Mother's Hill Lake for Kappa's Blue Berry (no rain fatigue!).",
   "'TV & Saturday Shopping': Watch TV on Tuesday for cooking recipes and Saturday for TV Shopping—then order at Doug's Inn telephone!",
   "'Marriage & Family': See all 4 Heart Events, upgrade your house with a Big Bed, and present the Blue Feather at Red Heart!",
 ];
@@ -2508,7 +2515,7 @@ export const HELP: string[] = [
   "USE TOOL  space or z (uses equipped tool or sows seeds)",
   "ACT       x / e / enter   talk, gift held item, harvest, forage,",
   "                          ship, enter doors, soak in Hot Spring",
-  "TOOLS     tab / shift-tab cycle,  1-6 pick tool",
+  "TOOLS     click/tap Field Kit,  1-6 select,  tab / shift-tab cycle",
   "RUCKSACK  i   hold/eat/wrap items, equip Gems, blow Whistle",
   "SUMMARY   m   Ranch Summary, Memo, Sprites, Fish & Collectibles",
   "TODAY     y   daily checklist: crops, animals, shipping, events",
@@ -2831,7 +2838,7 @@ Object.assign(NPCS, {
     col: "0C",
     home: "church",
     out: [6, 22],
-    where: ["mountain", 47, 7],
+    where: ["ridge", RIDGE_HUB.goddess[0], RIDGE_HUB.goddess[1]],
     rain: true,
     bach: true,
     loves: ["Strawberry", "Pineapple", "Moondrop Flower", "Toy Flower", "Pink Cat Flower", "Magic Red Flower", "Relaxation Tea"],

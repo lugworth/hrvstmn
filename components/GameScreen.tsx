@@ -3,7 +3,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Screen, Cell } from '@/src/game/screen';
 import { Game } from '@/src/game/engine';
-import { PALETTE } from '@/src/game/constants';
+import { PALETTE, LEVELS } from '@/src/game/constants';
+import ToolDock from './ToolDock';
 import { computeFrame, drawFrame, frameSignature, shakeOffset, frameDirtyRect, type OutCell } from '@/src/game/enhanced';
 import { isCompact } from '@/src/game/compact';
 import {
@@ -37,7 +38,7 @@ const KEYMAP: Record<string, string> = {
 };
 
 /** What the touch controls need to know about the engine, polled a few times a second. */
-type Hud = { label: string; modal: boolean; typing: boolean };
+type Hud = { label: string; modal: boolean; typing: boolean; tool: string; level: number; upgrading: string | null; started: boolean };
 type PadKey = { key: string; label: string; color: string; title: string };
 
 // Touch utility buttons (colours from base16 Isotope Dark).
@@ -105,7 +106,7 @@ export default function GameScreen() {
   const isTouch = inputMode === 'touch';
   const [running, setRunning] = useState(true);
   const [ready, setReady] = useState(false);
-  const [hud, setHud] = useState<Hud>({ label: 'USE', modal: false, typing: false });
+  const [hud, setHud] = useState<Hud>({ label: 'USE', modal: false, typing: false, tool: 'Hoe', level: 0, upgrading: null, started: false });
   const [compact, setCompact] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [draft, setDraft] = useState('');
@@ -536,6 +537,7 @@ export default function GameScreen() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.altKey) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLButtonElement && ['Tab', 'Enter', ' '].includes(e.key)) return;
       let name: string | undefined;
 
       if (e.ctrlKey) {
@@ -598,13 +600,15 @@ export default function GameScreen() {
       const input = inputRef.current;
       if (!input) return;
       input.focus({ preventScroll: true });
-      setHud((prev) => (prev.typing ? prev : { label: 'DONE', modal: true, typing: true }));
+      setHud((prev) => (prev.typing ? prev : { ...prev, label: 'DONE', modal: true, typing: true }));
     };
 
     const hudTimer = setInterval(() => {
       const a = game.context_action();
-      const next: Hud = { label: a.label, modal: game.modal_depth > 0, typing: game.typing };
-      setHud((prev) => (prev.label === next.label && prev.modal === next.modal && prev.typing === next.typing ? prev : next));
+      const next: Hud = { label: a.label, modal: game.modal_depth > 0, typing: game.typing,
+        tool: game.tool, level: game.levels[game.tool] ?? 0, upgrading: game.upgrading?.[0] ?? null, started: game.started };
+      setHud((prev) => (prev.label === next.label && prev.modal === next.modal && prev.typing === next.typing
+        && prev.tool === next.tool && prev.level === next.level && prev.upgrading === next.upgrading && prev.started === next.started ? prev : next));
     }, 200);
 
     // Start game loop in background
@@ -788,6 +792,14 @@ export default function GameScreen() {
           </div>
         )}
       </div>
+
+      {hud.started && (
+        <ToolDock tool={hud.tool} tier={LEVELS[hud.level] ?? 'FIELD TOOL'} upgrading={hud.upgrading}
+          locked={hud.level === 5} disabled={hud.modal} onSelect={(key, pointer) => {
+            press(key);
+            if (pointer && !isTouch) canvasRef.current?.focus({ preventScroll: true });
+          }} />
+      )}
 
       {/* Contour controls retain the newer map, detail, and motion actions. */}
       {inputMode === 'desktop' && (
