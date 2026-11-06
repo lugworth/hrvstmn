@@ -35,6 +35,7 @@ import {
   COW_NAMES,
   SHEEP_NAMES,
   TOOLS,
+  RIDGE_HUB,
   UPGRADABLE,
   LEVELS,
   LEVEL_COL,
@@ -701,6 +702,18 @@ export class Game {
     this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
     this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
     this.rebuild_house();
+    // Saves reopen in the farmhouse. Move any saved Ridge forage covered by new landmarks.
+    if (this.forage.ridge) {
+      const forage = { ...this.forage.ridge };
+      this.forage.ridge = forage;
+      for (const [key, item] of Object.entries(forage)) {
+        const [x, y] = parseCoordKey(key);
+        if (TILES[this.maps.ridge.tile(x, y)]?.[3]) continue;
+        delete forage[key];
+        const spot = this.free_spot('ridge', x, y);
+        if (spot) forage[pkey(...spot)] = item;
+      }
+    }
     this.cam_x = null;
     this.cam_y = null;
     this.setBodyState('playing');
@@ -1001,7 +1014,9 @@ export class Game {
       ['Rose Square (Town)', 'town', 36, 14],
       ['Mineral Beach Pier', 'beach', 32, 10],
       ["Mother's Hill Hot Spring", 'mountain', 8, 14],
-      ['Goddess Pond & Spring Mine', 'mountain', 50, 6],
+      ['Spring Mine (Skyline Ridge)', 'ridge', ...RIDGE_HUB.mineExit],
+      ['Goddess Pond (Skyline Ridge)', 'ridge', RIDGE_HUB.goddess[0] + 1, RIDGE_HUB.goddess[1]],
+      ["Saibara's Forge (Skyline Ridge)", 'ridge', ...RIDGE_HUB.forgeFront],
       ['Lake Mine Island (Mother\'s Hill Lake)', 'mountain', 14, 6],
       ['Cedar Hollow Clearing', 'woods', 44, 19],
       ['Skyline Ridge Lookout', 'ridge', 32, 3],
@@ -1195,7 +1210,7 @@ export class Game {
       if (this.mine_type === 'lake') {
         this.warp('mountain', 15, 9, [0, 1]);
       } else {
-        this.warp('mountain', 52, 5, [0, 1]);
+        this.warp('ridge', ...RIDGE_HUB.mineExit, [0, 1]);
       }
       this.msg('You climb back out into the fresh air.');
     }
@@ -1762,8 +1777,10 @@ export class Game {
       return;
     }
 
-    // Cedar Hollow's mossy pond and Lighthouse Point's tide pools are not the Goddess Pond
-    if (tile === 'pond' && this.mapname !== 'mountain') {
+    const goddessPond = this.mapname === 'ridge' && tx >= RIDGE_HUB.pond.x && tx < RIDGE_HUB.pond.x + RIDGE_HUB.pond.w
+      && ty >= RIDGE_HUB.pond.y && ty < RIDGE_HUB.pond.y + RIDGE_HUB.pond.h;
+    // Other ponds keep their own interactions; only the relocated pond accepts Goddess gifts.
+    if (tile === 'pond' && !goddessPond) {
       if (this.mapname === 'woods') await this.hollow_offering();
       else await this.say(TIDE_POOL_TEXT, 'Tide Pool');
       return;
@@ -3394,7 +3411,7 @@ export class Game {
     }
     const [cost, ore] = UPGRADE[lvl + 1];
     if (this.gold < cost || (this.inv[ore] || 0) < 1) {
-      await this.say(`I need ${cost}G and ${ore} ore from the Spring Mine on Mother's Hill.`, 'Saibara');
+      await this.say(`I need ${cost}G and ${ore} ore from the Spring Mine here on Skyline Ridge.`, 'Saibara');
       return;
     }
     this.gold -= cost;
@@ -4933,9 +4950,22 @@ export class Game {
   /** The right-side Contour Farm HUD. Grid bounds also cover short/touch viewports. */
   draw_contour_side(x: number, y: number, w: number): void {
     const s = this.scr;
-    const end = s.ctx?.divY ?? s.h - 2;
+    const end = (s.ctx?.divY ?? s.h - 2) - 1;
     const compact = s.h < 30;
     const gap = s.h >= 38 ? 2 : 1;
+    const left = x - 2;
+    const frameW = w + 4;
+    const ornament = (col: number, row: number, text: string, color = '02') => {
+      s.put(col, row, text, color);
+      for (let i = 0; i < text.length; i++) s.tag(col + i, row, { t: 'ui', k: 'hud:ornament' });
+    };
+    ornament(left, 0, '╔' + '═'.repeat(frameW - 2) + '╗');
+    ornament(left + Math.floor(frameW / 2), 0, '◇', '0C');
+    for (let row = 1; row < end; row++) {
+      ornament(left, row, '║');
+      ornament(left + frameW - 1, row, '║');
+    }
+    ornament(left, end, '╚' + '═'.repeat(frameW - 2) + '╝');
     const clip = (text: string, width = w) => text.length > width ? text.slice(0, Math.max(0, width - 1)) + '…' : text;
     const line = (row: number, text: string, col = '05', bold = false) => {
       if (row < end) s.put(x, row, clip(text), col, '00', bold);
@@ -4984,7 +5014,8 @@ export class Game {
       pair(y, `${this.inv[tool] || 0} bags`, inSeason ? 'IN SEASON' : 'OFF-SEASON', inSeason ? '0B' : '08');
     }
     y++;
-    line(y++, '─'.repeat(Math.min(w, 18)), '0C');
+    ornament(left, y++, '╟' + '─'.repeat(Math.floor((frameW - 3) / 2)) + '◇'
+      + '─'.repeat(Math.ceil((frameW - 3) / 2)) + '╢', '0C');
     y += gap - 1;
 
     const fraction = clamp(this.stamina / this.max_stamina, 0, 1);
@@ -4995,6 +5026,8 @@ export class Game {
       s.put(x + i, y, '─', i < filled ? staminaCol : '01');
       s.tag(x + i, y, { t: 'ui', k: i < filled ? 'hud:meter' : 'hud:meter:empty' });
     }
+    ornament(x - 1, y, '╞', staminaCol);
+    ornament(x + w, y, '╡', staminaCol);
     y++;
     pair(y++, 'FATIGUE', `${this.fatigue}/100`, this.fatigue < 50 ? '04' : this.fatigue < 80 ? '09' : '08');
     y += gap;
@@ -5015,7 +5048,8 @@ export class Game {
       pair(y++, 'BARN', hungry ? `${hungry} hungry` : `${this.animals.length} fed`, hungry ? '08' : '04');
     }
     if (this.power_berries || this.has_mystic_berry) pair(y++, 'BERRIES', `${this.power_berries}${this.has_mystic_berry ? ' + Mystic' : ''}`);
-    if (y + 2 < end) line(end - 1, this.map.title + (this.map.indoor ? ' / INDOORS' : ''), '04');
+    const place = clip(this.map.title.toUpperCase(), frameW - 6);
+    ornament(left + Math.floor((frameW - place.length - 2) / 2), end, ` ${place} `, '04');
   }
 
   draw_topbar(W: number): void {
@@ -5229,7 +5263,7 @@ export class Game {
       if (t === 'tree') return ['♣', '0B'];
       if (t === 'field') return ['▒', '04'];
       if (t === 'cliff') return ['▲', '08'];
-      if (t === 'door' || t === 'exit') return ['+', '09'];
+      if (t === 'door' || t === 'exit' || t === 'cave') return ['+', '09'];
       if (t === 'roof' || t === 'wall' || t === 'iwall' || t === 'mwall') return ['▮', '09'];
       if (t === 'flower') return ['*', '0A'];
       return [' ', '02'];

@@ -1,4 +1,4 @@
-import { TILES, INTERIOR_LAYOUTS, INTERIOR_LEGEND, BUILDINGS, pkey } from './constants';
+import { TILES, INTERIOR_LAYOUTS, INTERIOR_LEGEND, BUILDINGS, RIDGE_HUB, pkey } from './constants';
 import prebuiltMaps from './prebuilt_maps.json';
 import { py_rng } from './runtime_helpers';
 
@@ -132,7 +132,16 @@ export function build_farm(): GameMap {
 
 export function build_town(): GameMap {
   const m = GameMap.fromPrebuilt('town');
-  // Mineral Town Museum, between the blacksmith and the library on the north row.
+  // Saibara moved to Skyline Ridge. Clear the old footprint and its roof/sign lettering.
+  for (let y = 2; y <= 6; y++) for (let x = 16; x <= 26; x++) {
+    m.set(x, y, 'grass');
+    delete m.deco[pkey(x, y)];
+    delete m.doors[pkey(x, y)];
+  }
+  m.rect(20, 4, 3, 3, 'path');
+  m.set(21, 4, 'sign');
+  m.signs[pkey(21, 4)] = "Saibara's Blacksmith has moved to Skyline Ridge, north of Mother's Hill. Follow the switchback trail to the forge.";
+  // Mineral Town Museum and library on the north row.
   m.building(28, 2, 8, 5, 4, 'museum', 'MUSEUM', '0C');
   // Add Harvest Sprite Hut behind the Church in NE area (below Church at y=9..12 so Church at y=2..6 is untouched)
   m.building(61, 9, 9, 4, 4, 'sprites', 'SPRITES', '0A');
@@ -166,10 +175,12 @@ export function build_mountain(): GameMap {
   m.set(5, 17, 'sign');
   m.signs[pkey(5, 17)] = 'Hot Spring — Step in or press X to soak (+Stamina, -Fatigue). Hold an Egg and press X to make a Spa-Boiled Egg!';
 
-  // Goddess Pond waterfall next to Spring Mine entrance
-  m.rect(45, 7, 3, 2, 'pond');
+  // Spring Mine and the Goddess Pond now sit on Skyline Ridge; Lake Mine stays here.
+  delete m.doors[pkey(52, 4)];
+  m.set(52, 4, 'cliff');
+  m.signs[pkey(38, 22)] = "Mother's Hill — Lake Mine to the west. Skyline Ridge, Spring Mine, Goddess Pond and Saibara's forge are to the north.";
   m.set(44, 8, 'sign');
-  m.signs[pkey(44, 8)] = 'Goddess Pond — Hold an item and press X facing the pond to make an offering to the Harvest Goddess!';
+  m.signs[pkey(44, 8)] = 'Spring Mine and the Goddess Pond have moved to Skyline Ridge. Take the north trail!';
 
   // Lake Mine island in the middle of Mother's Hill Lake (surrounded by water; freezes in Winter!)
   m.rect(14, 8, 3, 2, 'grass');
@@ -292,6 +303,36 @@ export function build_ridge(): GameMap {
   m.rect(44, 2, 8, 4, 'water');
   m.set(33, 6, 'sign');
   m.signs[pkey(33, 6)] = 'ridge_lookout';
+
+  // Spring Mine is cut into the lower cliff face, beside the first upper switchback.
+  m.rect(4, 6, 7, 3, 'cliff');
+  m.rect(6, 9, 3, 2, 'path');
+  m.rect(7, 10, 8, 2, 'path');
+  m.set(...RIDGE_HUB.mine, 'cave');
+  m.doors[pkey(...RIDGE_HUB.mine)] = 'mine';
+  m.set(9, 9, 'sign');
+  m.signs[pkey(9, 9)] = 'Spring Mine — Bring a Hammer and Hoe. The ladder returns to Skyline Ridge.';
+
+  // The Goddess keeps a quiet pond on the upper terrace; the cold tarn stays to the east.
+  m.rect(19, 4, 9, 4, 'grass');
+  m.rect(19, 4, 9, 1, 'path');
+  m.rect(26, 4, 2, 4, 'path');
+  const pond = RIDGE_HUB.pond;
+  m.rect(pond.x, pond.y, pond.w, pond.h, 'pond');
+  m.set(27, 6, 'sign');
+  m.signs[pkey(27, 6)] = 'Goddess Pond — Hold an item and press X facing the water to offer it to the Harvest Goddess.';
+
+  // A working forge on the middle terrace, with a clear approach from the eastern trail.
+  m.rect(32, 11, 16, 5, 'grass');
+  m.building(33, 11, 13, 4, 6, 'blacksmith', 'BLACKSMITH', '03');
+  m.deco[pkey(35, 14)] = ['=', '0C'];
+  m.deco[pkey(43, 14)] = ['=', '0C'];
+  m.rect(39, 15, 12, 1, 'path');
+  m.rect(46, 11, 5, 5, 'path');
+  m.set(37, 15, 'sign');
+  m.signs[pkey(37, 15)] = "Saibara's Blacksmith — Tool upgrades, makers and metalwork. Open 10 AM–4 PM; closed Thursday.";
+  m.set(23, 21, 'sign');
+  m.signs[pkey(23, 21)] = 'Skyline Ridge — Forge to the east, Spring Mine on the next terrace, Goddess Pond and lookout above.';
   return m;
 }
 

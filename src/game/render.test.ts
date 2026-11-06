@@ -296,6 +296,24 @@ describe('engine + renderer', () => {
 });
 
 describe('right-side Contour Farm HUD', () => {
+  test('ornamental frames stay outside the map and preserve the two heading regions', () => {
+    for (const [width, height] of [[80, 24], [132, 30], [160, 50]]) {
+      const s = new Screen(width, height);
+      const g = new Game(s, true) as any;
+      g.new_game('Pete', 'Moon');
+      g.warp('ridge', 39, 15);
+      g.render();
+      const ornaments = s.tags.flatMap((row, y) => row.map((tag, x) => ({ tag, x, y })))
+        .filter(({ tag }) => tag?.k === 'hud:ornament');
+      assert.ok(ornaments.length > 40);
+      assert.ok(ornaments.every(({ x, y }) => x > s.ctx!.divX && x < width && y < s.ctx!.divY));
+      assert.equal(s.boxes.length, 0, 'HUD frames are not modal boxes');
+      const frame = computeFrame(s, 0);
+      assert.equal(frame.flat().filter((cell) => cell.label).length, 2);
+      assert.ok(frame.flat().some((cell) => cell.ch === '╔' && cell.ui));
+    }
+  });
+
   test('date and status remain inside the right panel at every supported size', () => {
     for (const [width, height] of [[80, 24], [100, 28], [132, 30], [160, 50]]) {
       const s = new Screen(width, height);
