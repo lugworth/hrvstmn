@@ -1,0 +1,145 @@
+{
+  "$description": "HRVSTMN colours: base16 Isotope Dark. Import in Figma: Variables > Import (design tokens JSON).",
+  "color": {
+    "base00": {
+      "$type": "color",
+      "$value": "#000000",
+      "$description": "black"
+    },
+    "base01": {
+      "$type": "color",
+      "$value": "#404040",
+      "$description": "grey 1"
+    },
+    "base02": {
+      "$type": "color",
+      "$value": "#606060",
+      "$description": "grey 2"
+    },
+    "base03": {
+      "$type": "color",
+      "$value": "#808080",
+      "$description": "grey 3"
+    },
+    "base04": {
+      "$type": "color",
+      "$value": "#c0c0c0",
+      "$description": "grey 4"
+    },
+    "base05": {
+      "$type": "color",
+      "$value": "#d0d0d0",
+      "$description": "grey 5 (text)"
+    },
+    "base06": {
+      "$type": "color",
+      "$value": "#e0e0e0",
+      "$description": "grey 6"
+    },
+    "base07": {
+      "$type": "color",
+      "$value": "#ffffff",
+      "$description": "white"
+    },
+    "base08": {
+      "$type": "color",
+      "$value": "#ff0000",
+      "$description": "red"
+    },
+    "base09": {
+      "$type": "color",
+      "$value": "#ff9900",
+      "$description": "orange"
+    },
+    "base0A": {
+      "$type": "color",
+      "$value": "#ff0099",
+      "$description": "pink"
+    },
+    "base0B": {
+      "$type": "color",
+      "$value": "#33ff00",
+      "$description": "green"
+    },
+    "base0C": {
+      "$type": "color",
+      "$value": "#00ffff",
+      "$description": "cyan"
+    },
+    "base0D": {
+      "$type": "color",
+      "$value": "#0066ff",
+      "$description": "blue"
+    },
+    "base0E": {
+      "$type": "color",
+      "$value": "#cc00ff",
+      "$description": "purple"
+    },
+    "base0F": {
+      "$type": "color",
+      "$value": "#3300ff",
+      "$description": "indigo"
+    }
+  },
+  "ui": {
+    "background": {
+      "$type": "color",
+      "$value": "#000000"
+    },
+    "text": {
+      "$type": "color",
+      "$value": "#d0d0d0"
+    },
+    "text-strong": {
+      "$type": "color",
+      "$value": "#ffffff"
+    },
+    "text-muted": {
+      "$type": "color",
+      "$value": "#808080"
+    },
+    "border": {
+      "$type": "color",
+      "$value": "#606060"
+    },
+    "button-fill": {
+      "$type": "color",
+      "$value": "#404040"
+    },
+    "primary": {
+      "$type": "color",
+      "$value": "#00ffff"
+    },
+    "on-primary": {
+      "$type": "color",
+      "$value": "#000000"
+    },
+    "checked": {
+      "$type": "color",
+      "$value": "#33ff00"
+    },
+    "warning": {
+      "$type": "color",
+      "$value": "#ff9900"
+    },
+    "danger": {
+      "$type": "color",
+      "$value": "#ff0000"
+    }
+  },
+  "grid": {
+    "cell-width": {
+      "$type": "number",
+      "$value": 12
+    },
+    "cell-height": {
+      "$type": "number",
+      "$value": 25
+    },
+    "glyph-size": {
+      "$type": "number",
+      "$value": 20
+    }
+  }
+}
