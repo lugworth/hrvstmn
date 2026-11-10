@@ -128,6 +128,28 @@ const withRandom = <T,>(values: number[], fn: () => T): T => {
   }
 };
 
+describe('the rearranged valley', () => {
+  test('forage saved under a building that has since moved in is dropped on load', () => {
+    const g = fresh();
+    const door = Object.keys(g.maps.river.doors)[0].split(',').map(Number);
+    g.forage.river = { [`${door[0]},${door[1] - 1}`]: 'Watercress', '3,3': 'Watercress' };
+    g.save(2);
+    const b = new Game(new Screen(132, 30), true) as any;
+    b.load(2);
+    assert.deepEqual(Object.keys(b.forage.river), ['3,3']);
+  });
+
+  test('dig spots and forage turn up in Ironwood Grove, and the Teleport Stone reaches the forge', () => {
+    const g = fresh();
+    assert.ok(DIG_MAPS.includes('grove'));
+    for (const season of SEASONS) assert.ok(REGION_FORAGE.grove[season].length >= 3, season);
+    for (const pool of Object.values(REGION_FORAGE.grove)) for (const item of pool) assert.ok(ITEMS[item], `${item} is a real item`);
+    g.spawn_forage();
+    assert.ok(Object.keys(g.forage.grove).length > 0);
+    assert.ok(g.walkable('grove', 22, 18), 'the Teleport Stone lands on open ground by the forge');
+  });
+});
+
 describe('daily surprises', () => {
   const digsOn = (g: any, map: string) => Object.entries(g.objs[map] || {}).filter(([, o]) => o === 'dig').map(([k]) => k);
 

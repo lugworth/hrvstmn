@@ -564,12 +564,14 @@ function uiGroup(frame: OutCell[][], x0: number, y0: number, w: number, h: numbe
   // ---- world layout: every outdoor area as one movable picture, with the paths between them
   {
     usedIds.clear();
-    const G = 2;
+    // Areas sit side by side as in the game: each one's gate lines up with its neighbour's.
+    const G = 1;
     const PLACE: Record<string, [number, number, string]> = {
-      ridge: [0, -52 - 2 * G, 'SKYLINE RIDGE'], mountain: [0, -26 - G, "MOTHER'S HILL"], farm: [-64 - G, 0, 'YOUR FARM'], town: [0, 0, 'MINERAL TOWN'],
-      river: [72 + G, 0, 'WILLOW BEND'], woods: [-64 - G, 28 + G, 'CEDAR HOLLOW'], beach: [4, 32 + G, 'BEACH'], point: [4 + 64 + G, 32 + G, 'LIGHTHOUSE POINT'],
+      ridge: [0, -52 - 2 * G, 'SKYLINE RIDGE'], mountain: [0, -26 - G, "MOTHER'S HILL"],
+      grove: [-128 - 2 * G, 0, 'IRONWOOD GROVE'], farm: [-64 - G, 0, 'YOUR FARM'], town: [0, 0, 'MINERAL TOWN'], river: [72 + G, 0, 'WILLOW BEND'],
+      woods: [-64 - G, 28 + G, 'CEDAR HOLLOW'], beach: [4, 32 + G, 'BEACH'], point: [4 + 64 + G, 32 + G, 'LIGHTHOUSE POINT'],
     };
-    const minX = -64 - G - 3;
+    const minX = -128 - 2 * G - 3;
     const minY = -52 - 2 * G - 4;
     const px = (t: number) => (t - minX) * CW;
     const py = (t: number) => (t - minY) * CH;
@@ -596,7 +598,7 @@ function uiGroup(frame: OutCell[][], x0: number, y0: number, w: number, h: numbe
         );
       }
     }
-    const W = (72 + G + 64 + 64 + G + 6) * CW;
+    const W = (128 + 2 * G + 72 + G + 64 + 6) * CW;
     const H = (52 + 2 * G + 32 + G + 24 + 7) * CH;
     files['maps/world-layout.svg'] = svgDoc(W, H, group('world', [group('areas', parts), group('paths-between-areas', links), label('HRVSTMN — the valley', 36, 44, 30, '#00ffff', true, 'world-title')]), new Set());
   }

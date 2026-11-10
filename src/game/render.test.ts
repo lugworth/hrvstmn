@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { Screen, VisualStyle } from './screen';
 import { Game, MASTERY_DISCIPLINES } from './engine';
 import { computeFrame } from './enhanced';
-import { TILES } from './constants';
+import { TILES, NPCS } from './constants';
 
 function farm(style?: VisualStyle) {
   const s = new Screen(132, 30);
@@ -130,9 +130,9 @@ describe('engine + renderer', () => {
     assert.ok(g.scr.ctx.fx.some((f: { kind: string; stuff?: string }) => f.kind === 'debris' && f.stuff === 'stone'), 'extras reach the renderer');
   });
 
-  test('the valley spreads over eight outdoor areas, all linked both ways and reachable from the farm', () => {
+  test('the valley spreads over nine outdoor areas, all linked both ways and reachable from the farm', () => {
     const { g } = farm();
-    const outdoor = ['farm', 'town', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point'];
+    const outdoor = ['farm', 'town', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point', 'grove'];
     for (const name of outdoor) assert.ok(g.maps[name], name);
     const pass = (m: any, x: number, y: number) => m.inside(x, y) && !!TILES[m.tile(x, y)]?.[3];
     // every edge warp lands on open ground a step or two from a warp back
@@ -164,21 +164,60 @@ describe('engine + renderer', () => {
     }
     assert.deepEqual([...maps].sort(), [...outdoor].sort());
     // inside the new regions every patch of open ground is reachable, so nothing spawns out of reach
-    for (const name of ['woods', 'ridge', 'river', 'point']) {
+    for (const name of ['woods', 'ridge', 'river', 'point', 'grove']) {
       const m = g.maps[name];
       for (let y = 0; y < m.h; y++) {
         for (let x = 0; x < m.w; x++) if (pass(m, x, y)) assert.ok(seen.has(`${name}:${x},${y}`), `${name} ${x},${y} is unreachable`);
       }
     }
-    // the road out of town to Willow Bend joins the town's paths
-    for (let x = 61; x <= 71; x++) assert.ok(pass(g.maps.town, x, 13), `town ${x},13`);
+    // the East Road runs from Rose Square out to Willow Bend
+    for (let x = 44; x <= 71; x++) for (const y of [11, 12, 13]) assert.equal(g.maps.town.tile(x, y), 'path', `town ${x},${y}`);
+    // every building can be walked to, and stepping back out of it lands at its own front door
+    const doors: Record<string, string[]> = {};
+    for (const name of outdoor) {
+      const m = g.maps[name];
+      for (const [key, id] of Object.entries(m.doors) as [string, string][]) {
+        (doors[name] ||= []).push(id);
+        const [dx, dy] = key.split(',').map(Number);
+        const inside = g.interiors[id];
+        if (!inside) continue; // caves and farm buildings have no walk-in interior
+        assert.equal(m.tile(dx, dy + 1), 'path', `${id}: a path leads to the door in ${name}`);
+        assert.ok(seen.has(`${name}:${dx},${dy + 1}`), `${id}: its doorstep in ${name} can be reached on foot`);
+        const [to, wx, wy] = Object.values(g.maps[inside.map].warps)[0] as [string, number, number];
+        assert.deepEqual([to, wx, wy], [name, dx, dy + 1], `${id}: leaving it lands on its doorstep`);
+      }
+    }
+    // the town keeps its services; the crafts and farms are out in the countryside
+    assert.deepEqual(doors.town.sort(), ['church', 'clinic', 'inn', 'library', 'mayor', 'museum', 'supermarket']);
+    assert.deepEqual(doors.grove, ['blacksmith']);
+    assert.deepEqual(doors.woods.sort(), ['poultry', 'winery', 'yodel']);
+    assert.deepEqual(doors.river, ['sprites']);
+    assert.deepEqual(doors.point, ['zack']);
+    assert.deepEqual(doors.beach, ['kai_shack']);
+    // a building carries its lettering with it: the forge still reads BLACKSMITH in the grove
+    const forge = Object.keys(g.maps.grove.doors)[0].split(',').map(Number);
+    const sign = Array.from({ length: 11 }, (_, i) => g.maps.grove.deco[`${forge[0] - 5 + i},${forge[1] - 2}`]?.[0] ?? ' ').join('').trim();
+    assert.equal(sign, 'BLACKSMITH');
   });
+
+  test('villagers whose homes moved wait outside their new front doors', () => {
+    const { g } = farm();
+    const homes: Record<string, [string, string]> = { Gray: ['grove', 'blacksmith'], Popuri: ['woods', 'poultry'], May: ['woods', 'yodel'], Duke: ['woods', 'winery'], Mary: ['town', 'library'] };
+    for (const [who, [map, id]] of Object.entries(homes)) {
+      const [mp, ax, ay] = NPCS[who].where!;
+      assert.equal(mp, map, `${who} stands in ${map}`);
+      const door = Object.entries(g.maps[map].doors).find(([, d]) => d === id)![0].split(',').map(Number);
+      assert.ok(Math.abs(ax - door[0]) <= 2 && ay - door[1] >= 1 && ay - door[1] <= 3, `${who} is by the ${id} door`);
+      assert.ok(g.walkable(map, ax, ay), `${who}'s spot is open ground`);
+    }
+  });
+
 
   test('the outer regions get forage, and fallen branches gather in the woods each day', () => {
     const { g } = farm();
     g.objs.woods = {};
     g.spawn_forage();
-    for (const name of ['woods', 'ridge', 'river', 'point']) assert.ok(Object.keys(g.forage[name] || {}).length > 0, name);
+    for (const name of ['woods', 'ridge', 'river', 'point', 'grove']) assert.ok(Object.keys(g.forage[name] || {}).length > 0, name);
     const branches = Object.entries(g.objs.woods).filter(([, v]) => v === 'branch');
     assert.ok(branches.length >= 5);
     for (const [k] of branches) {

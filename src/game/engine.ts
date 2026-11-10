@@ -12,6 +12,7 @@ import {
   build_ridge,
   build_river,
   build_point,
+  build_grove,
   link_regions,
   build_house,
   build_interior,
@@ -167,9 +168,9 @@ export const MASTERY_REWARD_ITEMS: Record<MasteryDiscipline, string> = {
 };
 
 /** Every outdoor map, for weather and wetness bookkeeping. */
-const OUTDOOR_MAPS = ['farm', 'town', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point'];
+const OUTDOOR_MAPS = ['farm', 'town', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point', 'grove'];
 /** Forage spots spawned per map each day (winter thins the inland ones). */
-const FORAGE_TARGET: Record<string, number> = { mountain: 11, beach: 4, woods: 10, ridge: 8, river: 6, point: 4 };
+const FORAGE_TARGET: Record<string, number> = { mountain: 11, beach: 4, woods: 10, ridge: 8, river: 6, point: 4, grove: 8 };
 
 export class Game {
   [key: string]: any;
@@ -359,6 +360,7 @@ export class Game {
       ridge: build_ridge(),
       river: build_river(),
       point: build_point(),
+      grove: build_grove(),
       house: build_house(),
     };
     link_regions(this.maps);
@@ -707,6 +709,7 @@ export class Game {
     this.objs.farm = { ...(d.objs || {}) };
     this.hp = { ...(d.hp || {}) };
     this.forage = { mountain: {}, beach: {}, ...(d.forage || {}) };
+    this.prune_forage();
     this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
     this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
     this.rebuild_house();
@@ -1016,6 +1019,7 @@ export class Game {
       ['Skyline Ridge Lookout', 'ridge', 32, 3],
       ['Willow Bend Bridge', 'river', 30, 12],
       ['Lighthouse Point', 'point', 40, 12],
+      ["Ironwood Grove (Saibara's Forge)", 'grove', 22, 18],
     ];
     const sel = await this.menu(
       'Teleport Stone — Warp Where?',
@@ -2831,7 +2835,7 @@ export class Game {
         }),
         'Leave Sprite Hut',
       ];
-      const sel = await this.menu('Harvest Sprite Hut (Behind the Church)', opts);
+      const sel = await this.menu('Harvest Sprite Hut (Willow Bend)', opts);
       if (sel === null || sel === SPRITES.length) return;
       const sp = SPRITES[sel];
       await this.sprite_interact(sp);
@@ -4749,6 +4753,19 @@ export class Game {
     this.last = Date.now() / 1000;
   }
 
+  /** Drop saved forage that no longer lies on open ground (buildings have moved since older saves). */
+  prune_forage(): void {
+    for (const [name, items] of Object.entries(this.forage)) {
+      const m = this.maps[name];
+      if (!m) continue;
+      for (const k of Object.keys(items)) {
+        const [x, y] = parseCoordKey(k);
+        const t = m.tile(x, y);
+        if (t !== 'grass' && t !== 'sand') delete items[k];
+      }
+    }
+  }
+
   /** Today's forage list for a map: an outer region's own pool, or the valley-wide seasonal list. */
   forage_pool(mapKey: string): string[] {
     return REGION_FORAGE[mapKey]?.[this.season_name] || FORAGE[this.season_name] || ['Blue Grass'];
@@ -4756,7 +4773,7 @@ export class Game {
 
   spawn_forage(): void {
     const rng = py_rng();
-    for (const mapKey of ['mountain', 'beach', 'woods', 'ridge', 'river', 'point']) {
+    for (const mapKey of ['mountain', 'beach', 'woods', 'ridge', 'river', 'point', 'grove']) {
       const m = this.maps[mapKey];
       if (!m) continue;
       const items = this.forage_pool(mapKey);
@@ -5921,7 +5938,7 @@ export class Game {
       t
     );
     await this.say(
-      `Visit the 7 Harvest Sprites behind the Church, soak in the Hot Spring on Mother's Hill, explore the 255-floor Spring & Lake Mines, and press M anytime for your Ranch Summary!`,
+      `Visit the 7 Harvest Sprites at Willow Bend, soak in the Hot Spring on Mother's Hill, explore the 255-floor Spring & Lake Mines, and press M anytime for your Ranch Summary!`,
       t
     );
   }
