@@ -1949,7 +1949,7 @@ function wildlife(
   amb: number
 ) {
   if (weather !== 'Sunny' && weather !== 'Cloudy' && weather !== 'Snow') return;
-  if (!['beach', 'farm', 'mountain', 'town', 'woods', 'ridge', 'river', 'point'].includes(mapName) || amb < 0.4) return;
+  if (!['beach', 'farm', 'mountain', 'town', 'woods', 'ridge', 'river', 'point', 'grove'].includes(mapName) || amb < 0.4) return;
   const count = SEA_MAPS.has(mapName) || mapName === 'woods' ? 2 : 1;
   for (let i = 0; i < count; i++) {
     const x = v.x + Math.floor(hash(i, mapName.length, 201) * v.w);
@@ -1960,7 +1960,7 @@ function wildlife(
     if (SEA_MAPS.has(mapName) && tg.t === 'sand') {
       const flip = Math.floor(t * 4 + i) % 2 === 0;
       out[y][x] = { ...o, ch: flip ? 'v' : 'w', fg: '#e08040', bold: true, accent: true, plain: true, seed: undefined };
-    } else if (['farm', 'mountain', 'woods', 'ridge', 'river'].includes(mapName) && tg.t === 'grass') {
+    } else if (['farm', 'mountain', 'woods', 'ridge', 'river', 'grove'].includes(mapName) && tg.t === 'grass') {
       const hop = Math.floor(t * 1.5 + i) % 3 === 0;
       out[y][x] = { ...o, ch: hop ? 'ᵣ' : 'r', fg: season === 3 ? '#e8f4ff' : '#d8c8a8', bold: true, accent: true, plain: true, seed: undefined };
     } else if (mapName === 'town' && (tg.t === 'path' || tg.t === 'grass')) {

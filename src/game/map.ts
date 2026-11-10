@@ -114,6 +114,62 @@ export class GameMap {
   }
 }
 
+// ---------------------------------------------------------------- buildings that moved out of town
+// The valley was rearranged so the town keeps its services (shop, inn, clinic, mayor, church,
+// library, museum) and the crafts and farms sit out in the countryside. The four buildings drawn
+// into the town's prebuilt layout are lifted from it, so they look the same in their new homes.
+
+type Piece = { cells: [number, number, string][]; deco: [number, number, [string, string]][]; doors: [number, number, string][] };
+
+/** Where each relocated building stands in the town's prebuilt drawing: x, y, width, height. */
+const TOWN_PLOTS = {
+  blacksmith: [16, 2, 11, 5],
+  library: [40, 2, 11, 5],
+  poultry: [45, 15, 12, 5],
+  yodel: [59, 15, 12, 5],
+} as const;
+
+/** A building from the town's drawing (roof, walls, door, lettering and door id), relative to its plot. */
+function townBuilding(name: keyof typeof TOWN_PLOTS): Piece {
+  const src = GameMap.fromPrebuilt('town');
+  const [px, py, w, h] = TOWN_PLOTS[name];
+  const piece: Piece = { cells: [], deco: [], doors: [] };
+  for (let y = py; y < py + h; y++) {
+    for (let x = px; x < px + w; x++) {
+      const t = src.tile(x, y);
+      if (t !== 'roof' && t !== 'wall' && t !== 'door') continue;
+      piece.cells.push([x - px, y - py, t]);
+      const k = pkey(x, y);
+      if (src.deco[k]) piece.deco.push([x - px, y - py, src.deco[k]]);
+      if (src.doors[k]) piece.doors.push([x - px, y - py, src.doors[k]]);
+    }
+  }
+  return piece;
+}
+
+/** Stand a lifted building with its top-left corner at (x, y). */
+function placeBuilding(m: GameMap, piece: Piece, x: number, y: number): void {
+  for (const [dx, dy, t] of piece.cells) {
+    m.set(x + dx, y + dy, t);
+    delete m.deco[pkey(x + dx, y + dy)];
+  }
+  for (const [dx, dy, d] of piece.deco) m.deco[pkey(x + dx, y + dy)] = d;
+  for (const [dx, dy, id] of piece.doors) m.doors[pkey(x + dx, y + dy)] = id;
+}
+
+/** Turn a plot back into open ground: tiles, lettering, doors and signs all go. */
+function clearPlot(m: GameMap, x: number, y: number, w: number, h: number, tile = 'grass'): void {
+  for (let yy = y; yy < y + h; yy++) {
+    for (let xx = x; xx < x + w; xx++) {
+      const k = pkey(xx, yy);
+      m.set(xx, yy, tile);
+      delete m.deco[k];
+      delete m.doors[k];
+      delete m.signs[k];
+    }
+  }
+}
+
 export function build_farm(): GameMap {
   const m = GameMap.fromPrebuilt('farm');
   // Add Honey & Apple Tree next to Farmhouse
@@ -132,16 +188,36 @@ export function build_farm(): GameMap {
 
 export function build_town(): GameMap {
   const m = GameMap.fromPrebuilt('town');
-  // Mineral Town Museum, between the blacksmith and the library on the north row.
-  m.building(28, 2, 8, 5, 4, 'museum', 'MUSEUM', '0C');
-  // Add Harvest Sprite Hut behind the Church in NE area (below Church at y=9..12 so Church at y=2..6 is untouched)
-  m.building(61, 9, 9, 4, 4, 'sprites', 'SPRITES', '0A');
-  m.rect(61, 7, 2, 2, 'path');
-  m.rect(61, 13, 10, 1, 'path'); // also the road out to Willow Bend
-  // Add Aja Winery in NW area with cobblestone alley to the street
-  m.building(3, 9, 9, 4, 4, 'winery', 'WINERY', '0E');
-  m.rect(15, 7, 1, 13, 'path');
-  m.rect(7, 13, 9, 1, 'path');
+  // The forge, the poultry farm and Yodel Ranch have moved out to the countryside (see
+  // build_grove and build_woods), and the library has moved across town.
+  for (const plot of Object.values(TOWN_PLOTS)) clearPlot(m, plot[0], plot[1], plot[2], plot[3]);
+  // The south-east block is the town's quiet corner: the Library and the Museum side by side.
+  placeBuilding(m, townBuilding('library'), 45, 15);
+  m.building(61, 15, 8, 5, 4, 'museum', 'MUSEUM', '0C');
+
+  // Town Green, on the north row west of the hill road: a pond ringed with flowers and trees.
+  m.rect(21, 3, 8, 2, 'water');
+  for (let y = 2; y <= 5; y++) {
+    for (let x = 20; x <= 29; x++) if (m.tile(x, y) === 'grass' && layoutNoise(x, y, 7) < 0.55) m.set(x, y, 'flower');
+  }
+  for (const [x, y] of [[16, 2], [18, 5], [32, 2], [34, 5], [17, 3], [33, 3]]) m.set(x, y, 'tree');
+  m.set(25, 6, 'sign');
+  m.signs[pkey(25, 6)] = 'Town Green — Sit a while by the pond. The carp bite on a quiet morning.';
+  // A flower garden east of the hill road, where the library used to stand.
+  for (let y = 3; y <= 5; y++) {
+    for (let x = 41; x <= 49; x++) if ((x + y) % 2 === 0) m.set(x, y, 'flower');
+  }
+  m.set(40, 2, 'tree');
+  m.set(50, 2, 'tree');
+  // An orchard on the west side: rows of fruit trees with a walk between them.
+  for (const y of [9, 11]) for (let x = 3; x <= 11; x += 2) m.set(x, y, 'tree');
+  m.rect(15, 7, 1, 13, 'path'); // the alley between the two streets
+  // East Road: from Rose Square straight out to Willow Bend, with a lane up to the main street.
+  m.rect(44, 11, 28, 3, 'path');
+  m.rect(62, 8, 2, 3, 'path');
+  m.set(27, 8, 'sign');
+  m.signs[pkey(27, 8)] =
+    "Fingerpost — WEST: your farm, and beyond it Ironwood Grove (Saibara's forge). SOUTH OF THE FARM: Cedar Hollow (Poultry Farm, Yodel Ranch, Aja Winery). EAST: Willow Bend (Harvest Sprites). SOUTH: the beach, and Lighthouse Point (Zack & Won).";
   // Add Rose Square Trash Can & Plaza Sign
   m.set(30, 11, 'trash');
   m.signs[pkey(30, 11)] = 'trash';
@@ -196,9 +272,7 @@ export function build_beach(): GameMap {
   m.rect(31, 4, 3, 16, 'bridge');
   m.set(30, 12, 'sign');
   m.signs[pkey(30, 12)] = 'Mineral Beach Pier — Fish in the ocean or watch the Summer 24 Fireworks!';
-  // Zack & Won's Beach House
-  m.building(10, 5, 10, 5, 5, 'zack', 'ZACK/WON', '0D');
-  m.rect(15, 10, 2, 3, 'path');
+  // (Zack & Won's house now stands on Lighthouse Point, east along the shore.)
   // Kai's Seaside Lodge
   m.building(42, 5, 10, 5, 5, 'kai_shack', 'SEASIDE', '09');
   m.rect(47, 10, 2, 3, 'path');
@@ -206,9 +280,10 @@ export function build_beach(): GameMap {
 }
 
 // ---------------------------------------------------------------- outer regions
-// Four original regions spread the valley out around the first four maps:
+// Five original regions spread the valley out around the first four maps:
 //   Skyline Ridge (north of Mother's Hill), Willow Bend (east of town),
-//   Cedar Hollow (south of the farm) and Lighthouse Point (east of the beach).
+//   Cedar Hollow (south of the farm), Lighthouse Point (east of the beach)
+//   and Ironwood Grove (west of the farm).
 
 /** Deterministic 0..1 noise for laying out a region (same world every game). */
 function layoutNoise(x: number, y: number, s: number): number {
@@ -260,7 +335,18 @@ export function build_woods(): GameMap {
   m.set(50, 18, 'sign');
   m.signs[pkey(50, 18)] = 'Mossy Pond — Folk drop in a gift that grew wild (hold it, face the water, press X) for a lucky day of foraging.';
   m.set(36, 2, 'sign');
-  m.signs[pkey(36, 2)] = 'Cedar Hollow — Fallen branches gather here every morning. Bring an Axe!';
+  m.signs[pkey(36, 2)] = 'Cedar Hollow — Fallen branches gather here every morning. Bring an Axe! Ranch Lane runs east to the Poultry Farm and Yodel Ranch; the Winery is down by the clearing.';
+  // Ranch Lane: a pasture clearing east of the trail, with Lillia's Poultry Farm and Yodel Ranch
+  // side by side and a lane along their doors.
+  m.rect(38, 1, 25, 10, 'grass');
+  placeBuilding(m, townBuilding('poultry'), 38, 2);
+  placeBuilding(m, townBuilding('yodel'), 51, 2);
+  m.rect(36, 7, 27, 2, 'path');
+  for (let y = 9; y <= 10; y++) for (let x = 38; x <= 62; x++) if (layoutNoise(x, y, 8) < 0.12) m.set(x, y, 'flower');
+  // Aja Winery, south of the creek on the path to the clearing, with a few rows of vines beside it.
+  m.building(31, 15, 9, 4, 4, 'winery', 'WINERY', '0E');
+  m.rect(41, 15, 5, 2, 'grass');
+  for (const x of [41, 43, 45]) for (const y of [15, 16]) m.set(x, y, 'flower');
   return m;
 }
 
@@ -320,6 +406,9 @@ export function build_river(): GameMap {
     m.set(cx + 4, y, 'bridge');
     m.set(cx + 5, y, 'path');
   }
+  // The Harvest Sprites' hut, in the meadow on the far bank, just off the road.
+  m.building(49, 6, 9, 4, 4, 'sprites', 'SPRITES', '0A');
+  m.set(53, 10, 'path');
   m.set(28, 10, 'sign');
   m.signs[pkey(28, 10)] = 'Willow Bend — The river runs slow and deep here. Good fishing off the east-bank dock, and the flat stones skip well (face the river, press X).';
   return m;
@@ -348,10 +437,48 @@ export function build_point(): GameMap {
   m.rect(1, 11, 52, 3, 'path');
   m.set(45, 10, 'sign');
   m.signs[pkey(45, 10)] = 'lighthouse_log';
+  // Zack & Won's house, a short walk along the shore road from the beach.
+  m.building(18, 5, 10, 5, 5, 'zack', 'ZACK/WON', '0D');
+  m.rect(23, 10, 2, 1, 'path');
   // the sea runs off the map edge instead of stopping at a treeline
   m.rect(63, 1, 1, 22, 'water');
   m.rect(1, 23, 62, 1, 'water');
   m.rect(0, 17, 1, 6, 'water');
+  return m;
+}
+
+/** Ironwood Grove: old woodland west of the farm, with Saibara's forge, a worked-out quarry and a still pool. */
+export function build_grove(): GameMap {
+  const m = new GameMap('grove', 'Ironwood Grove', 64, 26, 'grass');
+  for (let y = 1; y < m.h - 1; y++) {
+    for (let x = 1; x < m.w - 1; x++) {
+      const n = layoutNoise(x, y, 6);
+      if (n < 0.27) m.set(x, y, 'tree');
+      else if (n > 0.965) m.set(x, y, 'flower');
+    }
+  }
+  m.border('tree');
+  // the forge road, in from the farm's west gate and on to the quarry mouth
+  m.rect(22, 6, 42, 3, 'path');
+  // the old quarry: a bare floor walled by rock, open to the road
+  m.rect(5, 3, 17, 8, 'cliff');
+  m.rect(6, 4, 15, 6, 'path');
+  m.rect(21, 6, 1, 3, 'path');
+  // the forge yard, down a track south of the road
+  m.rect(28, 9, 3, 9, 'path');
+  m.rect(10, 12, 21, 8, 'grass');
+  placeBuilding(m, townBuilding('blacksmith'), 13, 12);
+  m.rect(11, 17, 20, 2, 'path');
+  for (const [x, y] of [[10, 12], [25, 12], [10, 19], [26, 19]]) m.set(x, y, 'tree');
+  // a still pool in a glade, down a short path from the road
+  m.rect(41, 13, 12, 6, 'grass');
+  m.rect(43, 15, 8, 3, 'water');
+  m.rect(44, 14, 6, 1, 'water');
+  m.rect(46, 9, 2, 5, 'path');
+  m.set(59, 5, 'sign');
+  m.signs[pkey(59, 5)] = "Ironwood Grove — Saibara's forge is down the track to the south-west. The old quarry lies at the end of the road, and there is quiet fishing at the pool.";
+  m.set(23, 5, 'sign');
+  m.signs[pkey(23, 5)] = 'Old Quarry — Worked out long ago. Folk still turn up odd things in the ground around here.';
   return m;
 }
 
@@ -386,7 +513,8 @@ export function link_regions(maps: Record<string, GameMap>): void {
   link(maps.mountain, maps.ridge, 'n', 20, 20);
   link(maps.town, maps.river, 'e', 11, 11);
   link(maps.beach, maps.point, 'e', 11, 11);
-  for (const name of ['woods', 'ridge', 'river', 'point']) sealUnreachable(maps[name]);
+  link(maps.grove, maps.farm, 'e', 6, 6);
+  for (const name of ['woods', 'ridge', 'river', 'point', 'grove']) sealUnreachable(maps[name]);
 }
 
 export function build_house(): GameMap {
