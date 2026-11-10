@@ -175,6 +175,8 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- Maker improvements: one use processes every quality tier (`makerBatch()`/`MAKER_INPUTS` in rules, `run_maker()` in engine); coop/barn menus preview count and value gained; Today's Plan lists rucksack goods ready to process; Saibara's order menu shows which expansion each Maker needs and exactly what is missing. Fixed a money pump (150G shop Milk → 300G Small Cheese; the Cheese Maker now takes only your cows' milk) and the Good Wool price inversion (400G → 150G, below Large Wool). Using a Maker gives ranching XP.
+- #51: Contour Farm rendering and right-side HUD.
 - #50: mobile name entry: the phone keyboard opens with the name prompt, no extra tap on the field.
 - #49: renderer QA fixes: lamp pools only ever brighten (never darker than the dusk sky around them), seven distinct tool-tier swing colours that survive the hit flash, sickle cuts blink each weed then scatter leaves, stronger screen shake (2px light, 4px heavy), brighter terrain edges, title-screen prompt punctuation stays plain, lone tide pools get no foam box; lighting accumulated per light over its bounding box plus cached tone/grey lookups cut town-at-night frame build ~20%.
 - #48: region looks: Skyline Ridge rock faces (lit brow, strata, dithered base, thin snow caps in winter), Willow Bend downstream current, Cedar Hollow under-canopy gloom with sun shafts, Lighthouse Point sweeping beam at night/storms and glinting tide pools; lamp flicker respects reduced motion.

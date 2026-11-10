@@ -113,7 +113,7 @@ import {
   getEggQuality,
   getMilkQuality,
   getWoolQuality,
-  convertWithMaker,
+  makerBatch,
   rollSpringMineDrop,
   rollLakeMineDrop,
   CURSED_TOOL_FLOORS,
@@ -126,6 +126,12 @@ import {
   rollRegionCatch,
   rollStoneSkips,
 } from './rules';
+
+const MAKER_NOUNS: Record<string, [string, string]> = {
+  'Mayonnaise Maker': ['eggs', '0A'],
+  'Cheese Maker': ['milk', '09'],
+  'Yarn Maker': ['wool', '0E'],
+};
 
 export interface VillagerRequest {
   id: number;
@@ -2445,7 +2451,7 @@ export class Game {
         'Place Egg in Incubator (3 days to hatch)',
       ];
       if (this.makers.includes('Mayonnaise Maker')) {
-        opts.push('Use Mayonnaise Maker (Egg -> Mayonnaise)');
+        opts.push(`Use Mayonnaise Maker: ${this.maker_preview('Mayonnaise Maker')}`);
       }
       opts.push('Grazing / Outdoor Bell (+Outdoor Hours)', 'Leave');
       const sel = await this.menu('Chicken Coop', opts, 0, info);
@@ -2493,17 +2499,8 @@ export class Game {
           }
         }
       } else if (act.startsWith('Use Mayonnaise Maker')) {
-        const eggItem = ['X Egg', 'P Egg', 'Golden Egg', 'High Egg', 'Good Egg', 'Egg'].find((e) => (this.inv[e] || 0) > 0);
-        if (!eggItem) {
+        if (!this.run_maker('Mayonnaise Maker')) {
           await this.say('You have no Eggs in your rucksack to put into the Mayonnaise Maker.', null);
-        } else {
-          const res = convertWithMaker(eggItem);
-          if (res) {
-            const q = this.inv[eggItem];
-            this.take(eggItem, q);
-            this.give(res.output, q);
-            this.msg(`Mayonnaise Maker produced ${q} x ${res.output}!`, '0A');
-          }
         }
       } else if (act.startsWith('Grazing')) {
         if (this.weather !== 'Sunny') {
@@ -2516,6 +2513,37 @@ export class Game {
         }
       }
     }
+  }
+
+  /** Short menu label: what a Maker would take now and how much value it adds. */
+  maker_preview(maker: string): string {
+    const steps = makerBatch(maker, this.inv);
+    const noun = MAKER_NOUNS[maker];
+    if (!steps.length) return `no ${noun[0]}`;
+    const n = py_sum(steps.map((st) => st.qty));
+    const gain = py_sum(steps.map((st) => ((ITEMS[st.output]?.[0] || 0) - (ITEMS[st.input]?.[0] || 0)) * st.qty));
+    return `${n} ${noun[0]}, +${gain}G`;
+  }
+
+  /** Process every quality tier a Maker accepts in one go. Returns the message, or null if nothing to do. */
+  run_maker(maker: string): string | null {
+    if (!this.makers.includes(maker)) return null;
+    const steps = makerBatch(maker, this.inv);
+    if (!steps.length) return null;
+    for (const st of steps) {
+      this.take(st.input, st.qty);
+      this.give(st.output, st.qty);
+    }
+    const made = steps.map((st) => `${st.qty} x ${st.output}`).join(', ');
+    const line = `${maker} made ${made}!`;
+    this.msg(line, MAKER_NOUNS[maker][1]);
+    this.mastery_add('ranching');
+    return line;
+  }
+
+  /** Raw goods in the rucksack that an installed Maker could process right now. */
+  maker_ready_count(): number {
+    return py_sum(this.makers.map((m) => py_sum(makerBatch(m, this.inv).map((st) => st.qty))));
   }
 
   barn_cap(): number {
@@ -2549,10 +2577,10 @@ export class Game {
         ...this.animals.map((a) => this.animal_line(a)),
       ];
       if (this.makers.includes('Cheese Maker')) {
-        opts.push('Use Cheese Maker (Milk -> Cheese)');
+        opts.push(`Use Cheese Maker: ${this.maker_preview('Cheese Maker')}`);
       }
       if (this.makers.includes('Yarn Maker')) {
-        opts.push('Use Yarn Maker (Wool -> Yarn)');
+        opts.push(`Use Yarn Maker: ${this.maker_preview('Yarn Maker')}`);
       }
       opts.push('Leave');
       const sel = await this.menu('Livestock Barn', opts, 0, info);
@@ -2572,34 +2600,12 @@ export class Game {
           this.msg(`Your livestock grazed in the pasture! (Outdoor hours: ${this.outdoor_hours}h)`, '0B');
         }
       } else if (choice.startsWith('Use Cheese Maker')) {
-        const mItem = ['X Milk', 'P Milk', 'Golden Milk', 'Large Milk', 'Medium Milk', 'Small Milk', 'Milk'].find(
-          (i) => (this.inv[i] || 0) > 0
-        );
-        if (!mItem) {
-          await this.say('You have no Milk in your rucksack.', null);
-        } else {
-          const res = convertWithMaker(mItem);
-          if (res) {
-            const q = this.inv[mItem];
-            this.take(mItem, q);
-            this.give(res.output, q);
-            this.msg(`Cheese Maker produced ${q} x ${res.output}!`, '09');
-          }
+        if (!this.run_maker('Cheese Maker')) {
+          await this.say("You have no Milk from your cows in your rucksack. (Shop milk won't set.)", null);
         }
       } else if (choice.startsWith('Use Yarn Maker')) {
-        const wItem = ['X Wool', 'P Wool', 'Golden Wool', 'Large Wool', 'Good Wool', 'Wool'].find(
-          (i) => (this.inv[i] || 0) > 0
-        );
-        if (!wItem) {
+        if (!this.run_maker('Yarn Maker')) {
           await this.say('You have no Wool in your rucksack.', null);
-        } else {
-          const res = convertWithMaker(wItem);
-          if (res) {
-            const q = this.inv[wItem];
-            this.take(wItem, q);
-            this.give(res.output, q);
-            this.msg(`Yarn Maker spun ${q} x ${res.output}!`, '0E');
-          }
         }
       } else {
         const animalIdx = sel - 2;
@@ -3202,7 +3208,13 @@ export class Game {
     ];
     const sel = await this.menu(
       'Saibara — Order Maker (20,000G + 1 Adamantite)',
-      makers.map(([m]) => `${m} ${this.makers.includes(m) ? '(Built)' : ''}`)
+      makers.map(([m, req]) =>
+        this.makers.includes(m)
+          ? `${m} (Built)`
+          : `${m} ${this.house_flags.includes(req) ? '(ready to order)' : `(needs ${req})`}`
+      ),
+      0,
+      [`  Gold: ${this.gold}G   Adamantite: ${this.inv['Adamantite'] || 0}`]
     );
     if (sel === null) return;
     const [mName, req, desc] = makers[sel];
@@ -3211,7 +3223,11 @@ export class Game {
     } else if (!this.house_flags.includes(req)) {
       await this.say(`Have Gotz build the ${req} first so there's room for the ${mName}!`, 'Saibara');
     } else if (this.gold < 20000 || (this.inv['Adamantite'] || 0) < 1) {
-      await this.say('I need 20,000G and 1 Adamantite from the Spring Mine (Floor 10+).', 'Saibara');
+      const missing = [
+        this.gold < 20000 ? `${20000 - this.gold}G more` : '',
+        (this.inv['Adamantite'] || 0) < 1 ? '1 Adamantite from the Spring Mine (Floor 10+)' : '',
+      ].filter(Boolean);
+      await this.say(`It costs 20,000G and 1 Adamantite. You still need ${missing.join(' and ')}.`, 'Saibara');
     } else {
       this.gold -= 20000;
       this.take('Adamantite', 1);
@@ -3507,6 +3523,8 @@ export class Game {
     lines.push(`  Water  ${this.crop_water_count()} crop${this.crop_water_count() === 1 ? '' : 's'} still dry`);
     lines.push(`  Feed   ${this.animal_feed_count()} animal${this.animal_feed_count() === 1 ? '' : 's'} still hungry`);
     lines.push(`  Ready  ${this.ready_livestock_count()} product${this.ready_livestock_count() === 1 ? '' : 's'} to collect`);
+    const makerReady = this.maker_ready_count();
+    if (makerReady) lines.push(`  Makers ${makerReady} item${makerReady === 1 ? '' : 's'} ready to process`);
     lines.push(`  Museum ${this.museum.length}/${this.museum_total()} donated`);
     if (this.requests.length) {
       const r = this.requests[0];
