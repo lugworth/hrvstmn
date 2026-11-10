@@ -176,7 +176,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
-- #52: toolbar and game menu: the desktop footer follows the Contour reference (two groups plus `[F10] MENU`) as an accessible toolbar; a new game menu (Game/Farm/Tools/View/Help, direct tool choice, Save, Export) pauses the clock while open and replaces the phone ••• sheet (touch MENU; the Esc pad button now reads DIARY).
+- #54: toolbar and game menu: the desktop footer follows the Contour reference (two groups plus `[F10] MENU`) as an accessible toolbar; a new game menu (Game/Farm/Tools/View/Help, direct tool choice, Save, Export) pauses the clock while open and replaces the phone ••• sheet (touch MENU; the Esc pad button now reads DIARY).
 - #50: mobile name entry: the phone keyboard opens with the name prompt, no extra tap on the field.
 - #49: renderer QA fixes: lamp pools only ever brighten (never darker than the dusk sky around them), seven distinct tool-tier swing colours that survive the hit flash, sickle cuts blink each weed then scatter leaves, stronger screen shake (2px light, 4px heavy), brighter terrain edges, title-screen prompt punctuation stays plain, lone tide pools get no foam box; lighting accumulated per light over its bounding box plus cached tone/grey lookups cut town-at-night frame build ~20%.
 - #48: region looks: Skyline Ridge rock faces (lit brow, strata, dithered base, thin snow caps in winter), Willow Bend downstream current, Cedar Hollow under-canopy gloom with sun shafts, Lighthouse Point sweeping beam at night/storms and glinting tide pools; lamp flicker respects reduced motion.
