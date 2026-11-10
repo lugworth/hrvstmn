@@ -177,6 +177,7 @@ git switch main && git pull --ff-only
 
 Newest first.
 
+- #56: `design/figma-assets/`: a Figma kit exported from the game (layered map SVGs, component sheets, UI as editable text, palette tokens, fonts, map data) with its generator in `_generator/`. Reference material only; the game does not load it, and `design` is excluded from `tsconfig.json`. Rebuild steps are in its README.
 - #55: daily surprises: wriggling dig spots across the valley (Hoe them for coins, ore, seeds, forage or relics), a museum Relics wing, and night surprises (glowmoths, falling stars to crack open, doorstep parcels).
 - #54: toolbar and game menu: the desktop footer follows the Contour reference (two groups plus `[F10] MENU`) as an accessible toolbar; a new game menu (Game/Farm/Tools/View/Help, direct tool choice, Save, Export) pauses the clock while open and replaces the phone ••• sheet (touch MENU; the Esc pad button now reads DIARY).
 - #50: mobile name entry: the phone keyboard opens with the name prompt, no extra tap on the field.

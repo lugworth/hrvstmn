@@ -16,10 +16,13 @@ like the game. Drag any `.svg` onto a Figma canvas: it arrives as named, editabl
 | `components/tiles.svg` | A sample of every terrain and fixture. |
 | `components/objects-and-forage.svg`, `crops.svg`, `characters.svg` | Field objects, forage, crops at four ages, the player, pets, livestock and every villager. |
 | `ui/ui-in-game.svg` | Status panel, message bar, a dialog and the Diary menu, as real editable text. |
+| `ui/ui-desktop.svg` | The toolbar and the game menu, as boxes and real text. |
+| `ui/ui-touch.svg` | The phone controls: utility row, D-pad, action buttons, the menu sheet and the name entry bar. |
 | `palette/isotope-dark.svg` | The 16 colours as swatches. |
 | `palette/hrvstmn.tokens.json` | The same colours as design tokens (Figma: Variables > Import). |
 | `fonts/` | DejaVu Sans Mono (regular and bold). Install these first. |
 | `data/maps.json` | The tile grid, doors and paths of every map, to carry layout changes back into the game. |
+| `_generator/` | The scripts that made all of this, to rebuild the kit after the game changes. |
 
 ## Using it in Figma
 
@@ -48,3 +51,20 @@ like the game. Drag any `.svg` onto a Figma canvas: it arrives as named, editabl
 - These files were checked by rendering them in a browser next to the game's own output, not by
   importing them into Figma, so a detail of Figma's importer may differ.
 - Everything is the state of the game on Spring 1 at 10:00 AM, sunny.
+- The PNG pictures and the world layout leave the villagers out so the ground is visible. In the
+  map SVGs they are the `characters` group, which you can hide.
+
+## Rebuilding the kit
+
+From the repository root, with dependencies installed (`npm install`) and Python 3 with fontTools:
+
+```
+cd design/figma-assets/_generator
+python3 make-glyphs.py                      # fonts -> ../fonts/*.ttf and glyphs.json
+npx esbuild assets.ts --bundle --format=iife --outfile=www/bundle.js
+(cd .. && python3 -m http.server 3600 &)    # serves the exporter page and the fonts
+node run.js ..                              # maps, components, palette, data
+npm run build && npx next start -p 3500 &   # the real app, for the HTML controls
+node dom-ui.js ../ui                        # toolbar, menu and phone controls
+node verify.js /tmp 1 ../maps/farm.svg      # optional: render an SVG to PNG to check it
+```
