@@ -33,6 +33,20 @@ const fresh = () => {
 };
 
 describe('engine regressions', () => {
+  test('the clock and villagers wait while the game menu is open', async () => {
+    const g = fresh();
+    g.warp('farm', 14, 10); // outdoors, where the clock runs
+    g.paused = true;
+    const [minutes, acc, npcAcc] = [g.minutes, g.acc, g.npc_acc];
+    g.last = Date.now() / 1000 - 10; // ten seconds pass with the menu open
+    await g.update();
+    assert.deepEqual([g.minutes, g.acc, g.npc_acc], [minutes, acc, npcAcc]);
+    g.paused = false;
+    g.last = Date.now() / 1000 - 0.2;
+    await g.update();
+    assert.ok(g.acc > acc, 'time runs again once the menu closes');
+  });
+
   test("Shift+H whistles the horse; plain 'h' still moves left (hjkl)", async () => {
     const g = fresh();
     // find a spot on the farm whose left neighbour is walkable

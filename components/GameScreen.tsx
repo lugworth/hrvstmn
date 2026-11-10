@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Screen, Cell } from '@/src/game/screen';
 import { Game } from '@/src/game/engine';
-import { PALETTE } from '@/src/game/constants';
+import { PALETTE, TOOLS } from '@/src/game/constants';
 import { computeFrame, drawFrame, frameSignature, shakeOffset, frameDirtyRect, type OutCell } from '@/src/game/enhanced';
 import { isCompact } from '@/src/game/compact';
 import {
@@ -16,14 +16,17 @@ import {
   REPEAT_MS,
   type Dir,
 } from '@/src/game/viewport';
+import GameMenu, { type MenuClose, type MenuItem, type MenuSection } from './GameMenu';
 
 const FONT = '"HRVSTMN Mono", "DejaVu Sans Mono", ui-monospace, Menlo, Consolas, monospace';
 
-const QUICK_ACTIONS = [
-  ['space', 'SPACE', 'USE TOOL'], ['x', 'X', 'ACT'], ['tab', 'TAB', 'TOOL'],
-  ['i', 'I', 'BAG'], ['H', 'Shift+H', 'HORSE'], ['b', 'B', 'BELL'], ['m', 'M', 'MEMO'],
-  ['y', 'Y', 'TODAY'], ['n', 'N', 'MAP'], ['r', 'R', 'NOTES'], ['esc', 'ESC', 'DIARY'],
+// Desktop toolbar: the everyday actions in two groups; everything else lives in the menu.
+const TOOLBAR = [
+  [['space', 'SPACE', 'USE TOOL'], ['x', 'X', 'ACT'], ['tab', 'TAB', 'TOOL']],
+  [['i', 'I', 'BAG'], ['y', 'Y', 'TODAY'], ['r', 'R', 'NOTES'], ['esc', 'ESC', 'DIARY']],
 ] as const;
+const TOOLBAR_FLAT: readonly (typeof TOOLBAR)[number][number][] = TOOLBAR.flat();
+const MENU_ID = 'game-menu';
 
 const KEYMAP: Record<string, string> = {
   ArrowUp: 'up',
@@ -36,8 +39,10 @@ const KEYMAP: Record<string, string> = {
   ' ': 'space',
 };
 
-/** What the touch controls need to know about the engine, polled a few times a second. */
-type Hud = { label: string; modal: boolean; typing: boolean };
+/** What the controls need to know about the engine, polled a few times a second. */
+type Hud = { label: string; modal: boolean; typing: boolean; tool: string; idle: boolean };
+const sameHud = (a: Hud, b: Hud) =>
+  a.label === b.label && a.modal === b.modal && a.typing === b.typing && a.tool === b.tool && a.idle === b.idle;
 type PadKey = { key: string; label: string; color: string; title: string };
 
 // Touch utility buttons (colours from base16 Isotope Dark).
@@ -49,12 +54,8 @@ const UTIL_A: PadKey[] = [
 ];
 const HORSE: PadKey = { key: 'H', label: 'HORSE', color: '#ff9900', title: 'Whistle for your horse (Shift+H)' };
 const INFO: PadKey = { key: 'p', label: 'INFO', color: '#cc00ff', title: 'Show or hide the status panel' };
-const MORE_KEYS: PadKey[] = [
-  { key: 'm', label: 'MEMO', color: '#00ffff', title: 'Ranch summary & memo (M)' },
-  { key: 'b', label: 'BELL', color: '#33ff00', title: 'Ring the grazing bell (B)' },
-  { key: 'btab', label: '◂ TOOL', color: '#d0d0d0', title: 'Previous tool (Shift+Tab)' },
-  { key: '?', label: 'HELP', color: '#00ffff', title: 'Help (?)' },
-];
+/** Menu entries the touch utility row already has (MAP, HORSE, INFO); the touch menu leaves them out. */
+const ON_PAD = new Set(['map', 'horse', 'panel']);
 
 /** A touch button: fires on pointer-down for snappy input; keyboard activation still works. */
 function PadButton({
@@ -63,14 +64,15 @@ function PadButton({
   className = '',
   style,
   title,
-  pressed,
+  menu,
 }: {
   label: React.ReactNode;
   onPress: () => void;
   className?: string;
   style?: React.CSSProperties;
   title?: string;
-  pressed?: boolean;
+  /** Set on the button that opens the game menu: whether that menu is open. */
+  menu?: boolean;
 }) {
   return (
     <button
@@ -79,7 +81,9 @@ function PadButton({
       style={style}
       title={title}
       aria-label={title}
-      aria-pressed={pressed}
+      aria-haspopup={menu === undefined ? undefined : 'menu'}
+      aria-expanded={menu}
+      aria-controls={menu === undefined ? undefined : MENU_ID}
       onPointerDown={(e) => {
         e.preventDefault();
         onPress();
@@ -105,9 +109,14 @@ export default function GameScreen() {
   const isTouch = inputMode === 'touch';
   const [running, setRunning] = useState(true);
   const [ready, setReady] = useState(false);
-  const [hud, setHud] = useState<Hud>({ label: 'USE', modal: false, typing: false });
+  const [hud, setHud] = useState<Hud>({ label: 'USE', modal: false, typing: false, tool: '', idle: false });
   const [compact, setCompact] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
+  /** The game menu: closed (null), or open with focus on its first or last item ('none' on touch). */
+  const [menu, setMenu] = useState<'first' | 'last' | 'none' | null>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const menuOpenerRef = useRef<HTMLElement | null>(null);
+  const [toolbarFocus, setToolbarFocus] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
   const [draft, setDraft] = useState('');
   const draftRef = useRef('');
   const [dpadDir, setDpadDir] = useState<Dir | null>(null);
@@ -333,6 +342,125 @@ export default function GameScreen() {
     }
   }, []);
 
+  // ---- Game menu. Opening pauses the farm clock; closing hands the keyboard back: Escape to
+  // whatever opened the menu, a command to the game itself.
+  const focusGame = useCallback(() => canvasRef.current?.focus({ preventScroll: true }), []);
+  const openMenu = useCallback((focus: 'first' | 'last' | 'none', opener: Element | null) => {
+    menuOpenerRef.current = opener instanceof HTMLElement && opener !== document.body ? opener : null;
+    setMenu(focus);
+  }, []);
+  const closeMenu = useCallback(
+    (why: MenuClose) => {
+      setMenu(null);
+      if (why === 'escape') (menuOpenerRef.current ?? canvasRef.current)?.focus({ preventScroll: true });
+      else if (why === 'command') focusGame();
+    },
+    [focusGame],
+  );
+
+  useEffect(() => {
+    if (gameRef.current) gameRef.current.paused = menu !== null;
+  }, [menu]);
+
+  const onToolbarKey = (e: React.KeyboardEvent<HTMLElement>) => {
+    if ((e.target as Element).closest('[role="menu"]')) return; // the open menu handles its own keys
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      focusGame();
+      return;
+    }
+    const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(':scope > button'));
+    const i = buttons.indexOf(e.target as HTMLElement);
+    const to =
+      e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? -1 : null;
+    if (i < 0 || to === null) return;
+    e.preventDefault();
+    buttons[(to + buttons.length) % buttons.length].focus();
+  };
+
+  // F10 opens and closes the menu from anywhere, as in desktop applications.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'F10' || e.altKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      if (menu) closeMenu('escape');
+      else openMenu('first', document.activeElement);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menu, openMenu, closeMenu]);
+
+  useEffect(() => {
+    const onChange = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const saveNow = useCallback(() => {
+    const game = gameRef.current;
+    if (!game) return;
+    game.save(1);
+    game.msg('Saved game in Diary Slot 1.', '0B');
+  }, []);
+
+  /** Everything the menu offers, built from live state each time it opens. */
+  const menuSections = (): MenuSection[] => {
+    const busy = !hud.idle;
+    const key = (id: string, label: string, k: string, shortcut: string): MenuItem => ({
+      id,
+      label,
+      shortcut,
+      disabled: busy,
+      run: () => press(k),
+    });
+    const sections: MenuSection[] = [
+      {
+        title: 'Game',
+        items: [
+          key('diary', 'Diary & pause', 'esc', 'Esc'),
+          { id: 'save', label: 'Save (slot 1)', disabled: busy, run: saveNow },
+          { id: 'export', label: 'Export save file', disabled: busy, run: () => gameRef.current?.export_save() },
+          key('quit', 'Save & quit', 'Q', 'Shift+Q'),
+        ],
+      },
+      {
+        title: 'Farm',
+        items: [
+          key('map', 'Minimap', 'n', 'N'),
+          key('horse', 'Call horse', 'H', 'Shift+H'),
+          key('bell', 'Grazing bell', 'b', 'B'),
+          key('memo', 'Ranch memo', 'm', 'M'),
+          ...(compact ? [key('panel', 'Status panel', 'p', 'P')] : []),
+        ],
+      },
+      {
+        title: 'Tools',
+        items: TOOLS.map((t, i) => ({
+          ...key(`tool-${i}`, t, String(i + 1), String(i + 1)),
+          kind: 'radio' as const,
+          checked: hud.tool === t,
+        })),
+      },
+      {
+        title: 'View',
+        items: [
+          { id: 'detail', label: 'High-res detail', kind: 'checkbox', checked: hires, run: toggleHires },
+          { id: 'motion', label: 'Motion', kind: 'checkbox', checked: !reducedMotion, run: toggleMotion },
+          ...(isTouch
+            ? [{ id: 'buzz', label: 'Haptics', kind: 'checkbox' as const, checked: haptics, run: toggleHaptics }]
+            : []),
+          ...(canFullscreen
+            ? [{ id: 'full', label: 'Full screen', kind: 'checkbox' as const, checked: fullscreen, run: toggleFullscreen }]
+            : []),
+        ],
+      },
+      { title: 'Help', items: [key('help', 'Help & controls', '?', '?')] },
+    ];
+    if (!isTouch) return sections;
+    // Phones already have the utility row for these.
+    return sections.map((s) => ({ ...s, items: s.items.filter((i) => !ON_PAD.has(i.id)) }));
+  };
+
   useEffect(() => {
     // Detect touch
     const hasTouch =
@@ -536,6 +664,8 @@ export default function GameScreen() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.altKey) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // The toolbar and menu handle their own keys while they have focus.
+      if ((e.target as Element | null)?.closest?.('[data-ui]')) return;
       let name: string | undefined;
 
       if (e.ctrlKey) {
@@ -569,7 +699,7 @@ export default function GameScreen() {
     observer?.observe(stage);
 
     // Touch screens: no pinch/double-tap zoom, page bounce or long-press menus on the game.
-    const inField = (e: Event) => Boolean((e.target as Element | null)?.closest?.('input, textarea'));
+    const inField = (e: Event) => Boolean((e.target as Element | null)?.closest?.('input, textarea, .game-menu'));
     const noDefault = (e: Event) => {
       if (!inField(e)) e.preventDefault();
     };
@@ -598,13 +728,14 @@ export default function GameScreen() {
       const input = inputRef.current;
       if (!input) return;
       input.focus({ preventScroll: true });
-      setHud((prev) => (prev.typing ? prev : { label: 'DONE', modal: true, typing: true }));
+      setHud((prev) => (prev.typing ? prev : { ...prev, label: 'DONE', modal: true, typing: true }));
     };
 
     const hudTimer = setInterval(() => {
       const a = game.context_action();
-      const next: Hud = { label: a.label, modal: game.modal_depth > 0, typing: game.typing };
-      setHud((prev) => (prev.label === next.label && prev.modal === next.modal && prev.typing === next.typing ? prev : next));
+      const modal = game.modal_depth > 0;
+      const next: Hud = { label: a.label, modal, typing: game.typing, tool: game.tool, idle: game.started && !modal };
+      setHud((prev) => (sameHud(prev, next) ? prev : next));
     }, 200);
 
     // Start game loop in background
@@ -650,11 +781,11 @@ export default function GameScreen() {
     }
   }, [hud.typing]);
 
-  // Tap the map to walk there (touch only, outside menus); a tap also closes the More sheet.
+  // Tap the map to walk there (touch only, outside menus); a tap that closes the menu doesn't walk.
   const tapRef = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
   const onStagePointerDown = (e: React.PointerEvent) => {
-    if (moreOpen) {
-      setMoreOpen(false);
+    if (menu) {
+      closeMenu('outside');
       tapRef.current = null;
       return;
     }
@@ -738,81 +869,65 @@ export default function GameScreen() {
           </form>
         )}
 
-        {/* More sheet: the less frequent actions and touch settings */}
-        {isTouch && moreOpen && (
-          <div className="more-sheet" role="menu" onPointerDown={(e) => e.stopPropagation()}>
-            {MORE_KEYS.map((b) => (
-              <PadButton
-                key={b.key}
-                label={b.label}
-                title={b.title}
-                style={{ color: b.color }}
-                onPress={() => {
-                  setMoreOpen(false);
-                  press(b.key);
-                }}
-              />
-            ))}
-            <PadButton
-              label={`DETAIL ${hires ? 'HI' : 'LO'}`}
-              title="Toggle half-size high-resolution ground textures"
-              style={{ color: '#cc00ff' }}
-              pressed={hires}
-              onPress={toggleHires}
-            />
-            <PadButton
-              label={`MOTION ${reducedMotion ? 'OFF' : 'ON'}`}
-              title="Toggle ambient animation (also honors prefers-reduced-motion)"
-              style={{ color: '#cc00ff' }}
-              pressed={!reducedMotion}
-              onPress={toggleMotion}
-            />
-            <PadButton
-              label={`BUZZ ${haptics ? 'ON' : 'OFF'}`}
-              title="Toggle haptic feedback on supported phones"
-              style={{ color: '#cc00ff' }}
-              pressed={haptics}
-              onPress={toggleHaptics}
-            />
-            {canFullscreen && (
-              <PadButton
-                label="FULL"
-                title="Toggle full screen"
-                style={{ color: '#d0d0d0' }}
-                onPress={() => {
-                  setMoreOpen(false);
-                  toggleFullscreen();
-                }}
-              />
-            )}
-          </div>
+        {/* Touch: the game menu as a sheet over the map */}
+        {isTouch && menu && (
+          <GameMenu id={MENU_ID} variant="sheet" sections={menuSections()} focus={menu === 'none' ? null : menu} onClose={closeMenu} />
         )}
       </div>
 
-      {/* Contour controls retain the newer map, detail, and motion actions. */}
+      {/* Desktop toolbar (WAI-ARIA toolbar: one Tab stop, arrow keys between controls, Escape back
+          to the game). Each command returns focus to the game so its keys keep working. */}
       {inputMode === 'desktop' && (
-        <nav id="hint" className="game-toolbar" aria-label="Game controls">
-          {QUICK_ACTIONS.map(([key, shortcut, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => sendKey(key)}
-              className={`game-control${key === 'space' ? ' game-control-primary' : ''}`}
-              aria-keyshortcuts={key === 'space' ? 'Space' : key === 'esc' ? 'Escape' : shortcut}
-            >
-              <span className="game-shortcut">[{shortcut}]</span> {label}
-            </button>
+        <div role="toolbar" aria-label="Game controls" className="game-toolbar" data-ui="" onKeyDown={onToolbarKey}>
+          {TOOLBAR.map((group, g) => (
+            <React.Fragment key={g}>
+              {g > 0 && <span role="separator" aria-orientation="vertical" className="game-sep" />}
+              {group.map((entry) => {
+                const [key, shortcut, label] = entry;
+                const i = TOOLBAR_FLAT.indexOf(entry);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    tabIndex={toolbarFocus === i ? 0 : -1}
+                    onFocus={() => setToolbarFocus(i)}
+                    onClick={() => {
+                      sendKey(key);
+                      focusGame();
+                    }}
+                    className={`game-control${key === 'space' ? ' game-control-primary' : ''}`}
+                    aria-keyshortcuts={key === 'space' ? 'Space' : key === 'esc' ? 'Escape' : shortcut}
+                  >
+                    <span className="game-shortcut">[{shortcut}]</span> {label}
+                  </button>
+                );
+              })}
+            </React.Fragment>
           ))}
-          <button type="button" onClick={toggleHires} className="game-control game-detail" aria-pressed={hires}
-            title="Toggle half-size high-resolution ground textures">
-            DETAIL: {hires ? 'HIGH' : 'PLAIN'}
+          <span role="separator" aria-orientation="vertical" className="game-sep game-sep-end" />
+          <button
+            ref={menuBtnRef}
+            type="button"
+            className="game-control game-menu-btn"
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            aria-controls={MENU_ID}
+            aria-keyshortcuts="F10"
+            tabIndex={toolbarFocus === TOOLBAR_FLAT.length ? 0 : -1}
+            onFocus={() => setToolbarFocus(TOOLBAR_FLAT.length)}
+            onClick={(e) => (menu ? closeMenu('escape') : openMenu('first', e.currentTarget))}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+              e.preventDefault();
+              openMenu(e.key === 'ArrowUp' ? 'last' : 'first', e.currentTarget);
+            }}
+          >
+            <span className="game-shortcut">[F10]</span> MENU
           </button>
-          <button type="button" onClick={toggleMotion} className="game-control" aria-pressed={!reducedMotion}
-            title="Toggle ambient animation (also honors prefers-reduced-motion)">
-            MOTION: {reducedMotion ? 'OFF' : 'ON'}
-          </button>
-          <button type="button" onClick={() => sendKey('?')} className="game-control" aria-label="Keyboard help">[?]</button>
-        </nav>
+          {menu && (
+            <GameMenu id={MENU_ID} variant="pop" sections={menuSections()} focus={menu === 'none' ? null : menu} onClose={closeMenu} />
+          )}
+        </div>
       )}
 
       {/* Touch controls: utility row, D-pad (left thumb) and action cluster (right thumb).
@@ -831,13 +946,14 @@ export default function GameScreen() {
                 <PadButton label={INFO.label} title={INFO.title} style={{ color: INFO.color }} onPress={() => press(INFO.key)} />
               )}
               <PadButton
-                label="•••"
-                title="More actions and settings"
+                label="MENU"
+                title="Game menu: tools, saving, settings and help (F10)"
                 style={{ color: '#d0d0d0' }}
-                pressed={moreOpen}
+                menu={menu !== null}
                 onPress={() => {
                   buzz(8);
-                  setMoreOpen((o) => !o);
+                  if (menu) closeMenu('outside');
+                  else openMenu('none', null);
                 }}
               />
             </div>
@@ -898,7 +1014,7 @@ export default function GameScreen() {
               <PadButton label="TOOL ▸" title="Next tool (Tab)" className="act-tool" onPress={() => press('tab')} />
               <PadButton label="USE" title="Use the equipped tool (Space)" className="act-use" onPress={() => press('space')} />
               <PadButton
-                label={hud.typing ? 'SKIP' : hud.modal ? 'BACK' : 'MENU'}
+                label={hud.typing ? 'SKIP' : hud.modal ? 'BACK' : 'DIARY'}
                 title={hud.modal ? 'Back / cancel (Esc)' : 'Diary & pause menu (Esc)'}
                 className="act-menu"
                 onPress={() => press('esc')}
