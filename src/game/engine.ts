@@ -127,11 +127,23 @@ import {
   rollStoneSkips,
 } from './rules';
 
-const MAKER_NOUNS: Record<string, [string, string]> = {
-  'Mayonnaise Maker': ['eggs', '0A'],
-  'Cheese Maker': ['milk', '09'],
-  'Yarn Maker': ['wool', '0E'],
+/** [input noun, output noun, message colour] per Maker. */
+const MAKER_NOUNS: Record<string, [string, string, string]> = {
+  'Mayonnaise Maker': ['eggs', 'mayonnaise', '0A'],
+  'Cheese Maker': ['milk', 'cheese', '09'],
+  'Yarn Maker': ['wool', 'yarn', '0E'],
 };
+
+/** Total items and sell value added by a Maker batch. */
+function makerGain(steps: { input: string; output: string; qty: number }[]): [number, number] {
+  let n = 0;
+  let gain = 0;
+  for (const st of steps) {
+    n += st.qty;
+    gain += ((ITEMS[st.output]?.[0] || 0) - (ITEMS[st.input]?.[0] || 0)) * st.qty;
+  }
+  return [n, gain];
+}
 
 export interface VillagerRequest {
   id: number;
@@ -2520,12 +2532,15 @@ export class Game {
     const steps = makerBatch(maker, this.inv);
     const noun = MAKER_NOUNS[maker];
     if (!steps.length) return `no ${noun[0]}`;
-    const n = py_sum(steps.map((st) => st.qty));
-    const gain = py_sum(steps.map((st) => ((ITEMS[st.output]?.[0] || 0) - (ITEMS[st.input]?.[0] || 0)) * st.qty));
+    const [n, gain] = makerGain(steps);
     return `${n} ${noun[0]}, +${gain}G`;
   }
 
-  /** Process every quality tier a Maker accepts in one go. Returns the message, or null if nothing to do. */
+  /**
+   * Process every quality tier a Maker accepts in one go. Returns the message, or null if nothing to do.
+   * The message stays one short line (it must fit the single desktop message row): a lone tier is
+   * named, several tiers are summarised; the per-tier result is visible in the rucksack.
+   */
   run_maker(maker: string): string | null {
     if (!this.makers.includes(maker)) return null;
     const steps = makerBatch(maker, this.inv);
@@ -2534,10 +2549,12 @@ export class Game {
       this.take(st.input, st.qty);
       this.give(st.output, st.qty);
     }
-    const made = steps.map((st) => `${st.qty} x ${st.output}`).join(', ');
-    const line = `${maker} made ${made}!`;
-    this.msg(line, MAKER_NOUNS[maker][1]);
-    this.mastery_add('ranching');
+    const [n, gain] = makerGain(steps);
+    const line =
+      steps.length === 1
+        ? `${maker} made ${n} x ${steps[0].output}! (+${gain}G)`
+        : `${maker} made ${n} ${MAKER_NOUNS[maker][1]} in ${steps.length} grades! (+${gain}G)`;
+    this.msg(line, MAKER_NOUNS[maker][2]);
     return line;
   }
 
