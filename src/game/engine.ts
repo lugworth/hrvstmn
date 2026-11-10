@@ -193,6 +193,8 @@ export class Game {
   onTyping: (() => void) | null = null;
   /** Compact (phone) layout only: show the status panel as an overlay ('p'). */
   show_panel: boolean = false;
+  /** Set while the game menu is open: the clock, crops and villagers wait. */
+  paused: boolean = false;
 
   name: string = 'Pete';
   farm: string = 'Moon';
@@ -747,7 +749,7 @@ export class Game {
 
   async update(): Promise<void> {
     const now = Date.now() / 1000;
-    const dt = Math.min(now - this.last, 0.25);
+    const dt = this.paused ? 0 : Math.min(now - this.last, 0.25);
     this.last = now;
     if (this.fx.length) this.fx = this.fx.filter((f) => now - f.born < f.life);
     if (!this.map.indoor) {
