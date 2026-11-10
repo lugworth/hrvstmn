@@ -77,6 +77,12 @@ import {
   LOOKOUT_STAMINA,
   LOOKOUT_FATIGUE,
   HOLLOW_LUCK_CHANCE,
+  DIG_CAP,
+  DIG_MAPS,
+  DIG_ORES,
+  DIG_RELICS,
+  NIGHT_SURPRISE_CHANCE,
+  STAR_GEMS,
   LIGHTHOUSE_INTRO,
   LIGHTHOUSE_LOG,
   TIDE_POOL_TEXT,
@@ -506,6 +512,7 @@ export class Game {
       }
     }
     this.spawn_forage();
+    this.spawn_digs();
     this.animals = [];
     this.init_carpentry();
     this.started = true;
@@ -1396,6 +1403,11 @@ export class Game {
       }
       await this.spend(2);
     } else if (t === 'Hoe') {
+      if (obj === 'dig') {
+        this.dig_up(tx, ty);
+        await this.spend(2);
+        return;
+      }
       if (this.mapname === 'mine') {
         await this.mine_dig(tx, ty);
         await this.spend(2);
@@ -1427,7 +1439,15 @@ export class Game {
       }
       await this.spend(2);
     } else if (t === 'Hammer') {
-      if (obj === 'stone') {
+      if (obj === 'starrock') {
+        delete objs[pKey];
+        const gem = py_rng().choice(STAR_GEMS);
+        this.give('Star Fragment');
+        this.give(gem);
+        this.fx_break(tx, ty, 'stone', undefined, 1);
+        this.fx_add('sparkle', tx, ty, 0.9);
+        this.msg(`The fallen star cracks open: a Star Fragment and a ${gem}!`, '0A');
+      } else if (obj === 'stone') {
         delete objs[pKey];
         this.fx_break(tx, ty, 'stone', undefined, 0);
         this.msg('Crack! The stone shatters.');
@@ -1748,6 +1768,15 @@ export class Game {
       }
     }
     const tile = m.tile(tx, ty);
+    const here = this.objs[this.mapname]?.[pKey];
+    if (here === 'dig') {
+      this.msg('The soil here is wriggling. Something is buried! Dig it up with your Hoe.', '0A');
+      return;
+    }
+    if (here === 'starrock') {
+      this.msg('A fallen star, still warm to the touch. Crack it open with your Hammer.', '0A');
+      return;
+    }
 
     // Hot Spring on Mother's Hill (either standing in or facing 'spring')
     if (tile === 'spring' || m.tile(this.px, this.py) === 'spring') {
@@ -3605,6 +3634,9 @@ export class Game {
       return { key: 'x', label: age >= CROPS[crop][2] ? 'HARVEST' : 'CHECK' };
     }
     if (pKey in (this.forage[this.mapname] || {})) return { key: 'x', label: 'PICK' };
+    const obj = this.objs[this.mapname]?.[pKey];
+    if (obj === 'dig') return this.tool === 'Hoe' ? { key: 'space', label: 'DIG' } : { key: 'x', label: 'LOOK' };
+    if (obj === 'starrock') return this.tool === 'Hammer' ? { key: 'space', label: 'CRACK' } : { key: 'x', label: 'LOOK' };
     if (tile === 'bin') return { key: 'x', label: 'SHIP' };
     if (tile === 'bed') return { key: 'x', label: 'SLEEP' };
     if (tile === 'tv') return { key: 'x', label: 'WATCH' };
@@ -3624,6 +3656,7 @@ export class Game {
       ['Ore', 'ore'],
       ['Forage', 'forage'],
       ['Crops', 'crop'],
+      ['Relics', 'relic'],
     ];
   }
 
@@ -4609,6 +4642,7 @@ export class Game {
     if (this.weather === 'Typhoon' || this.weather === 'Blizzard') {
       report.push(`A fierce ${this.weather} sweeps through Mineral Town! Stay safe!`);
     }
+    if (reason === 'sleep') this.night_surprise(report);
 
     // Incubator & Chickens
     if (this.incubator_days > 0) {
@@ -4675,6 +4709,7 @@ export class Game {
       }
     }
     this.spawn_forage();
+    this.spawn_digs();
     this.talked = new Set();
     this.gifted = new Set();
     this.prayed = false;
@@ -4750,6 +4785,114 @@ export class Game {
         if (woods.tile(x, y) === 'grass' && !woods.near(x, y, ['path', 'bridge'], 0) && !(k in (this.forage['woods'] || {}))) objs[k] = 'branch';
       }
     }
+  }
+
+  /** A free patch of open field on the farm (no soil, crop or object), or null. */
+  free_field(): [number, number] | null {
+    const m = this.maps['farm'];
+    const objs = (this.objs['farm'] ||= {});
+    const rng = py_rng();
+    for (let tries = 0; tries < 200; tries++) {
+      const [x, y] = [rng.randint(3, 60), rng.randint(9, 26)];
+      const k = pkey(x, y);
+      if (m.tile(x, y) === 'field' && !this.tilled.has(k) && !objs[k] && !this.crops[k]) return [x, y];
+    }
+    return null;
+  }
+
+  /** Wriggling soil: each morning a few dig spots appear across the valley (at most DIG_CAP per map). */
+  spawn_digs(): void {
+    const rng = py_rng();
+    for (const mapKey of DIG_MAPS) {
+      const m = this.maps[mapKey];
+      if (!m || rng.random() < 0.45) continue;
+      const objs = (this.objs[mapKey] ||= {});
+      if (Object.values(objs).filter((o) => o === 'dig').length >= DIG_CAP) continue;
+      if (mapKey === 'farm') {
+        if (this.season === 3) continue; // frozen ground
+        const spot = this.free_field();
+        if (spot) objs[pkey(...spot)] = 'dig';
+        continue;
+      }
+      const forage = this.forage[mapKey] || {};
+      for (let tries = 0; tries < 80; tries++) {
+        const [x, y] = [rng.randint(2, m.w - 3), rng.randint(2, m.h - 3)];
+        const k = pkey(x, y);
+        const tile = m.tile(x, y);
+        if ((tile === 'grass' || tile === 'sand') && !objs[k] && !(k in forage) && !m.near(x, y, ['path', 'door', 'spring', 'pond', 'bridge'], 0)) {
+          objs[k] = 'dig';
+          break;
+        }
+      }
+    }
+  }
+
+  /** Dig up a dig spot: coins, ore, seeds, local forage or, now and then, a relic for the museum. */
+  dig_up(tx: number, ty: number): void {
+    delete this.objs[this.mapname][pkey(tx, ty)];
+    const rng = py_rng();
+    const r = rng.random();
+    const seeds = Object.keys(CROPS)
+      .filter((c) => CROPS[c][0] === this.season_name && `${c} Seeds` in ITEMS)
+      .map((c) => `${c} Seeds`);
+    let found: string;
+    if (r < 0.12) {
+      const item = rng.choice(DIG_RELICS);
+      this.give(item);
+      found = `a ${item}! An old relic; the museum would treasure it.`;
+      this.fx_add('sparkle', tx, ty, 0.9);
+      this.mastery_add('foraging', 2);
+    } else if (r < 0.37) {
+      const item = rng.choice(DIG_ORES);
+      this.give(item);
+      found = `a chunk of ${item}.`;
+    } else if (r < 0.55 && seeds.length) {
+      const item = rng.choice(seeds);
+      const n = rng.randint(1, 3);
+      this.give(item, n);
+      found = `${n} ${item}, still good!`;
+    } else if (r < 0.75) {
+      const item = rng.choice(this.forage_pool(this.mapname));
+      this.give(item, 2);
+      found = `2 ${item}.`;
+    } else {
+      const g = 30 + rng.randint(0, 17) * 10;
+      this.gold += g;
+      found = `an old purse with ${g}G inside!`;
+      this.fx_add('coin', tx, ty, 0.8);
+    }
+    this.fx_add('debris', tx, ty, 0.45, { stuff: 'plant', delay: 0.05 });
+    this.mastery_add('foraging', 1);
+    this.msg(`You dug up ${found}`, '0B');
+  }
+
+  /** Now and then something happens while you sleep: one roll a night, most nights are quiet. */
+  night_surprise(report: string[]): void {
+    const rng = py_rng();
+    if (rng.random() >= NIGHT_SURPRISE_CHANCE) return;
+    const growing = Object.values(this.crops).filter(([c, age]) => c !== 'Grass' && age < CROPS[c][2]);
+    const kinds = ['star', 'parcel'];
+    if (this.season !== 3 && growing.length >= 3) kinds.push('moths', 'moths');
+    const kind = rng.choice(kinds);
+    if (kind === 'moths') {
+      const lucky = rng.sample(growing, Math.min(6, growing.length));
+      for (const c of lucky) c[1] += 1;
+      report.push(`Glowmoths drifted over your field in the night. ${lucky.length} crops grew a little extra!`);
+      return;
+    }
+    if (kind === 'star') {
+      const spot = this.free_field();
+      if (spot) {
+        this.objs['farm'][pkey(...spot)] = 'starrock';
+        report.push('A falling star streaked over the valley and landed on your farm! Find it and crack it open with your Hammer.');
+        return;
+      }
+    }
+    const friends = py_sorted(Object.keys(this.friend).filter((n) => NPCS[n] && (this.friend[n] || 0) >= 30));
+    const from = friends.length ? rng.choice(friends) : 'Someone';
+    const item = rng.choice(this.forage_pool(rng.choice(['mountain', 'beach', 'woods'])));
+    this.give(item, 2);
+    report.push(`${from} left a parcel by your door: 2 ${item}.`);
   }
 
   /** Semantic tag for a map cell, mirroring the precedence used by glyph(). */

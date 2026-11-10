@@ -9,7 +9,8 @@ An ASCII tribute to *Harvest Moon: Friends of Mineral Town*, rendered in the bas
   - Full crop cycle: tilling, planting, watering, and harvesting 15 seasonal crops.
   - Animal husbandry: barns & coops with chickens, cows, and sheep (feeding, petting, brushing, milking, shearing).
   - **Town & villagers**: 18 NPCs with daily schedules, dialogue, heart levels, gift preferences, festivals, and marriage.
-    - **Mineral Town Museum**: donate fish, ore, forage and crops, complete the collection book, and earn milestone rewards from the curator.
+    - **Mineral Town Museum**: donate fish, ore, forage, crops and relics, complete the collection book, and earn milestone rewards from the curator.
+    - **Daily surprises**: wriggling soil (`§`) turns up across the valley each morning; dig it with the Hoe for an old purse of gold, ore, seeds, forage or a rare relic for the museum. Some nights bring a surprise: glowmoths that hurry your crops along, a falling star (`✦`) to crack open with the Hammer, or a parcel left on your doorstep by a friend.
   - **Rose Square request board**: villagers post timed requests for seasonal crops, forage and fish; deliver them for gold and friendship.
   - **Achievements & Journal**: 14 milestone goals tied to shipping, fishing, mining, museum donations, requests, friendship, festivals, family and more.
   - **Farm Mastery**: farming, foraging, fishing, mining and ranching earn XP and rank rewards from Novice to Legend.

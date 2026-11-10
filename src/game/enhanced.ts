@@ -643,6 +643,13 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
         return { ch: '◉', fg: '#b8702e', bg: soil, bold: false };
       case 'obj:branch':
         return { ch: '╱', fg: '#c58a4a', bg: soil, bold: true };
+      case 'obj:dig': {
+        // wriggling soil: twitches now and then so it catches the eye (F.t is 0 with reduced motion)
+        const wriggle = F.t > 0 && Math.floor(F.t * 2 + hs * 8) % 5 === 0;
+        return { ch: wriggle ? '∫' : '§', fg: '#d8b070', bg: mix(soil, '#3a2a18', 0.5), bold: true, accent: true };
+      }
+      case 'obj:starrock':
+        return { ch: '✦', fg: '#ffd060', bg: soil, bold: true, glow: '#ff9900', glowR: 4, accent: true };
     }
   }
   if (k === 'forage') {

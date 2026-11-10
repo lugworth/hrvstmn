@@ -740,6 +740,14 @@ export const OBJ_GLYPH: Record<string, any> = {
     "/",
     "09"
   ],
+  "dig": [
+    "§",
+    "0A"
+  ],
+  "starrock": [
+    "*",
+    "0A"
+  ],
   "stump": [
     "0",
     "09"
@@ -2671,6 +2679,16 @@ Object.assign(ITEMS, {
   "Spa Catfish": [500, 40, "fish"],
   "Pirate Treasure": [10000, 0, "ore"],
   "Fossil of Ancient Fish": [5000, 0, "ore"],
+  // Relics: buried curios from dig spots (and one from falling stars); the museum's Relics wing
+  "Clay Whistle": [180, 0, "relic"],
+  "Glass Float": [220, 0, "relic"],
+  "Tin Soldier": [260, 0, "relic"],
+  "Lantern Lens": [300, 0, "relic"],
+  "Carved Acorn": [160, 0, "relic"],
+  "Fossil Fern": [420, 0, "relic"],
+  "Bronze Bell": [380, 0, "relic"],
+  "Sun Coin": [600, 0, "relic"],
+  "Star Fragment": [800, 0, "relic"],
   "Boot": [1, 0, "trash"],
   "Empty Can": [1, 0, "trash"],
   "Fish Bones": [1, 0, "trash"],
@@ -3256,6 +3274,18 @@ export const LOOKOUT_FATIGUE = 10;
 
 /** Cedar Hollow's mossy pond: chance that a forage pickup finds a second one on a lucky day. */
 export const HOLLOW_LUCK_CHANCE = 0.3;
+
+/** Relics a dig spot can turn up (Star Fragments only come from falling stars). */
+export const DIG_RELICS = ['Clay Whistle', 'Glass Float', 'Tin Soldier', 'Lantern Lens', 'Carved Acorn', 'Fossil Fern', 'Bronze Bell', 'Sun Coin'];
+/** Ore and gems a dig spot can turn up. */
+export const DIG_ORES = ['Copper', 'Silver', 'Gold', 'Agate', 'Moon Stone', 'Sand Rose'];
+/** Outdoor maps that grow dig spots, and how many each may hold at once. */
+export const DIG_MAPS = ['farm', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point'];
+export const DIG_CAP = 2;
+/** Chance a good night's sleep brings a surprise (glowmoths, a falling star or a doorstep parcel). */
+export const NIGHT_SURPRISE_CHANCE = 0.18;
+/** Gems a fallen star can hold beside its Star Fragment. */
+export const STAR_GEMS = ['Moon Stone', 'Sand Rose', 'Topaz', 'Ruby', 'Emerald', 'Diamond'];
 
 /** Lighthouse Point: the old keeper's log, read one page a day at the sign. */
 export const LIGHTHOUSE_INTRO =
