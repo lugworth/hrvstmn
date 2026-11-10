@@ -15,6 +15,9 @@ import {
   LOOKOUT_VIEW,
   LOOKOUT_STAMINA,
   TIDE_POOL_TEXT,
+  DIG_CAP,
+  DIG_MAPS,
+  DIG_RELICS,
 } from './constants';
 
 const store: Record<string, string> = {};
@@ -112,6 +115,107 @@ const pinned = async <T>(v: number, fn: () => T | Promise<T>): Promise<T> => {
 };
 
 const REGIONS = ['woods', 'ridge', 'river', 'point'];
+
+/** Run fn with Math.random returning the given values first, then real randomness. */
+const withRandom = <T,>(values: number[], fn: () => T): T => {
+  const real = Math.random;
+  let i = 0;
+  Math.random = () => (i < values.length ? values[i++] : real());
+  try {
+    return fn();
+  } finally {
+    Math.random = real;
+  }
+};
+
+describe('daily surprises', () => {
+  const digsOn = (g: any, map: string) => Object.entries(g.objs[map] || {}).filter(([, o]) => o === 'dig').map(([k]) => k);
+
+  test('dig spots grow on open ground, never more than DIG_CAP a map, and not on frozen farmland', () => {
+    const g = fresh();
+    for (let day = 0; day < 20; day++) g.spawn_digs();
+    for (const map of DIG_MAPS) {
+      const spots = digsOn(g, map);
+      assert.ok(spots.length <= DIG_CAP, `${map} holds at most ${DIG_CAP}`);
+      for (const k of spots) {
+        const [x, y] = k.split(',').map(Number);
+        const tile = g.maps[map].tile(x, y);
+        assert.ok(map === 'farm' ? tile === 'field' : tile === 'grass' || tile === 'sand', `${map} ${k} is open ground (${tile})`);
+        assert.ok(!(k in (g.forage[map] || {})), 'not on forage');
+      }
+    }
+    assert.ok(DIG_MAPS.some((m) => digsOn(g, m).length > 0), 'twenty mornings grow some dig spots');
+    const w = fresh();
+    w.season = 3;
+    for (const k of digsOn(w, 'farm')) delete w.objs.farm[k]; // the new game's spring spot
+    for (let day = 0; day < 20; day++) w.spawn_digs();
+    assert.equal(digsOn(w, 'farm').length, 0, 'none on the farm in Winter');
+  });
+
+  test('the Hoe digs a spot up for coins, ore, seeds, forage or a relic', async () => {
+    const outcomes = new Set<string>();
+    for (const roll of [0.05, 0.2, 0.45, 0.65, 0.9]) {
+      const g = fresh();
+      g.warp('farm', 14, 10);
+      const [tx, ty] = g.target();
+      g.objs.farm[`${tx},${ty}`] = 'dig';
+      g.tool = 'Hoe';
+      assert.deepEqual(g.context_action(), { key: 'space', label: 'DIG' });
+      const [gold, inv] = [g.gold, JSON.stringify(g.inv)];
+      await withRandom([roll, 0], () => g.use_tool());
+      assert.equal(g.objs.farm[`${tx},${ty}`], undefined, 'the spot is used up');
+      assert.ok(g.gold > gold || JSON.stringify(g.inv) !== inv, `roll ${roll} finds something`);
+      if (Object.keys(g.inv).some((i) => DIG_RELICS.includes(i))) outcomes.add('relic');
+      if (g.gold > gold) outcomes.add('gold');
+    }
+    assert.deepEqual([...outcomes].sort(), ['gold', 'relic']);
+  });
+
+  test('relics have their own museum wing, Star Fragment included', () => {
+    const g = fresh();
+    assert.ok(g.museum_categories().some(([, c]: [string, string]) => c === 'relic'));
+    const wing = g.museum_pool('relic');
+    for (const r of [...DIG_RELICS, 'Star Fragment']) assert.ok(wing.includes(r), `${r} can be donated`);
+  });
+
+  test('a falling star lands on open field and the Hammer cracks it open', async () => {
+    const g = fresh();
+    const report: string[] = [];
+    withRandom([0, 0], () => g.night_surprise(report)); // surprise roll passes, first kind is the star
+    const star = Object.entries(g.objs.farm).find(([, o]) => o === 'starrock');
+    assert.ok(star, 'a star landed');
+    assert.match(report[0], /falling star/);
+    const [sx, sy] = star![0].split(',').map(Number);
+    g.warp('farm', sx, sy + 1);
+    g.face = [0, -1];
+    g.tool = 'Hammer';
+    assert.equal(g.context_action().label, 'CRACK');
+    await g.use_tool();
+    assert.equal(g.objs.farm[star![0]], undefined);
+    assert.equal(g.inv['Star Fragment'], 1);
+  });
+
+  test('glowmoths grow some crops a day; most nights nothing happens', () => {
+    const g = fresh();
+    const keys = ['20,12', '21,12', '22,12', '23,12'];
+    for (const k of keys) g.crops[k] = ['Turnip', 0];
+    const report: string[] = [];
+    withRandom([0, 0.99, 0.5], () => g.night_surprise(report)); // the last kind on the list is glowmoths
+    assert.match(report[0], /Glowmoths/);
+    assert.equal(keys.reduce((n, k) => n + g.crops[k][1], 0), 4, 'each of the four crops grew a day');
+    const quiet: string[] = [];
+    withRandom([0.99], () => g.night_surprise(quiet));
+    assert.deepEqual(quiet, []);
+  });
+
+  test('a doorstep parcel brings forage from a friend', () => {
+    const g = fresh();
+    g.friend = { Ann: 40 };
+    const report: string[] = [];
+    withRandom([0, 0.6, 0], () => g.night_surprise(report)); // kinds: star, parcel -> parcel
+    assert.match(report[0], /^Ann left a parcel by your door: 2 /);
+  });
+});
 
 describe('outer-region content', () => {
   test('each region forages from its own seasonal pool, with full item data', () => {

@@ -1092,6 +1092,20 @@ describe('Contour Farm presentation', () => {
     assert.equal(computeFrame(scene({ indoor: true }), 0)[10][10].texture, undefined);
   });
 
+  test('dig spots wriggle and a fallen star glows; reduced motion keeps the soil still', () => {
+    const s = scene({ reducedMotion: true });
+    s.tag(10, 10, { t: 'grass', wx: 10, wy: 10, k: 'obj:dig' });
+    s.tag(12, 10, { t: 'field', wx: 12, wy: 10, k: 'obj:starrock' });
+    const still = computeFrame(s, 0);
+    assert.equal(still[10][10].ch, '§');
+    assert.equal(still[10][12].ch, '✦');
+    assert.ok(still[10][12].glow, 'the star lights the ground around it');
+    const live = scene();
+    live.tag(10, 10, { t: 'grass', wx: 10, wy: 10, k: 'obj:dig' });
+    const frames = Array.from({ length: 10 }, (_, i) => computeFrame(live, i * 0.5)[10][10].ch);
+    assert.ok(frames.includes('§') && frames.includes('∫'), `the soil twitches over time (${frames.join('')})`);
+  });
+
   test('later rain and dialog glyphs cannot inherit scenery patterns', () => {
     const s = scene({ weather: 'Rain' });
     const rain = computeFrame(s, 1).flat().filter((o) => o.ch === '╲');
