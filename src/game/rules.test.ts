@@ -1,6 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  innSceneFor,
+  innCardsWin,
   canUpgradeAdvice,
   getMaxStamina,
   getToolArea,
@@ -193,6 +195,25 @@ describe('outer-region fishing and stone skipping', () => {
     assert.equal(rollStoneSkips(() => 0.99), 1);
     assert.equal(rollStoneSkips(() => 0.6, true), MAX_STONE_SKIPS);
     assert.equal(rollStoneSkips(() => 0.6, false), 1);
+  });
+});
+
+describe('inn Friday scene rotation', () => {
+  const ids = ['cards', 'recipes', 'story'];
+  test('unseen scenes come first, starting from the week in the rotation', () => {
+    assert.equal(innSceneFor(0, ids, []), 'cards');
+    assert.equal(innSceneFor(1, ids, []), 'recipes');
+    assert.equal(innSceneFor(1, ids, ['recipes']), 'story');
+    assert.equal(innSceneFor(2, ids, ['story', 'cards']), 'recipes');
+  });
+  test('once everything is seen the rotation repeats', () => {
+    assert.equal(innSceneFor(4, ids, ids), 'recipes');
+    assert.equal(innSceneFor(0, [], []), null);
+  });
+  test('the card game is deterministic and winnable', () => {
+    const wins = Array.from({ length: 30 }, (_, d) => innCardsWin(d));
+    assert.ok(wins.some(Boolean) && wins.some((w) => !w));
+    assert.equal(innCardsWin(11), innCardsWin(11));
   });
 });
 

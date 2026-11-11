@@ -18,6 +18,10 @@ import {
   DIG_CAP,
   DIG_MAPS,
   DIG_RELICS,
+  INN_SCENES,
+  INN_EVENING_DAY,
+  INN_LISTEN_FRIEND,
+  INN_JOIN_FRIEND,
   GRAY_COPPER_QTY,
   GRAY_COPPER_REWARD,
   GRAY_QUEST_FRIEND,
@@ -434,6 +438,83 @@ function await_rare(g: any): string | null {
   for (let i = 0; i < 5000; i++) if (g.roll_catch() === rare) return rare;
   return null;
 }
+
+describe("Friday evenings at Doug's Inn (task 01)", () => {
+  // Spring 5, Year 1 is a Friday (absday 4).
+  const friday = (minutes = 19 * 60) => {
+    const g = fresh();
+    g.day = 5;
+    g.minutes = minutes;
+    assert.equal(g.weekday, INN_EVENING_DAY);
+    return g;
+  };
+  const labels = async (g: any) => (await g.shop_options('inn')).map((o: any) => o[0]);
+
+  test('the inn offers one scene on Friday evenings only', async () => {
+    const g = friday();
+    assert.ok((await labels(g))[0].startsWith('Friday evening: '));
+    assert.ok(!(await labels(friday(15 * 60))).some((l: string) => l.startsWith('Friday')), 'not in the afternoon');
+    assert.ok(!(await labels(friday(22 * 60))).some((l: string) => l.startsWith('Friday')), 'not after 10 PM');
+    const thu = friday();
+    thu.day = 4;
+    assert.ok(!(await labels(thu)).some((l: string) => l.startsWith('Friday')), 'not on Thursday');
+  });
+
+  test('listening raises friendship once and the scene leaves the menu for the night', async () => {
+    const g = friday();
+    const said = quiet(g);
+    g.menu = async () => 0; // Listen
+    const scene = g.inn_scene();
+    const before = scene.cast.map((n: string) => g.friend[n] || 0);
+    await g.inn_evening();
+    assert.deepEqual(scene.cast.map((n: string) => g.friend[n]), before.map((f: number) => f + INN_LISTEN_FRIEND));
+    assert.equal(said.length, scene.listen.length);
+    assert.ok(g.inn_scenes_seen.includes(scene.id));
+    assert.ok(!(await labels(g)).some((l: string) => l.startsWith('Friday')));
+  });
+
+  test('joining gives more friendship and the scene payoff', async () => {
+    const g = friday();
+    quiet(g);
+    g.menu = async () => 1; // join in
+    while (g.inn_scene().id !== 'recipes') g.inn_scenes_seen.push(g.inn_scene().id);
+    const before = g.friend['Ann'] || 0;
+    const cookies = g.inv['Cookies'] || 0;
+    await g.inn_evening();
+    assert.equal(g.friend['Ann'], before + INN_JOIN_FRIEND);
+    assert.equal(g.inv['Cookies'], cookies + 1);
+  });
+
+  test('a scene you have seen waits until the others have been seen', () => {
+    const g = friday();
+    const first = g.inn_scene().id;
+    g.day = 12; // the next Friday
+    g.inn_scenes_seen = [first];
+    assert.notEqual(g.inn_scene().id, first);
+    g.inn_scenes_seen = INN_SCENES.map((s) => s.id);
+    assert.ok(INN_SCENES.some((s) => s.id === g.inn_scene().id), 'all seen: the rotation repeats');
+  });
+
+  test("Today's Plan names the evening on Fridays, and the attendance survives a reload", async () => {
+    const g = friday();
+    assert.ok(g.today_lines().some((l: string) => l.includes(g.inn_scene().title)));
+    quiet(g);
+    g.menu = async () => 0;
+    await g.inn_evening();
+    assert.ok(g.today_lines().some((l: string) => l.includes("Friday evening at Doug's")));
+    const h = fresh();
+    h.applySaveData(JSON.parse(JSON.stringify(g.snapshot())));
+    assert.deepEqual(h.inn_scenes_seen, g.inn_scenes_seen);
+    assert.equal(h.inn_evening_day, g.absday());
+    const old = JSON.parse(JSON.stringify(g.snapshot()));
+    delete old.inn_scenes_seen;
+    delete old.inn_evening_day;
+    const k = fresh();
+    k.applySaveData(old);
+    assert.deepEqual(k.inn_scenes_seen, []);
+    assert.equal(k.inn_evening_day, -1);
+  });
+});
 
 describe("Gray's two-chapter copper request (task 04)", () => {
   const talkGray = async (g: any) => {
