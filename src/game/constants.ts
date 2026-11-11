@@ -3306,3 +3306,8 @@ export const LIGHTHOUSE_LOG: string[] = [
 /** What you see in a Lighthouse Point tide pool. */
 export const TIDE_POOL_TEXT =
   "A tide pool among the rocks. Tiny crabs scuttle under the weed, and a red anemone opens and closes like a slow heartbeat.";
+
+/** Task 04: Gray's two-chapter request. Chapter one asks for Spring Mine copper. */
+export const GRAY_COPPER_QTY = 3;
+export const GRAY_COPPER_REWARD = 300;
+export const GRAY_QUEST_FRIEND = 5;

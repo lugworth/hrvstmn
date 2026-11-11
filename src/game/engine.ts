@@ -87,6 +87,9 @@ import {
   LIGHTHOUSE_INTRO,
   LIGHTHOUSE_LOG,
   TIDE_POOL_TEXT,
+  GRAY_COPPER_QTY,
+  GRAY_COPPER_REWARD,
+  GRAY_QUEST_FRIEND,
 } from './constants';
 import {
   CoordSet,
@@ -132,6 +135,7 @@ import {
   getBasketTotal,
   rollRegionCatch,
   rollStoneSkips,
+  canUpgradeAdvice,
 } from './rules';
 
 export interface VillagerRequest {
@@ -324,6 +328,10 @@ export class Game {
   skip_best: number = 0;
   lighthouse_log: number = 0;
   lighthouse_day: number = -1;
+  /** Gray's two-chapter request: 0 not asked, 1 copper wanted, 2 note left, 3 finished. */
+  gray_quest: number = 0;
+  /** The watering-can level Gray's note points at (chapter two ends when the can reaches it). */
+  gray_note_level: number = 0;
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -344,6 +352,7 @@ export class Game {
     'tv_watched_saturday', 'zack_paid_today', 'fest_attended', 'fest_declined',
     // outer-region landmarks
     'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
+    'gray_quest', 'gray_note_level',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -467,6 +476,8 @@ export class Game {
     this.skip_best = 0;
     this.lighthouse_log = 0;
     this.lighthouse_day = -1;
+    this.gray_quest = 0;
+    this.gray_note_level = 0;
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -2340,6 +2351,16 @@ export class Game {
       return;
     }
 
+    if (n === 'Gray' && (await this.gray_quest_talk())) {
+      if (!this.talked.has(n)) {
+        this.talked.add(n);
+        this.friend[n] = clamp((this.friend[n] || 0) + 2, 0, 100);
+      }
+      emitNpcEmote('note');
+      await this.check_heart_and_rival_events(n);
+      return;
+    }
+
     let line = '';
     if (n === this.married && this.mapname === 'house') {
       line = py_rng().choice(SPOUSE_LINES);
@@ -2359,6 +2380,108 @@ export class Game {
     }
     await this.say(line, n);
     await this.check_heart_and_rival_events(n);
+  }
+
+  /** Gray's watering-can advice from the current can level, or null once it is past Saibara's ore upgrades. */
+  gray_advice() {
+    return canUpgradeAdvice(this.can_level_soon(), UPGRADE, CAN_CAP);
+  }
+
+  /** The watering can's level, counting an upgrade already paid for at Saibara's forge. */
+  can_level_soon(): number {
+    const lvl = this.levels['Watering Can'] || 0;
+    return this.upgrading?.[0] === 'Watering Can' ? lvl + 1 : lvl;
+  }
+
+  /** The one-line next step Gray's note gives (Today's Plan and his reminder). */
+  gray_note(): string {
+    const lvl = this.levels['Watering Can'] || 0;
+    if (lvl >= this.gray_note_level) return 'Your can is ready; tell Gray how it went.';
+    if (this.can_level_soon() >= this.gray_note_level) return 'Saibara has your can; collect it, then tell Gray.';
+    const soon = this.can_level_soon();
+    const [cost, ore] = UPGRADE[soon + 1] || [0, ''];
+    return `Take Saibara ${cost}G + 1 ${ore} for a ${LEVELS[soon + 1]} can.`;
+  }
+
+  /** What Gray says when Saibara's ore upgrades have nothing more for the can (Mystrile and up). */
+  gray_past_ore_line(lvl: number): string {
+    if (lvl >= 7) return "A Mythic can? There's nothing left to forge. I just wanted to see it.";
+    if (lvl === 6) {
+      const [cost, ore] = UPGRADE[7];
+      return `Blessed, huh. The only step left is Mythic: ${cost.toLocaleString('en-US')}G and a ${ore} from the deep Spring Mine.`;
+    }
+    if (lvl === 5) return 'That cursed can needs Carter at the church before anyone forges it again.';
+    return "Mystrile's the last thing Saibara forges from ore. Past that, people talk about cursed tools in the Lake Mine.";
+  }
+
+  /**
+   * Task 04. Chapter one: Gray asks for Spring Mine copper. Chapter two: after delivery he
+   * explains which watering-can upgrade is worth saving for and leaves a note; it closes when
+   * the can reaches that level. Returns false when the quest has nothing to say this time.
+   */
+  async gray_quest_talk(): Promise<boolean> {
+    const have = this.inv['Copper'] || 0;
+    if (this.gray_quest === 0) {
+      this.gray_quest = 1;
+      await this.say(
+        `Got a minute? Saibara has me practising on scrap, and I'm out of copper. Bring me ${GRAY_COPPER_QTY} Copper from the Spring Mine and I'll make it worth your while.`,
+        'Gray'
+      );
+      return true;
+    }
+    if (this.gray_quest === 1) {
+      if (have < GRAY_COPPER_QTY) {
+        if (this.talked.has('Gray')) return false;
+        await this.say(`Still need ${GRAY_COPPER_QTY} Copper from the Spring Mine. You've got ${have}.`, 'Gray');
+        return true;
+      }
+      this.take('Copper', GRAY_COPPER_QTY);
+      this.gold += GRAY_COPPER_REWARD;
+      this.friend['Gray'] = clamp((this.friend['Gray'] || 0) + GRAY_QUEST_FRIEND, 0, 100);
+      this.requests_done += 1;
+      this.fx_add('coin', this.px, this.py, 0.8);
+      this.fx_add('text', this.px, this.py, 1.1, { text: `+${GRAY_COPPER_REWARD}G` });
+      await this.say(`That's good copper. Here's ${GRAY_COPPER_REWARD}G. Let me show you something about that watering can of yours.`, 'Gray');
+      const a = this.gray_advice();
+      if (!a) {
+        this.gray_quest = 3;
+        await this.say(this.gray_past_ore_line(this.can_level_soon()), 'Gray');
+        return true;
+      }
+      const { now, next, big } = a;
+      await this.say(
+        `${this.upgrading?.[0] === 'Watering Can' ? "Once Saibara's done, it" : 'Right now it'} holds ${now.cap} and waters ${now.tiles} tile${now.tiles === 1 ? '' : 's'} a pour. ${LEVELS[next.level]} is the one to save for: ${next.cost}G + 1 ${next.ore}, and it holds ${next.cap} and waters ${next.tiles}.`,
+        'Gray'
+      );
+      if (big) {
+        await this.say(
+          big.level > next.level + 1
+            ? `After that, skip worrying until ${LEVELS[big.level]}: that's the big jump, ${big.tiles} tiles a pour. Everything between is a small step.`
+            : `After that, ${LEVELS[big.level]} is the big jump: ${big.tiles} tiles a pour.`,
+          'Gray'
+        );
+      }
+      this.gray_quest = 2;
+      this.gray_note_level = next.level;
+      await this.say(`I wrote it down for you. "${this.gray_note()}" — Gray`, 'Note');
+      this.msg("Gray's note was added to Today's Plan.", '0C');
+      return true;
+    }
+    if (this.gray_quest === 2) {
+      if ((this.levels['Watering Can'] || 0) >= this.gray_note_level) {
+        this.gray_quest = 3;
+        this.friend['Gray'] = clamp((this.friend['Gray'] || 0) + GRAY_QUEST_FRIEND, 0, 100);
+        await this.say(
+          `There it is, a ${LEVELS[this.levels['Watering Can'] || 0]} can. Feels lighter on the wrist than you'd think, right? Saibara even nodded at my copper. Thanks for that.`,
+          'Gray'
+        );
+        return true;
+      }
+      if (this.talked.has('Gray')) return false;
+      await this.say(`Remember my note: ${this.gray_note()}`, 'Gray');
+      return true;
+    }
+    return false;
   }
 
   async propose(n: string): Promise<void> {
@@ -3587,6 +3710,11 @@ export class Game {
       const r = this.requests[0];
       const extra = this.requests.length > 1 ? ` (+${this.requests.length - 1} more)` : '';
       lines.push(`  Board  ${r.npc} needs ${r.qty} × ${r.item}${extra}`);
+    }
+    if (this.gray_quest === 1) {
+      lines.push(`  Gray   wants ${GRAY_COPPER_QTY} × Copper from the Spring Mine (have ${this.inv['Copper'] || 0})`);
+    } else if (this.gray_quest === 2) {
+      lines.push(`  Note   ${this.gray_note()}`);
     }
     lines.push('');
     const bdays = this.birthdays();

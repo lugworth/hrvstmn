@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canUpgradeAdvice,
   getMaxStamina,
   getToolArea,
   calculateStaminaSpend,
@@ -19,7 +20,7 @@ import {
   rollStoneSkips,
   MAX_STONE_SKIPS,
 } from './rules';
-import { REGION_CATCH } from './constants';
+import { REGION_CATCH, UPGRADE, CAN_CAP } from './constants';
 
 describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
   test('Power Berries scale max stamina from 150 to 250 (+10 each)', () => {
@@ -192,5 +193,24 @@ describe('outer-region fishing and stone skipping', () => {
     assert.equal(rollStoneSkips(() => 0.99), 1);
     assert.equal(rollStoneSkips(() => 0.6, true), MAX_STONE_SKIPS);
     assert.equal(rollStoneSkips(() => 0.6, false), 1);
+  });
+});
+
+describe("Gray's watering-can advice", () => {
+  test('the next upgrade from Basic is Copper, and the big later jump is Mystrile', () => {
+    const a = canUpgradeAdvice(0, UPGRADE, CAN_CAP)!;
+    assert.deepEqual([a.now.tiles, a.next.level, a.next.cost, a.next.ore, a.next.tiles, a.next.cap], [1, 1, 1000, 'Copper', 3, 55]);
+    assert.equal(a.big?.level, 4);
+  });
+  test('each level 0-3 points one step up; the big jump is always Mystrile when it is still ahead', () => {
+    for (const lvl of [0, 1, 2, 3]) {
+      const a = canUpgradeAdvice(lvl, UPGRADE, CAN_CAP)!;
+      assert.equal(a.next.level, lvl + 1);
+      assert.equal(a.next.cost, UPGRADE[lvl + 1][0]);
+      assert.equal(a.big?.level ?? null, lvl + 1 < 4 ? 4 : null);
+    }
+  });
+  test('Mystrile and beyond get no ore-upgrade advice', () => {
+    for (const lvl of [4, 5, 6, 7]) assert.equal(canUpgradeAdvice(lvl, UPGRADE, CAN_CAP), null);
   });
 });
