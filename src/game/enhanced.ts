@@ -9,6 +9,7 @@
 import type { Cell, CellTag, EmoteKind, HudLabel, PaletteMode, RenderCtx, Screen } from './screen';
 import { PALETTE } from './constants';
 import { contourPattern, type ContourTexture } from './contour';
+import { FENCE_PITCH, SEASON_GLYPHS } from './chrome';
 
 export type OutCell = {
   ch: string;
@@ -1060,6 +1061,16 @@ const ICONS: Record<string, [string, string]> = {
   bin: ['▣', '#c08a4a'],
   tool: ['⚒', '#c0c0c0'],
 };
+// Farm HUD chrome: weathered wood from the dark end of the Isotope orange ramp. The rails stay
+// about as quiet as the grey rules they replace; the sign board is dark enough for white text.
+const FENCE_RAIL = toIsotope(mix('#ff9900', '#000000', 0.6));
+const FENCE_POST = toIsotope(mix('#ff9900', '#000000', 0.42));
+const SIGN_BOARD = toIsotope(mix('#ff9900', '#000000', 0.74));
+/** The wood colours as drawn; the toolbar's CSS variables in globals.css mirror them. */
+export const FARM_CHROME = { rail: FENCE_RAIL, post: FENCE_POST, board: SIGN_BOARD } as const;
+const NOTE_ICON: [string, string] = ['❧', FENCE_POST];
+/** Season glyph colours follow SEASON_COL: pink blossom, green clover, orange leaf, cyan snowflake. */
+const SEASON_ICON_COL = ['#ff0099', '#33ff00', '#ff9900', '#00ffff'];
 const WEATHER_ICON: Record<string, [string, string]> = {
   Sunny: ['☀', '#ffcc33'],
   Rain: ['☂', '#7fb8ff'],
@@ -1310,6 +1321,8 @@ export function computeFrame(
         else if (k.startsWith('minimap:')) o = styleMinimapCell(k, F.t);
         else if (k === 'bar') o = { ch: '█', fg: pal(cell[1]), bg: '#0c0c11', bold: false };
         else if (k === 'bar:empty') o = { ch: '░', fg: '#2c2c36', bg: '#0c0c11', bold: false };
+        else if (k === 'hud:fence') o = { ch: cell[0], fg: cell[0] === '═' ? FENCE_RAIL : FENCE_POST, bg: '#000000', bold: false };
+        else if (k === 'hud:sign') o = { ch: cell[0], fg: pal(cell[1]), bg: SIGN_BOARD, bold: cell[3] };
         else o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
         if (tag.label) {
           const label = tag.label;
@@ -1385,7 +1398,7 @@ export function computeFrame(
     if (buf[0][x][2] === '01') out[0][x].bg = '#000000';
   }
   for (let y = 0; y < Math.min(ctx.divY, H); y++) {
-    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: '#404040', bg: '#000000', bold: false, ui: true };
+    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: FENCE_RAIL, bg: '#000000', bold: false, ui: true };
     for (let x = ctx.divX + 1; x < W; x++) {
       if (!tags[y][x] && buf[y][x][2] === '00') out[y][x].bg = '#000000';
       else if (tags[y][x]?.t === 'ui' && (tags[y][x]?.k || '').startsWith('bar')) {
@@ -1395,7 +1408,15 @@ export function computeFrame(
     }
   }
   if (ctx.divY < H) {
-    for (let x = 0; x < W; x++) if (buf[ctx.divY][x][0] === '-' && !tags[ctx.divY][x]) out[ctx.divY][x] = { ch: '─', fg: '#3a3a48', bg: '#000000', bold: false };
+    // The divider is a post-and-rail fence: a post every FENCE_PITCH cells where the rail runs
+    // clear on both sides, and the panel's edge post standing on it.
+    const rail = (x: number) => x >= 0 && x < W && buf[ctx.divY][x][0] === '-' && !tags[ctx.divY][x];
+    for (let x = 0; x < W; x++) {
+      if (!rail(x)) continue;
+      const edge = x === ctx.divX && ctx.divY > 0 && out[ctx.divY - 1][x].ch === '│' && out[ctx.divY - 1][x].ui;
+      const post = x % FENCE_PITCH === 3 && rail(x - 1) && rail(x + 1) && (ctx.divX >= W || Math.abs(x - ctx.divX) > 2);
+      out[ctx.divY][x] = { ch: edge ? '╧' : post ? '╪' : '═', fg: edge || post ? FENCE_POST : FENCE_RAIL, bg: '#000000', bold: false, ui: true };
+    }
   }
   const v = ctx.view;
   const sky = skyFor(ctx);
@@ -1405,8 +1426,13 @@ export function computeFrame(
     if (boxes.some((b) => ic.x >= b.x && ic.x < b.x + b.w && ic.y >= b.y && ic.y < b.y + b.h)) continue; // under a dialog
     const clearNight = ctx.weather === 'Sunny' && sky.amb < 0.5 && !ctx.indoor;
     const [ch, col] =
-      ic.icon === 'weather' ? (clearNight ? ['☾', '#d8e0ff'] : WEATHER_ICON[ctx.weather] || ['☀', '#ffcc33']) : ICONS[ic.icon];
-    out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: true };
+      ic.icon === 'weather' ? (clearNight ? ['☾', '#d8e0ff'] : WEATHER_ICON[ctx.weather] || ['☀', '#ffcc33'])
+      : ic.icon === 'season' ? [SEASON_GLYPHS[season], SEASON_ICON_COL[season]]
+      : ic.icon === 'note' ? NOTE_ICON
+      : ICONS[ic.icon];
+    out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: ic.icon !== 'note', ui: true };
+    // an icon leading a painted sign sits on the same board
+    if (ic.x + 1 < W && tags[ic.y][ic.x + 1]?.k === 'hud:sign') out[ic.y][ic.x].bg = SIGN_BOARD;
   }
 
   // ---- contact shadows: buildings and trees throw away from the sun.
@@ -2745,7 +2771,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         continue;
       }
       // Seamless vector box-drawing rules & rounded modal corners (no vertical/horizontal font gaps)
-      if (o.ui && !o.label && '─│╭╮╰╯'.includes(o.ch)) {
+      if (o.ui && !o.label && '─│╭╮╰╯═╪╧'.includes(o.ch)) {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
         const cx = px + cw / 2;
         const cy = py + ch / 2;
@@ -2779,6 +2805,23 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
           g.moveTo(xL, cy);
           g.arcTo(cx, cy, cx, yT, rad);
           g.lineTo(cx, yT);
+        } else {
+          // fence: two rails ('═'), a post through them ('╪'), or the panel's edge post ending on them ('╧')
+          // The rails are whole-pixel rectangles that lap 1px into the cells either side, so they
+          // stay unbroken when a dirty-rect repaint lays its background over a neighbour's edge.
+          const lw = Math.max(1, Math.round(fontPx / 11));
+          const gap = Math.max(lw + 1, Math.round(ch * 0.11));
+          const top = Math.round(cy) - gap - (lw >> 1);
+          g.fillStyle = o.fg;
+          g.fillRect(xL - 1, top, xR - xL + 2, lw);
+          g.fillRect(xL - 1, top + gap * 2, xR - xL + 2, lw);
+          if (o.ch === '╪') {
+            g.moveTo(cx, top - gap);
+            g.lineTo(cx, top + gap * 3 + lw);
+          } else if (o.ch === '╧') {
+            g.moveTo(cx, yT);
+            g.lineTo(cx, top + lw);
+          }
         }
         g.stroke();
         continue;

@@ -2,6 +2,7 @@
 
 import { Screen, CellTag, FxExtra, FxKind, BoxStyle, EmoteKind, PaletteMode } from './screen';
 import { COMPACT_MIN_COLS, MIN_ROWS, isCompact, fitMessages, fitText, reflowPages, wrapLines } from './compact';
+import { fencePost } from './chrome';
 import {
   GameMap,
   build_farm,
@@ -5373,12 +5374,33 @@ export class Game {
       s.put(x, row, text[0], '07', '00', true);
       s.tag(x, row, { t: 'ui', k: 'hud:label', label: { text, scale, w: width, h } });
     };
+    // Farm chrome: a post-and-rail fence between blocks, and ledger rows with dot leaders.
+    const rail = (row: number) => {
+      if (row >= end) return;
+      for (let i = 0; i < w; i++) {
+        s.put(x + i, row, fencePost(i, w) ? '╪' : '═', '01');
+        s.tag(x + i, row, { t: 'ui', k: 'hud:fence' });
+      }
+    };
+    const ledger = (row: number, name: string, value: string, col = '05') => {
+      if (row >= end) return;
+      pair(row, name, value, col);
+      const from = name.length + 1;
+      const to = w - Math.min(value.length, Math.max(1, w - name.length - 1)) - 1;
+      if (to - from >= 3) s.put(x + from, row, '·'.repeat(to - from), '01');
+    };
 
     const titleH = compact ? 1 : 2;
     label(y, 'HRVSTMN', compact ? 1 : 1.45, w, titleH);
     line(y + titleH, `${this.name} of ${this.farm} Farm`, '04');
+    rail(y + titleH + 1);
     y += titleH + 1 + gap;
-    line(y++, `${this.season_name.toUpperCase()} / YEAR ${this.year}`, '0C', true);
+    // the season glyph (blossom, clover, leaf, snowflake) is drawn by the renderer
+    if (y < end) {
+      s.put(x + 2, y, clip(`${this.season_name.toUpperCase()} / YEAR ${this.year}`, w - 2), '0C', '00', true);
+      s.ctx?.icons.push({ x, y, icon: 'season' });
+    }
+    y++;
     const dayH = compact ? 2 : 3;
     label(y, String(this.day).padStart(2, '0'), compact ? 1.8 : 2.6, 7, dayH);
     s.put(x + 8, y, WEEKDAYS[this.weekday].toUpperCase(), '07', '00', true);
@@ -5393,8 +5415,13 @@ export class Game {
     const cost = preview.cost > 0 ? `-${preview.cost}st${preview.faint ? '!' : ''}` : '';
     pair(y++, 'EQUIPPED', cost, preview.faint ? '08' : '04');
     const idx = TOOLS.includes(tool) ? `[${TOOLS.indexOf(tool) + 1}] ` : '';
-    line(y, idx + tool.toUpperCase(), '07', true);
-    if (idx) s.put(x, y, idx, '0C', '00', true);
+    // the equipped tool is a painted sign: one board the full width of the panel
+    if (y < end) {
+      s.put(x, y, ' '.repeat(w), '07');
+      s.put(x + 1, y, clip(idx + tool.toUpperCase(), w - 2), '07', '00', true);
+      if (idx) s.put(x + 1, y, idx.trimEnd(), '0C', '00', true);
+      for (let i = 0; i < w; i++) s.tag(x + i, y, { t: 'ui', k: 'hud:sign' });
+    }
     y++;
     if (UPGRADABLE.includes(tool)) {
       const level = this.levels[tool] || 0;
@@ -5407,7 +5434,7 @@ export class Game {
       pair(y, `${this.inv[tool] || 0} bags`, inSeason ? 'IN SEASON' : 'OFF-SEASON', inSeason ? '0B' : '08');
     }
     y++;
-    line(y++, '─'.repeat(Math.min(w, 18)), '0C');
+    rail(y++);
     y += gap - 1;
 
     const fraction = clamp(this.stamina / this.max_stamina, 0, 1);
@@ -5421,23 +5448,23 @@ export class Game {
     y++;
     pair(y++, 'FATIGUE', `${this.fatigue}/100`, this.fatigue < 50 ? '04' : this.fatigue < 80 ? '09' : '08');
     y += gap;
-    pair(y++, 'GOLD', `${this.gold}G`, '09');
+    ledger(y++, 'GOLD', `${this.gold}G`, '09');
     const binValue = py_sum(Object.entries(this.bin).map(([item, qty]) => (ITEMS[item] ? ITEMS[item][0] : 0) * qty));
-    pair(y++, 'BIN', `${binValue}G`, binValue ? '09' : '04');
+    ledger(y++, 'BIN', `${binValue}G`, binValue ? '09' : '04');
     const basket = getBasketTotal(this.basket);
     const held = this.held === 'Basket' ? `Basket ${basket}/${BASKET_CAPACITY}`
       : this.held ? `${this.held} x${this.inv[this.held] || 0}`
       : basket ? `Basket ${basket}/${BASKET_CAPACITY}` : '—';
-    pair(y++, 'HELD', held, this.held ? '0A' : basket ? '09' : '04');
+    ledger(y++, 'HELD', held, this.held ? '0A' : basket ? '09' : '04');
     y += gap;
     if (this.upgrading) line(y++, `FORGE  ${this.upgrading[0]}`, '09');
     if (this.riding_horse) line(y++, 'RIDING HORSE / 2x', '09');
-    if (this.chickens) pair(y++, 'COOP', `${this.chickens} hens / ${this.eggs} eggs`);
+    if (this.chickens) ledger(y++, 'COOP', `${this.chickens} hens / ${this.eggs} eggs`);
     if (this.animals.length) {
       const hungry = this.animals.filter((animal) => !animal.fed).length;
-      pair(y++, 'BARN', hungry ? `${hungry} hungry` : `${this.animals.length} fed`, hungry ? '08' : '04');
+      ledger(y++, 'BARN', hungry ? `${hungry} hungry` : `${this.animals.length} fed`, hungry ? '08' : '04');
     }
-    if (this.power_berries || this.has_mystic_berry) pair(y++, 'BERRIES', `${this.power_berries}${this.has_mystic_berry ? ' + Mystic' : ''}`);
+    if (this.power_berries || this.has_mystic_berry) ledger(y++, 'BERRIES', `${this.power_berries}${this.has_mystic_berry ? ' + Mystic' : ''}`);
     if (y + 2 < end) line(end - 1, this.map.title + (this.map.indoor ? ' / INDOORS' : ''), '04');
   }
 
@@ -5448,6 +5475,11 @@ export class Game {
     const compact = isCompact(W);
     const sep = compact ? ' ' : '  ';
     let x = 1;
+    if (s.style === 'enhanced') {
+      // the renderer draws the season glyph into this blank cell, like the weather icon
+      s.ctx?.icons.push({ x, y: 0, icon: 'season' });
+      x = 2;
+    }
     const segments: [string, string][] = [
       [`${sn} ${this.day}`, SEASON_COL[sn]],
       [` ${WEEKDAYS[this.weekday]}`, '05'],
@@ -5941,7 +5973,10 @@ export class Game {
     const idx = TOOLS.includes(t) ? `[${TOOLS.indexOf(t) + 1}] ` : '';
     s.ctx?.icons.push({ x, y, icon: 'tool' });
     seg(' ', '02');
-    seg(`${idx}${t} `, '07', true);
+    const signX = x;
+    if (seg(`${idx}${t} `, '07', true)) {
+      for (let i = signX; i < x; i++) s.tag(i, y, { t: 'ui', k: 'hud:sign' });
+    }
     if (t === 'Watering Can') seg(`${this.water}/${CAN_CAP[this.levels[t] || 0]} `, '0D');
     else if (t.endsWith(' Seeds')) {
       const crop = t.slice(0, -6);
@@ -6106,20 +6141,26 @@ export class Game {
     const count = Math.min(3, this.scr.h - y0);
     if (count <= 0) return;
     const recent = this.msgs.slice(-count);
+    const enhanced = this.scr.style === 'enhanced';
     if (isCompact(this.scr.w)) {
       // Narrow screens wrap messages instead of cutting them off; the newest always shows.
       const lines = fitMessages(recent.map(([text]) => text), this.scr.w - 2, count);
+      const newest = lines.findIndex(({ age }) => age === 0);
       lines.forEach(({ text, age }, i) => {
         const fg = age === 0 ? recent[recent.length - 1][1] : age === 1 ? cols[1]! : cols[0]!;
         this.scr.put(1, y0 + i, text, fg);
       });
+      // no column to spare on a phone: the bullet takes the blank left margin
+      if (enhanced && newest >= 0) this.scr.ctx?.icons.push({ x: 0, y: y0 + newest, icon: 'note' });
       return;
     }
+    const x0 = enhanced ? 3 : 1;
     for (let i = 0; i < recent.length; i++) {
       const [text, col] = recent[i];
       const age = recent.length - 1 - i;
       const fg = age === 0 ? col : age === 1 ? cols[1]! : cols[0]!;
-      this.scr.put(1, y0 + i, text.slice(0, this.scr.w - 2), fg);
+      this.scr.put(x0, y0 + i, text.slice(0, this.scr.w - x0 - 1), fg);
+      if (enhanced && age === 0) this.scr.ctx?.icons.push({ x: 1, y: y0 + i, icon: 'note' });
     }
   }
 
