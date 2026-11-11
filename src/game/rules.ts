@@ -398,3 +398,24 @@ export function rollStoneSkips(rand: () => number, calm: boolean = true): number
   while (n < MAX_STONE_SKIPS && rand() < keep) n++;
   return n;
 }
+
+/**
+ * Which Friday scene the inn holds this week. Scenes you have not seen come first, starting
+ * from this week's place in the rotation, so a missed evening comes round again; once all
+ * have been seen the rotation simply repeats.
+ */
+export function innSceneFor(week: number, ids: string[], seen: string[]): string | null {
+  const n = ids.length;
+  if (!n) return null;
+  const start = ((week % n) + n) % n;
+  for (let i = 0; i < n; i++) {
+    const id = ids[(start + i) % n];
+    if (!seen.includes(id)) return id;
+  }
+  return ids[start];
+}
+
+/** Whether you win the inn's card game on a given day (deterministic, about two weeks in three). */
+export function innCardsWin(absday: number): boolean {
+  return ((absday * 2654435761) >>> 0) % 3 !== 0;
+}
