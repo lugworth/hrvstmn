@@ -9,6 +9,16 @@ export type HudLabel = { text: string; scale: number; w: number; h: number };
 /** Visual style used by the canvas renderer. 'classic' is kept for tests and development. */
 export type VisualStyle = 'enhanced' | 'classic';
 
+/** World colour treatment in the enhanced renderer: Contour Mono (default), Seasonal Duotone, or Full Isotope. */
+export type PaletteMode = 'mono' | 'duotone' | 'isotope';
+
+/** Optional presentation metadata for dialogs and broadcast modals. */
+export type BoxStyle = {
+  kind?: 'npc' | 'tv' | 'fest' | 'system';
+  /** Isotope colour code ('08'..'0F' or '07') used to tint the header accent rule. */
+  accent?: string;
+};
+
 /**
  * Semantic info about a screen cell, written by the engine so the enhanced
  * renderer can style terrain by what it *is* rather than guessing from glyphs.
@@ -20,6 +30,8 @@ export type CellTag = {
   t: string;
   /** Finer kind: 'obj:weed', 'crop:ripe', 'soil:wet', 'deco', 'box:tl', 'bar', ... */
   k?: string;
+  /** Crop variety for growing/ripe field crops ('Turnip', 'Tomato', 'Corn', ...). */
+  cropName?: string;
   /** Deco glyph/colour for roofs, signs and windows. */
   dch?: string;
   dfg?: string;
@@ -35,14 +47,28 @@ export type CellTag = {
   zw?: number;
   /** Entity standing on this cell: 'player', 'npc', 'animal', 'pet'. */
   ent?: string;
+  /** Facing vector for directional entity tokens (e.g. player). */
+  face?: [number, number];
+  /** True when the player is mounted on horseback. */
+  riding?: boolean;
   /** A heading anchored in this UI cell; its reserved rectangle contains no other text. */
   label?: HudLabel;
 };
 
-export type FxKind = 'dust' | 'sparkle' | 'splash' | 'coin' | 'swing' | 'flash' | 'debris' | 'text';
+export type FxKind = 'dust' | 'sparkle' | 'splash' | 'coin' | 'swing' | 'flash' | 'debris' | 'text' | 'emote';
 
-/** Optional detail for an effect: swing direction, tool tier colour, floating text, debris material. */
-export type FxExtra = { dir?: [number, number]; tier?: number; text?: string; stuff?: 'stone' | 'wood' | 'plant'; delay?: number; seed?: number };
+export type EmoteKind = 'heart' | 'note' | 'alert' | 'cross' | 'sleep';
+
+/** Optional detail for an effect: swing direction, tool tier colour, floating text, debris material, or emote bubble. */
+export type FxExtra = {
+  dir?: [number, number];
+  tier?: number;
+  text?: string;
+  stuff?: 'stone' | 'wood' | 'plant';
+  emote?: EmoteKind;
+  delay?: number;
+  seed?: number;
+};
 
 export type RenderFx = FxExtra & {
   kind: FxKind;
@@ -67,6 +93,10 @@ export type RenderCtx = {
   wetness?: number;
   /** Colourblind-safe state glyphs (ripe !, wet ≈). */
   cues?: boolean;
+  /** World colour treatment ('mono' default, 'duotone', or 'isotope'). */
+  palette?: PaletteMode;
+  /** Equipped tool upgrade tier (0..6) for AoE reticle tinting. */
+  toolTier?: number;
   /** Screen cells per map tile horizontally. Always 1 now that large tiles are gone. */
   zoom: number;
   /** OS-level or user-chosen reduced motion. Freezes ambient animation. */
@@ -81,6 +111,8 @@ export type RenderCtx = {
   fx?: RenderFx[];
   /** A heavy hit shakes the view: seconds since the hit and its strength (1 light, 2 heavy). */
   shake?: { age: number; strength: number };
+  /** Radial lantern-iris map transition wipe when warping between maps. */
+  wipe?: { age: number; duration: number; focus?: [number, number] };
 };
 
 export class Screen {
@@ -92,16 +124,18 @@ export class Screen {
   /** Special full-screen scenes the renderer can dress up (currently 'title'). */
   scene: string | null = null;
   /** Rectangles of boxes (dialogs, menus) drawn this frame, top-most last. */
-  boxes: { x: number; y: number; w: number; h: number; born?: number }[] = [];
+  boxes: { x: number; y: number; w: number; h: number; born?: number; kind?: BoxStyle['kind']; accent?: string }[] = [];
   /** When each panel first appeared, so menus can ease in once. */
   private boxAges = new Map<string, number>();
   style: VisualStyle = 'enhanced';
+  paletteMode: PaletteMode = 'mono';
   reducedMotion: boolean = false;
   /** Whether texture cells may use half-size 2x2/3x3 detail glyphs. */
   hires: boolean = true;
   /** Colourblind-safe state cues: ripe/ wet/ ready markers in addition to colour. */
   accessibleCues: boolean = false;
   onHiresChange?: (hires: boolean) => void;
+  onPaletteChange?: (mode: PaletteMode) => void;
   keyQueue: string[] = [];
   private keyWaiters: Array<{
     resolve: (key: string | null) => void;
@@ -152,6 +186,12 @@ export class Screen {
     this.onHiresChange?.(hires);
   }
 
+  setPaletteMode(mode: PaletteMode) {
+    if (this.paletteMode === mode) return;
+    this.paletteMode = mode;
+    this.onPaletteChange?.(mode);
+  }
+
   put(x: number, y: number, text: string, fg: string = '05', bg: string = '00', bold: boolean = false) {
     if (y < 0 || y >= this.h) return;
     const row = this.buf[y];
@@ -173,7 +213,8 @@ export class Screen {
     fg: string = '03',
     bg: string = '00',
     title: string | null = null,
-    tfg: string = '07'
+    tfg: string = '07',
+    style?: BoxStyle
   ) {
     for (let j = 0; j < h; j++) {
       this.put(x, y + j, ' '.repeat(w), fg, bg);
@@ -184,7 +225,7 @@ export class Screen {
       born = performance.now() / 1000;
       this.boxAges.set(key, born);
     }
-    this.boxes.push({ x, y, w, h, born });
+    this.boxes.push({ x, y, w, h, born, kind: style?.kind, accent: style?.accent });
     const edge = '+' + '-'.repeat(Math.max(0, w - 2)) + '+';
     this.put(x, y, edge, fg, bg);
     this.put(x, y + h - 1, edge, fg, bg);

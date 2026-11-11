@@ -380,3 +380,50 @@ test('empty stamina keeps the HUD meter empty and the tool fainting warning visi
   const panel = s.buf.map((r) => r.slice(s.ctx!.divX + 1).map((c) => c[0]).join('')).join('\n');
   assert.match(panel, /-2st!/);
 });
+
+describe('graphical engine integration', () => {
+  test('Shift+V cycles Screen.paletteMode through mono, duotone, and isotope', async () => {
+    const { s, g } = farm();
+    assert.equal(s.paletteMode, 'mono');
+    await g.handle('V');
+    assert.equal(s.paletteMode, 'duotone');
+    await g.handle('V');
+    assert.equal(s.paletteMode, 'isotope');
+    await g.handle('V');
+    assert.equal(s.paletteMode, 'mono');
+  });
+
+  test('engine tags cropName, toolTier, player facing/riding, sheared sheep, minimap cells, and whistle emotes', () => {
+    const { s, g } = farm();
+    delete g.objs.farm['12,12'];
+    g.tilled.add('12,12');
+    g.wet.add('12,12');
+    g.crops['12,12'] = ['Tomato', 6];
+    g.levels['Hoe'] = 3;
+    g.tool = 'Hoe';
+    g.animals = [
+      { name: 'Fluff', kind: 'sheep', fed: true, aff: 50, wool: 7 },
+      { name: 'Clip', kind: 'sheep', fed: true, aff: 50, wool: 0 },
+    ];
+    g.animals_grazing = true;
+    g.show_minimap = true;
+    g.whistle_horse();
+    g.render();
+
+    assert.equal(s.ctx?.toolTier, 3);
+    assert.ok(s.ctx?.fx?.some((f) => f.kind === 'emote' && f.emote === 'heart'), 'whistling horse emits heart emote');
+    const p = findPlayer(s)!;
+    assert.equal(s.tags[p[1]][p[0]]?.riding, true);
+    assert.ok(Array.isArray(s.tags[p[1]][p[0]]?.face));
+
+    const cropCell = s.tags.flat().find((t) => t?.cropName === 'Tomato');
+    assert.ok(cropCell, 'cropName reaches Screen tags');
+    assert.ok(s.tags.flat().some((t) => t?.k === 'minimap:player'), 'minimap player marker tagged');
+
+    const out = computeFrame(s, 0);
+    const glyphs = out.flat().map((o) => o.ch);
+    assert.ok(glyphs.includes('┼'), 'Tomato renders with trellis silhouette');
+    assert.ok(glyphs.includes('☁') && glyphs.includes('◦'), 'woolly and sheared sheep have distinct glyphs');
+  });
+});
+

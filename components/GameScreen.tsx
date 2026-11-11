@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Screen, Cell } from '@/src/game/screen';
+import { Screen, Cell, type PaletteMode } from '@/src/game/screen';
 import { Game } from '@/src/game/engine';
 import { PALETTE, TOOLS } from '@/src/game/constants';
 import { computeFrame, drawFrame, frameSignature, shakeOffset, frameDirtyRect, type OutCell } from '@/src/game/enhanced';
@@ -124,6 +124,8 @@ export default function GameScreen() {
   const reducedMotionRef = useRef(false);
   const [hires, setHiresState] = useState(true);
   const hiresRef = useRef(true);
+  const [paletteMode, setPaletteModeState] = useState<PaletteMode>('mono');
+  const paletteModeRef = useRef<PaletteMode>('mono');
   const [haptics, setHapticsState] = useState(true);
   const hapticsRef = useRef(true);
   const [canFullscreen, setCanFullscreen] = useState(false);
@@ -321,6 +323,21 @@ export default function GameScreen() {
     }
   }, []);
 
+  const selectPalette = useCallback((mode: PaletteMode) => {
+    paletteModeRef.current = mode;
+    setPaletteModeState(mode);
+    if (screenRef.current) {
+      screenRef.current.setPaletteMode(mode);
+      gameRef.current?.render();
+      screenRef.current.onRender?.();
+    }
+    try {
+      window.localStorage.setItem('hrvstmn-palette', mode);
+    } catch {
+      // storage unavailable; the choice still applies this session
+    }
+  }, []);
+
   const toggleHaptics = useCallback(() => {
     const next = !hapticsRef.current;
     hapticsRef.current = next;
@@ -444,6 +461,28 @@ export default function GameScreen() {
       {
         title: 'View',
         items: [
+          {
+            id: 'pal-mono',
+            label: 'Palette: Contour Mono',
+            shortcut: 'Shift+V',
+            kind: 'radio',
+            checked: paletteMode === 'mono',
+            run: () => selectPalette('mono'),
+          },
+          {
+            id: 'pal-duotone',
+            label: 'Palette: Seasonal Duotone',
+            kind: 'radio',
+            checked: paletteMode === 'duotone',
+            run: () => selectPalette('duotone'),
+          },
+          {
+            id: 'pal-isotope',
+            label: 'Palette: Full Isotope',
+            kind: 'radio',
+            checked: paletteMode === 'isotope',
+            run: () => selectPalette('isotope'),
+          },
           { id: 'detail', label: 'High-res detail', kind: 'checkbox', checked: hires, run: toggleHires },
           { id: 'motion', label: 'Motion', kind: 'checkbox', checked: !reducedMotion, run: toggleMotion },
           ...(isTouch
@@ -515,6 +554,28 @@ export default function GameScreen() {
       } catch {
         // storage unavailable; the choice still applies this session
       }
+    };
+    let savedPalette: PaletteMode = 'mono';
+    try {
+      const rawPalette = window.localStorage.getItem('hrvstmn-palette');
+      if (rawPalette === 'mono' || rawPalette === 'duotone' || rawPalette === 'isotope') {
+        savedPalette = rawPalette;
+      }
+    } catch {
+      savedPalette = 'mono';
+    }
+    screen.paletteMode = savedPalette;
+    paletteModeRef.current = savedPalette;
+    setPaletteModeState(savedPalette);
+    screen.onPaletteChange = (next) => {
+      paletteModeRef.current = next;
+      setPaletteModeState(next);
+      try {
+        window.localStorage.setItem('hrvstmn-palette', next);
+      } catch {
+        // storage unavailable; the choice still applies this session
+      }
+      screen.onRender?.();
     };
     screenRef.current = screen;
 
@@ -588,10 +649,11 @@ export default function GameScreen() {
         lastSig = '';
       }
       const frame = computeFrame(screen, screen.reducedMotion ? 0 : performance.now() / 1000);
-      const sig = `${screen.hires ? 'h' : 'p'}:${frameSignature(frame)}`;
+      const prefix = `${screen.hires ? 'h' : 'p'}:${screen.paletteMode}:`;
+      const sig = `${prefix}${frameSignature(frame)}`;
       if (sig === lastSig) return;
-      const detailChanged = lastSig[0] !== sig[0];
-      const dirty = frameDirtyRect(detailChanged ? null : prevFrame, frame);
+      const modeChanged = !lastSig.startsWith(prefix);
+      const dirty = frameDirtyRect(modeChanged ? null : prevFrame, frame);
       if (prevFrame && !dirty) return;
       lastSig = sig;
       drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1, hires: screen.hires }, dirty ?? undefined);

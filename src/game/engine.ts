@@ -1,6 +1,6 @@
 // Harvest Moon: Friends of Mineral Town — Complete ASCII Engine
 
-import { Screen, CellTag, FxExtra, FxKind } from './screen';
+import { Screen, CellTag, FxExtra, FxKind, BoxStyle, EmoteKind, PaletteMode } from './screen';
 import { COMPACT_MIN_COLS, MIN_ROWS, isCompact, fitMessages, fitText, reflowPages, wrapLines } from './compact';
 import {
   GameMap,
@@ -299,6 +299,7 @@ export class Game {
   npc_pos: Record<string, [number, number]> = {};
   fx: (FxExtra & { kind: FxKind; map: string; x: number; y: number; born: number; life: number })[] = [];
   shake_fx: { born: number; strength: number } | null = null;
+  warp_fx: { born: number; duration: number } | null = null;
   wetness: Record<string, number> = {};
   mine_type: 'spring' | 'lake' = 'spring';
   mine_floor: number = 0;
@@ -870,6 +871,16 @@ export class Game {
     } else if (k === 'n' || k === 'N') {
       this.show_minimap = !this.show_minimap;
       this.msg(`Minimap ${this.show_minimap ? 'shown' : 'hidden'}.`, '0C');
+    } else if (k === 'V') {
+      const order: PaletteMode[] = ['mono', 'duotone', 'isotope'];
+      const labels: Record<PaletteMode, string> = {
+        mono: 'Contour Mono',
+        duotone: 'Seasonal Duotone',
+        isotope: 'Full Isotope',
+      };
+      const next = order[(order.indexOf(this.scr.paletteMode) + 1) % order.length];
+      this.scr.setPaletteMode(next);
+      this.msg(`Palette: ${labels[next]} (Shift+V)`, '0C');
     } else if (k === 'p') {
       // Narrow screens hide the side panel; 'p' (touch INFO) overlays it. Wide screens always show it.
       if (isCompact(this.scr.w)) this.show_panel = !this.show_panel;
@@ -891,6 +902,7 @@ export class Game {
     }
     this.riding_horse = !this.riding_horse;
     this.horse_aff = Math.min(100, this.horse_aff + 1);
+    this.fx_add('emote', this.px, this.py, 0.9, { emote: this.riding_horse ? 'heart' : 'note' });
     if (this.riding_horse) {
       this.msg('Wheeeet! Your horse gallops to your side! Riding at 2x speed! (Press Shift+H to dismount)', '09');
     } else {
@@ -909,6 +921,7 @@ export class Game {
     }
     if (!this.animals_grazing) {
       if (this.weather !== 'Sunny') {
+        this.fx_add('emote', this.px, this.py, 0.9, { emote: 'alert' });
         this.msg('Keep your animals indoors during Rain or Snow so they stay happy!', '08');
         return;
       }
@@ -920,9 +933,11 @@ export class Game {
         a.fed = true;
         a.aff = Math.min(100, a.aff + 2);
       }
+      this.fx_add('emote', this.px, this.py, 0.9, { emote: 'note' });
       this.msg(`Ding-a-ling! Your animals come outside to graze in the sunshine! (+Outdoor hours: ${this.outdoor_hours}h)`, '0B');
     } else {
       this.animals_grazing = false;
+      this.fx_add('emote', this.px, this.py, 0.9, { emote: 'note' });
       this.msg('Ding-a-ling! Your chickens and livestock return safely to the Coop and Barn.', '0C');
     }
   }
@@ -1215,12 +1230,16 @@ export class Game {
   }
 
   warp(mp: string, x: number, y: number, face: [number, number] | null = null): void {
+    const prev = this.mapname;
     this.mapname = mp;
     this.px = x;
     this.py = y;
     if (face) this.face = face;
     this.cam_x = null;
     this.cam_y = null;
+    if (this.started && prev !== mp) {
+      this.warp_fx = { born: Date.now() / 1000, duration: 0.22 };
+    }
     this.update_npcs();
     if (!this.map.indoor) {
       this.msg(`~ ${this.map.title} ~`, '0C');
@@ -2057,12 +2076,14 @@ export class Game {
     const sel = await this.menu(`Doghouse — Dog ${bar} (Max Frisbee: ${this.dog_frisbee_dist}m)`, opts);
     if (sel === 0) {
       this.dog_aff = Math.min(100, this.dog_aff + 3);
+      this.fx_add('emote', 21, 6, 1.0, { emote: 'heart' });
       this.msg('Woof! Your dog wags its tail happily! (+Affection)', '0B');
     } else if (sel === 1) {
       if (!this.inv['Dog Ball']) {
         await this.say('Buy a Dog Ball from Won at Zack\'s Beach House to play fetch!', 'Doghouse');
       } else {
         this.dog_aff = Math.min(100, this.dog_aff + 5);
+        this.fx_add('emote', 21, 6, 1.0, { emote: 'heart' });
         this.msg('Your dog chases the Dog Ball and brings it right back! Woof!', '0B');
       }
     } else if (sel === 2) {
@@ -2072,6 +2093,7 @@ export class Game {
         const gain = py_rng().randint(2, 6);
         this.dog_frisbee_dist = Math.min(95, this.dog_frisbee_dist + gain);
         this.dog_aff = Math.min(100, this.dog_aff + 4);
+        this.fx_add('emote', 21, 6, 1.0, { emote: 'note' });
         this.msg(`Great catch! Your dog's Frisbee record is now ${this.dog_frisbee_dist}m!`, '0C');
       }
     }
@@ -2093,16 +2115,19 @@ export class Game {
     const sel = await this.menu(`Horse Stable — Horse ${bar}`, opts);
     if (sel === 0) {
       this.horse_aff = Math.min(100, this.horse_aff + 3);
+      this.fx_add('emote', 25, 6, 1.0, { emote: 'heart' });
       this.msg('Neigh! Your horse nuzzles your shoulder.', '0B');
     } else if (sel === 1) {
       if (!this.inv['Brush']) {
         await this.say('Buy a Brush from Saibara or Barley to groom your horse.', 'Stable');
       } else {
         this.horse_aff = Math.min(100, this.horse_aff + 5);
+        this.fx_add('emote', 25, 6, 1.0, { emote: 'heart' });
         this.msg("You brushed your horse's coat until it gleams!", '0B');
       }
     } else if (sel === 2) {
       this.riding_horse = !this.riding_horse;
+      this.fx_add('emote', this.px, this.py, 0.9, { emote: this.riding_horse ? 'heart' : 'note' });
       this.msg(this.riding_horse ? 'You mount your horse! Double speed on the farm!' : 'You dismount your horse.', '09');
     } else if (sel === 3) {
       await this.ship();
@@ -2267,6 +2292,17 @@ export class Game {
     }
     const d = NPCS[n];
     if (!d) return;
+    const npcSpot: [number, number] | null =
+      this.npc_pos[n] && NPCS[n]?.where?.[0] === this.mapname
+        ? this.npc_pos[n]
+        : this.indoor_npcs[n]?.map === this.mapname
+          ? this.indoor_npcs[n].pos
+          : n === this.married && this.mapname === 'house'
+            ? SPOUSE_POS
+            : null;
+    const emitNpcEmote = (emote: EmoteKind) => {
+      if (npcSpot) this.fx_add('emote', npcSpot[0], npcSpot[1], 1.1, { emote });
+    };
     if (this.held) {
       const item = this.held;
       if (item === 'Blue Feather') {
@@ -2274,6 +2310,7 @@ export class Game {
         return;
       }
       if (this.gifted.has(n)) {
+        emitNpcEmote('note');
         await this.say('You already gave me something today. Thank you, though!', n);
         return;
       }
@@ -2297,6 +2334,7 @@ export class Game {
       }
       this.friend[n] = clamp((this.friend[n] || 0) + pts, 0, 100);
       this.gifted.add(n);
+      emitNpcEmote(pref === 'love' ? 'heart' : pref === 'hate' ? 'cross' : 'note');
       await this.say(line, n);
       await this.check_heart_and_rival_events(n);
       return;
@@ -2308,10 +2346,12 @@ export class Game {
       if (this.child_name) {
         line += ` Little ${this.child_name} is growing so fast!`;
       }
+      emitNpcEmote('heart');
     } else {
       const f = this.friend[n] || 0;
       const tier = f < 30 ? 0 : f < 70 ? 1 : 2;
       line = py_rng().choice(d.lines[tier]);
+      emitNpcEmote(f >= 60 ? 'heart' : 'note');
     }
     if (!this.talked.has(n)) {
       this.talked.add(n);
@@ -4938,6 +4978,7 @@ export class Game {
         const d = CROPS[crop];
         const stage = age >= d[2] ? 'ripe' : age === 0 ? 'seed' : age < d[2] / 2 ? 'sprout' : 'young';
         tag.k = `crop:${stage}${wet ? ':wet' : ''}`;
+        tag.cropName = crop;
       }
       return tag;
     }
@@ -5062,6 +5103,8 @@ export class Game {
       weather: this.map.indoor ? 'Sunny' : this.weather,
       wetness: this.wetness[this.mapname] || 0,
       cues: s.accessibleCues,
+      palette: s.paletteMode,
+      toolTier: UPGRADABLE.includes(this.tool) ? (this.levels[this.tool] || 0) : 0,
       zoom: 1,
       reducedMotion: s.reducedMotion,
       view: { x: 0, y: mapY, w: vw, h: vh },
@@ -5243,6 +5286,10 @@ export class Game {
         .filter((f) => f.map === this.mapname)
         .map((f) => ({ ...f, x: ox + f.x - cx, y: oy + f.y - cy, age: now - f.born, life: f.life }));
       s.ctx.shake = this.shake_fx && now - this.shake_fx.born < 0.3 ? { age: now - this.shake_fx.born, strength: this.shake_fx.strength } : undefined;
+      s.ctx.wipe =
+        this.warp_fx && now - this.warp_fx.born < this.warp_fx.duration
+          ? { age: now - this.warp_fx.born, duration: this.warp_fx.duration, focus: [ox + this.px - cx, oy + this.py - cy] }
+          : undefined;
     }
     const hour = this.minutes / 60;
     const classic = s.style === 'classic';
@@ -5287,14 +5334,14 @@ export class Game {
         s.tag(px, oy + sy, tag);
       }
     }
-    const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc') => {
+    const at = (x: number, y: number, ch: string, fg: string, bold = true, ent = 'npc', extra?: Partial<CellTag>) => {
       const [sx, sy] = [x - cx, y - cy];
       if (0 <= sx && sx < Math.min(vw, m.w) && 0 <= sy && sy < Math.min(vh, m.h)) {
         const px = ox + sx;
         const bg = s.buf[oy + sy][px][2];
         const under = s.tags[oy + sy][px];
         s.put(px, oy + sy, ch, fg, bg, bold);
-        if (under) s.tag(px, oy + sy, { ...under, ent });
+        if (under) s.tag(px, oy + sy, { ...under, ent, ...extra });
       }
     };
     // Draw outdoor Dog, Horse, and grazing Chickens/Cows/Sheep on the Farm
@@ -5315,7 +5362,8 @@ export class Game {
           const gx = 28 + ((i * 4 + tick) % 10);
           const gy = 8 + (i % 2);
           if (!(gx === this.px && gy === this.py)) {
-            at(gx, gy, a.kind === 'cow' ? 'C' : 'S', a.kind === 'cow' ? '07' : '05', true, 'animal');
+            const sheepCh = (a.wool ?? WOOL_DAYS) >= WOOL_DAYS ? 'S' : 's';
+            at(gx, gy, a.kind === 'cow' ? 'C' : sheepCh, a.kind === 'cow' ? '07' : '05', true, 'animal');
           }
         }
       }
@@ -5347,7 +5395,10 @@ export class Game {
             : this.riding_horse
               ? '0A'
               : '07';
-    at(this.px, this.py, '@', playerCol, true, 'player');
+    at(this.px, this.py, '@', playerCol, true, 'player', {
+      face: [this.face[0], this.face[1]],
+      riding: this.riding_horse,
+    });
 
     if (classic && !m.indoor && m.name !== 'mine' && this.weather !== 'Sunny' && !s.reducedMotion) {
       const rng = py_rng(Math.floor((Date.now() / 1000) * 8));
@@ -5375,7 +5426,7 @@ export class Game {
     const bx = vw - gw - 3;
     const by = 2;
     if (bx < 0 || by + gh + 2 > s.h) return;
-    s.box(bx, by, gw + 2, gh + 2, '0C', '00', 'Map');
+    s.box(bx, by, gw + 2, gh + 2, '0C', '00', 'Map', '07', { accent: '0C' });
     // Keep the map's aspect ratio and include its outer edges. Small interiors stay
     // 1:1; large outdoor maps sample the full extent without dropping the last row/column.
     const drawW = Math.min(gw, m.w);
@@ -5384,36 +5435,54 @@ export class Game {
     const offY = Math.floor((gh - drawH) / 2);
     const atX = (gx: number) => (m.w <= 1 ? 0 : Math.round((gx * (m.w - 1)) / Math.max(1, drawW - 1)));
     const atY = (gy: number) => (m.h <= 1 ? 0 : Math.round((gy * (m.h - 1)) / Math.max(1, drawH - 1)));
-    const glyph = (t: string | undefined): [string, string] => {
-      if (!t || t === 'void') return [' ', '00'];
-      if (t === 'water' || t === 'fountain' || t === 'spring' || t === 'pond') return ['≈', '0A'];
-      if (t === 'path' || t === 'bridge') return ['·', '03'];
-      if (t === 'tree') return ['♣', '0B'];
-      if (t === 'field') return ['▒', '04'];
-      if (t === 'cliff') return ['▲', '08'];
-      if (t === 'door' || t === 'exit') return ['+', '09'];
-      if (t === 'roof' || t === 'wall' || t === 'iwall' || t === 'mwall') return ['▮', '09'];
-      if (t === 'flower') return ['*', '0A'];
-      return [' ', '02'];
+    const glyph = (tx: number, ty: number, t: string | undefined): [string, string, string | null] => {
+      if (!t || t === 'void') return [' ', '00', null];
+      if (this.mapname === 'farm') {
+        const pk = pkey(tx, ty);
+        if (this.tilled.has(pk)) {
+          const c = this.crops[pk];
+          if (c) {
+            const d = CROPS[c[0]];
+            if (d && c[1] >= d[2]) return ['*', '0A', 'minimap:crop_ripe'];
+            return ['•', '0B', 'minimap:crop'];
+          }
+          return ['=', '09', 'minimap:soil'];
+        }
+      }
+      if (t === 'water' || t === 'fountain' || t === 'spring' || t === 'pond') return ['≈', '0A', 'minimap:water'];
+      if (t === 'path' || t === 'bridge') return ['·', '03', 'minimap:path'];
+      if (t === 'tree') return ['♣', '0B', 'minimap:tree'];
+      if (t === 'field') return ['▒', '04', 'minimap:field'];
+      if (t === 'cliff') return ['▲', '08', 'minimap:cliff'];
+      if (t === 'door' || t === 'exit') return ['+', '09', 'minimap:door'];
+      if (t === 'roof' || t === 'wall' || t === 'iwall' || t === 'mwall') return ['▮', '09', 'minimap:roof'];
+      if (t === 'flower') return ['*', '0A', 'minimap:ground'];
+      return ['·', '02', 'minimap:ground'];
     };
     for (let gy = 0; gy < drawH; gy++) {
       for (let gx = 0; gx < drawW; gx++) {
         const tx = atX(gx);
         const ty = atY(gy);
-        const [ch, col] = glyph(m.t[ty]?.[tx]);
-        s.put(bx + 1 + offX + gx, by + 1 + offY + gy, ch, col, '00');
+        const [ch, col, mk] = glyph(tx, ty, m.t[ty]?.[tx]);
+        const sx = bx + 1 + offX + gx;
+        const sy = by + 1 + offY + gy;
+        s.put(sx, sy, ch, col, '00');
+        if (mk) s.tag(sx, sy, { t: 'ui', k: mk });
       }
     }
-    const mark = (wx: number, wy: number, ch: string, col: string) => {
+    const mark = (wx: number, wy: number, ch: string, col: string, mk: string) => {
       const gx = offX + Math.round((wx * (drawW - 1)) / Math.max(1, m.w - 1));
       const gy = offY + Math.round((wy * (drawH - 1)) / Math.max(1, m.h - 1));
       if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) return;
-      s.put(bx + 1 + gx, by + 1 + gy, ch, col, '00', true);
+      const sx = bx + 1 + gx;
+      const sy = by + 1 + gy;
+      s.put(sx, sy, ch, col, '00', true);
+      s.tag(sx, sy, { t: 'ui', k: mk });
     };
     for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
-      if (NPCS[n]?.where?.[0] === this.mapname) mark(x, y, 'o', '0C');
+      if (NPCS[n]?.where?.[0] === this.mapname) mark(x, y, 'o', '0C', 'minimap:npc');
     }
-    mark(this.px, this.py, '@', '0D');
+    mark(this.px, this.py, '@', '0D', 'minimap:player');
   }
 
   /**
@@ -5683,19 +5752,38 @@ export class Game {
     let title: string | null = null;
     let tcol = '07';
     let hearts: [string, string] | null = null;
+    let boxStyle: BoxStyle | undefined;
     if (who && who in NPCS) {
-      title = who;
+      title = `● ${who}`;
       tcol = NPCS[who].col;
       hearts = this.hearts(who);
+      boxStyle = { kind: 'npc', accent: NPCS[who].col };
+    } else if (who && /(TV|Channel|Cooking Show|Variety|Life on the Farm)/i.test(who)) {
+      title = `▣ ${who}`;
+      tcol = '0C';
+      boxStyle = { kind: 'tv', accent: '0C' };
+    } else if (who && /(Goddess|Festival|Heart Event|Rival Event)/i.test(who)) {
+      title = `✦ ${who}`;
+      tcol = '0B';
+      boxStyle = { kind: 'fest', accent: '0B' };
+    } else if (who === 'Shipping Bin') {
+      title = `▣ ${who}`;
+      tcol = '09';
+      boxStyle = { kind: 'system', accent: '09' };
     } else if (who) {
       title = who;
+      boxStyle = { kind: 'system', accent: '0D' };
     }
     for (const page of pages) {
       const draw = () => {
         const [bx, by] = [Math.floor((W - bw) / 2), H - 8];
-        this.scr.box(bx, by, bw, 6, '0D', '00', title || undefined, tcol);
+        this.scr.box(bx, by, bw, 6, '0D', '00', title || undefined, tcol, boxStyle);
         if (hearts && title) {
-          this.scr.put(bx + title.length + 5, by, hearts[0], hearts[1]);
+          const hx = bx + title.length + 5;
+          const room = bx + bw - 2 - hx;
+          if (room >= 4) {
+            this.scr.put(hx, by, hearts[0].slice(0, room), hearts[1]);
+          }
         }
         for (let i = 0; i < page.length; i++) {
           this.scr.put(bx + 2, by + 1 + i, page[i], '06');
