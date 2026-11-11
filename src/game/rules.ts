@@ -419,3 +419,44 @@ export function innSceneFor(week: number, ids: string[], seen: string[]): string
 export function innCardsWin(absday: number): boolean {
   return ((absday * 2654435761) >>> 0) % 3 !== 0;
 }
+
+/** One watering-can step: the level it reaches, what Saibara charges, and what it waters. */
+export interface CanStep {
+  level: number;
+  cost: number;
+  ore: string;
+  tiles: number;
+  cap: number;
+}
+
+/**
+ * Gray's advice on the watering can (task 04). From the current level, `next` is the upgrade
+ * to save for now and `big` is the later Saibara upgrade that adds the most tiles per pour.
+ * Null once the can is Mystrile or beyond: Saibara's ore upgrades stop there.
+ */
+export function canUpgradeAdvice(
+  level: number,
+  upgrade: Record<number, [number, string]>,
+  caps: number[]
+): { now: CanStep; next: CanStep; big: CanStep | null } | null {
+  const step = (lvl: number): CanStep => ({
+    level: lvl,
+    cost: upgrade[lvl]?.[0] ?? 0,
+    ore: upgrade[lvl]?.[1] ?? '',
+    tiles: getToolArea('Watering Can', lvl, 0, 0, [0, 1]).length,
+    cap: caps[lvl] ?? 0,
+  });
+  const lvl = Math.max(0, Math.floor(level));
+  if (lvl >= 4) return null;
+  const next = step(lvl + 1);
+  let big: CanStep | null = null;
+  let bestGain = 0;
+  for (let l = lvl + 2; l <= 4; l++) {
+    const gain = step(l).tiles - step(l - 1).tiles;
+    if (gain > bestGain) {
+      bestGain = gain;
+      big = step(l);
+    }
+  }
+  return { now: step(lvl), next, big };
+}

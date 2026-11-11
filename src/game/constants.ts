@@ -3373,3 +3373,8 @@ export const INN_SCENES: InnScene[] = [
     ],
   },
 ];
+
+/** Task 04: Gray's two-chapter request. Chapter one asks for Spring Mine copper. */
+export const GRAY_COPPER_QTY = 3;
+export const GRAY_COPPER_REWARD = 300;
+export const GRAY_QUEST_FRIEND = 5;

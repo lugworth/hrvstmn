@@ -22,6 +22,9 @@ import {
   INN_EVENING_DAY,
   INN_LISTEN_FRIEND,
   INN_JOIN_FRIEND,
+  GRAY_COPPER_QTY,
+  GRAY_COPPER_REWARD,
+  GRAY_QUEST_FRIEND,
 } from './constants';
 
 const store: Record<string, string> = {};
@@ -510,5 +513,152 @@ describe("Friday evenings at Doug's Inn (task 01)", () => {
     k.applySaveData(old);
     assert.deepEqual(k.inn_scenes_seen, []);
     assert.equal(k.inn_evening_day, -1);
+  });
+});
+
+describe("Gray's two-chapter copper request (task 04)", () => {
+  const talkGray = async (g: any) => {
+    const said: string[] = [];
+    g.say = async (text: string) => { said.push(text); };
+    await g.talk('Gray');
+    return said;
+  };
+
+  test('chapter one: Gray asks for copper, then reminds you once a day', async () => {
+    const g = fresh();
+    const ask = await talkGray(g);
+    assert.equal(g.gray_quest, 1);
+    assert.ok(ask[0].includes(`${GRAY_COPPER_QTY} Copper`));
+    g.talked.clear();
+    const remind = await talkGray(g);
+    assert.ok(remind[0].includes('Still need'));
+    assert.equal(g.gray_quest, 1, 'nothing delivered without copper');
+    assert.ok(g.today_lines().some((l: string) => l.includes('Copper from the Spring Mine')));
+  });
+
+  test('delivering copper pays, starts chapter two and leaves a note for the next can upgrade', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY + 1);
+    const [gold, friend, done] = [g.gold, g.friend['Gray'] || 0, g.requests_done];
+    g.talked.clear();
+    const said = await talkGray(g);
+    assert.equal(g.inv['Copper'], 1, 'takes exactly the copper asked for');
+    assert.equal(g.gold, gold + GRAY_COPPER_REWARD);
+    assert.ok(g.friend['Gray'] >= friend + GRAY_QUEST_FRIEND);
+    assert.equal(g.requests_done, done + 1);
+    assert.equal(g.gray_quest, 2);
+    assert.equal(g.gray_note_level, 1, 'a Basic can is pointed at Copper');
+    assert.ok(said.some((l) => l.includes('Copper is the one to save for') && l.includes('1000G')));
+    assert.ok(said.some((l) => l.includes('Mystrile') && l.includes('15 tiles')), 'names the big jump');
+    assert.ok(g.today_lines().some((l: string) => l.includes('Take Saibara 1000G + 1 Copper')));
+  });
+
+  test('chapter two closes once the can reaches the noted level', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.talked.clear();
+    await talkGray(g);
+    g.talked.clear();
+    assert.ok((await talkGray(g))[0].includes('Remember my note'));
+    g.levels['Watering Can'] = 1;
+    const friend = g.friend['Gray'];
+    const said = await talkGray(g);
+    assert.equal(g.gray_quest, 3);
+    assert.ok(said[0].includes('Copper can'));
+    assert.ok(g.friend['Gray'] >= friend + GRAY_QUEST_FRIEND);
+    assert.ok(!g.today_lines().some((l: string) => l.startsWith('  Note')));
+    g.talked.clear();
+    await talkGray(g); // ordinary chatter afterwards
+    assert.equal(g.gray_quest, 3);
+  });
+
+  for (const [lvl, words] of [[4, 'Lake Mine'], [5, 'Carter'], [6, 'Mythic'], [7, 'nothing left']] as const) {
+    test(`a level ${lvl} can gets a closing line about ${words}, and no note`, async () => {
+      const g = fresh();
+      g.levels['Watering Can'] = lvl;
+      await talkGray(g);
+      g.give('Copper', GRAY_COPPER_QTY);
+      g.talked.clear();
+      const said = await talkGray(g);
+      assert.equal(g.gray_quest, 3);
+      assert.ok(said.some((l) => l.includes(words)), said.join(' / '));
+      assert.ok(!g.today_lines().some((l: string) => l.startsWith('  Note')));
+    });
+  }
+
+  test('from a Silver can, Gold is next and Mystrile is named as the big jump without "everything between"', async () => {
+    const g = fresh();
+    g.levels['Watering Can'] = 2;
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.talked.clear();
+    const said = await talkGray(g);
+    assert.ok(said.some((l) => l.includes('Gold is the one to save for')));
+    const jump = said.find((l) => l.includes('Mystrile'))!;
+    assert.ok(jump && !jump.includes('Everything between'), jump);
+  });
+
+  test('a can already at the forge is counted: the advice and note point past it', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.upgrading = ['Watering Can', g.absday() + 1];
+    g.talked.clear();
+    const said = await talkGray(g);
+    assert.ok(said.some((l) => l.startsWith("Once Saibara's done") && l.includes('Silver is the one to save for')));
+    assert.equal(g.gray_note_level, 2);
+    assert.ok(g.today_lines().some((l: string) => l.includes('Take Saibara 2000G + 1 Silver')));
+    // paying for the noted upgrade turns the note into a pick-up reminder
+    g.upgrading = null;
+    g.levels['Watering Can'] = 1;
+    g.upgrading = ['Watering Can', g.absday() + 1];
+    assert.ok(g.today_lines().some((l: string) => l.includes('Saibara has your can')));
+  });
+
+  test('marrying Gray mid-quest does not strand it', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.married = 'Gray';
+    g.mapname = 'house';
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.talked.clear();
+    await talkGray(g);
+    assert.equal(g.gray_quest, 2);
+    assert.equal(g.inv['Copper'] || 0, 0);
+  });
+
+  test("quest talks still check for the Mary & Gray rival event", async () => {
+    const g = fresh();
+    let checked = 0;
+    g.check_heart_and_rival_events = async () => { checked++; };
+    await talkGray(g);
+    assert.equal(checked, 1);
+  });
+
+  test('a held gift still goes to Gray as a gift, not to the quest', async () => {
+    const g = fresh();
+    g.give('Copper', 1);
+    g.held = 'Copper';
+    await talkGray(g);
+    assert.equal(g.gray_quest, 0);
+    assert.ok(g.gifted.has('Gray'));
+  });
+
+  test('quest progress survives a reload; old saves start before chapter one', () => {
+    const g = fresh();
+    g.gray_quest = 2;
+    g.gray_note_level = 2;
+    const h = fresh();
+    h.applySaveData(JSON.parse(JSON.stringify(g.snapshot())));
+    assert.equal(h.gray_quest, 2);
+    assert.equal(h.gray_note_level, 2);
+    const old = JSON.parse(JSON.stringify(g.snapshot()));
+    delete old.gray_quest;
+    delete old.gray_note_level;
+    const k = fresh();
+    k.applySaveData(old);
+    assert.equal(k.gray_quest, 0);
   });
 });
