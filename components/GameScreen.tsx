@@ -444,6 +444,7 @@ export default function GameScreen() {
         title: 'Farm',
         items: [
           key('map', 'Minimap', 'n', 'N'),
+          key('valley', 'Valley map', 'g', 'G'),
           key('horse', 'Call horse', 'H', 'Shift+H'),
           key('bell', 'Grazing bell', 'b', 'B'),
           key('memo', 'Ranch memo', 'm', 'M'),
