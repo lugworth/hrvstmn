@@ -5854,7 +5854,11 @@ export class Game {
     const by = 2;
     if (bx < 0 || by + gh + 2 > s.h) return;
     const route = this.pin_route();
-    s.box(bx, by, gw + 2, gh + 2, '0C', '00', route ? `Map ${route.arrow} ${route.short}`.slice(0, gw) : 'Map', '07', { accent: '0C' });
+    // box() draws the title as ' title ' from two cells in, so it has gw - 3 cells before the corner
+    const room = gw - 3;
+    const pinTitle = route ? `${route.arrow} ${route.short}` : 'Map';
+    const title = pinTitle.length > room ? pinTitle.slice(0, room - 1) + '…' : pinTitle;
+    s.box(bx, by, gw + 2, gh + 2, '0C', '00', title, '07', { accent: '0C' });
     // Keep the map's aspect ratio and include its outer edges. Small interiors stay
     // 1:1; large outdoor maps sample the full extent without dropping the last row/column.
     const drawW = Math.min(gw, m.w);

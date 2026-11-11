@@ -710,7 +710,22 @@ describe('labeled valley map (task 33)', () => {
     g.render();
     const tags = g.scr.tags.flat().filter(Boolean).map((t: any) => t.k);
     assert.ok(tags.includes('minimap:pin'), 'exit marked on the minimap');
-    assert.ok(screenText(g).includes('Map < Ironwood Grove'.slice(0, 19)), 'minimap title names the next region');
+    assert.ok(screenText(g).includes(' < Ironwood Grove '), 'minimap title names the next region');
+    // the title stays inside the minimap's frame: its top row ends in a corner, and nothing spills past it
+    const top = g.scr.buf.findIndex((r: any) => r.map((c: any) => c[0]).join('').includes('< Ironwood Grove'));
+    const row = rowText(g, top);
+    const start = row.indexOf('+-');
+    const end = row.indexOf('+', start + 1);
+    assert.ok(end > row.indexOf('Ironwood Grove'), row);
+    // a next region too long for the frame is clipped with an ellipsis, still inside the corner
+    g.map_pin = 'lighthouse';
+    g.warp('beach', 30, 5);
+    g.render();
+    const lrow = g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).find((r: string) => r.includes('> Lighthouse'));
+    assert.ok(lrow && lrow.includes('…'), lrow);
+    assert.ok(lrow.indexOf('+', lrow.indexOf('…')) === lrow.indexOf('…') + 2, lrow);
+    g.map_pin = 'forge';
+    g.warp('farm', 14, 10);
     g.show_minimap = false;
     g.render();
     const hint = g.scr.buf[0].map((c: any) => c[0]).join('');
