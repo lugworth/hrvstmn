@@ -740,6 +740,14 @@ export const OBJ_GLYPH: Record<string, any> = {
     "/",
     "09"
   ],
+  "dig": [
+    "§",
+    "0A"
+  ],
+  "starrock": [
+    "*",
+    "0A"
+  ],
   "stump": [
     "0",
     "09"
@@ -862,8 +870,8 @@ export const NPCS: Record<string, any> = {
     ],
     "where": [
       "town",
-      45,
-      9
+      50,
+      21
     ],
     "rain": false,
     "bach": true,
@@ -956,9 +964,9 @@ export const NPCS: Record<string, any> = {
       16
     ],
     "where": [
-      "town",
-      51,
-      21
+      "woods",
+      44,
+      8
     ],
     "rain": false,
     "bach": true,
@@ -1141,9 +1149,9 @@ export const NPCS: Record<string, any> = {
       19
     ],
     "where": [
-      "town",
-      21,
-      9
+      "grove",
+      18,
+      18
     ],
     "rain": false,
     "bach": false,
@@ -1270,9 +1278,9 @@ export const NPCS: Record<string, any> = {
       16
     ],
     "where": [
-      "town",
-      63,
-      22
+      "woods",
+      57,
+      8
     ],
     "rain": false,
     "bach": false,
@@ -2496,7 +2504,7 @@ export const BOOKS: string[] = [
   "'The Craftsman's Path': Saibara upgrades all 6 tools from Copper to Mystrile—and even Mythic once all 6 Cursed Tools are Blessed!",
   "'Mysteries of the Two Mines': Spring Mine holds Copper, Silver, Gold, Mystrile, Orichalc, Adamantite, Goddess Jewels, and the Teleport Stone on F255. The Winter Lake Mine holds Gems, Kappa Jewels, and Cursed Tools on floors 29, 39, 49, 59, 69, and 79.",
   "'Blessing Cursed Tools': Carter at the Church Confession Booth can remove or bless Cursed Tools. Bless Hoe/Can 10x, equip Sickle/Hammer 10 days, or swing Rod/Axe 255 times!",
-  "'The Seven Harvest Sprites': Behind the Church live Chef, Nappy, Hoggy, Timid, Aqua, Staid, and Bold. Befriend them to 3 hearts with Flour or Grass to hire them or play mini-games!",
+  "'The Seven Harvest Sprites': In a hut at Willow Bend, east of town, live Chef, Nappy, Hoggy, Timid, Aqua, Staid, and Bold. Befriend them to 3 hearts with Flour or Grass to hire them or play mini-games!",
   "'Of Livestock & Makers': Saibara builds Mayonnaise, Cheese, and Yarn Makers with Adamantite. Festival winners produce Golden, P-Type, and rare X-Type goods!",
   "'The Goddess & The Kappa': Throw offerings into the Goddess Pond on Mother's Hill for a Power Berry, and throw 10 Cucumbers into the Lake for Kappa's Blue Berry (no rain fatigue!).",
   "'TV & Saturday Shopping': Watch TV on Tuesday for cooking recipes and Saturday for TV Shopping—then order at Doug's Inn telephone!",
@@ -2518,7 +2526,7 @@ export const HELP: string[] = [
   "",
   "Zack picks up shipments at 5:00 PM daily. Sleep in bed to advance day.",
   "Visit the Hot Spring on Mother's Hill or your Bathroom to recover.",
-  "Befriend the 7 Harvest Sprites behind the Church to automate chores!",
+  "Befriend the 7 Harvest Sprites at Willow Bend to automate chores!",
 ];
 
 // --- EXPANDED HARVEST MOON: FRIENDS OF MINERAL TOWN DATA ---
@@ -2671,6 +2679,16 @@ Object.assign(ITEMS, {
   "Spa Catfish": [500, 40, "fish"],
   "Pirate Treasure": [10000, 0, "ore"],
   "Fossil of Ancient Fish": [5000, 0, "ore"],
+  // Relics: buried curios from dig spots (and one from falling stars); the museum's Relics wing
+  "Clay Whistle": [180, 0, "relic"],
+  "Glass Float": [220, 0, "relic"],
+  "Tin Soldier": [260, 0, "relic"],
+  "Lantern Lens": [300, 0, "relic"],
+  "Carved Acorn": [160, 0, "relic"],
+  "Fossil Fern": [420, 0, "relic"],
+  "Bronze Bell": [380, 0, "relic"],
+  "Sun Coin": [600, 0, "relic"],
+  "Star Fragment": [800, 0, "relic"],
   "Boot": [1, 0, "trash"],
   "Empty Can": [1, 0, "trash"],
   "Fish Bones": [1, 0, "trash"],
@@ -2899,7 +2917,7 @@ Object.assign(NPCS, {
     col: "0E",
     home: "winery",
     out: [13, 18],
-    where: ["town", 10, 10],
+    where: ["woods", 35, 20],
     rain: false,
     bach: false,
     loves: ["Wine", "Grape Juice", "Wild Grape", "Sashimi", "Grilled Fish", "Cucumber"],
@@ -3162,6 +3180,12 @@ Object.assign(FORAGE_GLYPH, {
 
 /** Seasonal forage for each outer region (other maps use the valley-wide FORAGE lists). */
 export const REGION_FORAGE: Record<string, Record<string, string[]>> = {
+  grove: {
+    Spring: ["Fiddlehead", "Medicinal Herb", "Yellow Grass", "Toy Flower"],
+    Summer: ["Blackberry", "Medicinal Herb", "Red Grass", "Purple Grass"],
+    Fall: ["Mushroom", "Chanterelle", "Cedar Cone", "Orange Grass"],
+    Winter: ["Cedar Cone", "White Grass", "Black Grass"],
+  },
   woods: {
     Spring: ["Fiddlehead", "Bamboo Shoot", "Medicinal Herb", "Moondrop Flower"],
     Summer: ["Blackberry", "Wild Grape", "Medicinal Herb", "Green Grass"],
@@ -3256,6 +3280,18 @@ export const LOOKOUT_FATIGUE = 10;
 
 /** Cedar Hollow's mossy pond: chance that a forage pickup finds a second one on a lucky day. */
 export const HOLLOW_LUCK_CHANCE = 0.3;
+
+/** Relics a dig spot can turn up (Star Fragments only come from falling stars). */
+export const DIG_RELICS = ['Clay Whistle', 'Glass Float', 'Tin Soldier', 'Lantern Lens', 'Carved Acorn', 'Fossil Fern', 'Bronze Bell', 'Sun Coin'];
+/** Ore and gems a dig spot can turn up. */
+export const DIG_ORES = ['Copper', 'Silver', 'Gold', 'Agate', 'Moon Stone', 'Sand Rose'];
+/** Outdoor maps that grow dig spots, and how many each may hold at once. */
+export const DIG_MAPS = ['farm', 'mountain', 'beach', 'woods', 'ridge', 'river', 'point', 'grove'];
+export const DIG_CAP = 2;
+/** Chance a good night's sleep brings a surprise (glowmoths, a falling star or a doorstep parcel). */
+export const NIGHT_SURPRISE_CHANCE = 0.18;
+/** Gems a fallen star can hold beside its Star Fragment. */
+export const STAR_GEMS = ['Moon Stone', 'Sand Rose', 'Topaz', 'Ruby', 'Emerald', 'Diamond'];
 
 /** Lighthouse Point: the old keeper's log, read one page a day at the sign. */
 export const LIGHTHOUSE_INTRO =

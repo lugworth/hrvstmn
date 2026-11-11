@@ -6,7 +6,7 @@
 // lighting with lanterns and lit windows, and animated weather. It never
 // changes game state, so 'classic' and 'enhanced' are pure presentation.
 
-import type { Cell, CellTag, HudLabel, RenderCtx, Screen } from './screen';
+import type { Cell, CellTag, EmoteKind, HudLabel, PaletteMode, RenderCtx, Screen } from './screen';
 import { PALETTE } from './constants';
 import { contourPattern, type ContourTexture } from './contour';
 
@@ -24,6 +24,10 @@ export type OutCell = {
   /** Soft round backing disc behind a creature: fill and rim colours. */
   token?: string;
   rim?: string;
+  /** Facing vector for directional rim indicator on the player token. */
+  face?: [number, number];
+  /** Mounted state on player token. */
+  riding?: boolean;
   /** Keeps its colour in the monochrome pass: things of interest. */
   accent?: boolean;
   /** HUD / panel cell: left untouched by the scene passes. */
@@ -33,6 +37,14 @@ export type OutCell = {
   /** Shoreline foam on these sides (bitmask: 1 top, 2 right, 4 bottom, 8 left). */
   foam?: number;
   foamCol?: string;
+  /** Connected tilled-soil / garden-bed outer border (bitmask: 1 top, 2 right, 4 bottom, 8 left). */
+  plot?: number;
+  plotCol?: string;
+  /** Connected tool AoE perimeter outline (bitmask: 1 top, 2 right, 4 bottom, 8 left). */
+  aoe?: number;
+  aoeCol?: string;
+  /** Primary aimed cell inside the AoE reticle (draws corner reticle ticks). */
+  aoePrimary?: boolean;
   texture?: ContourTexture;
   /** Later weather/particle passes can replace the glyph without inheriting its texture. */
   textureGlyph?: string;
@@ -144,6 +156,8 @@ function snapFrame(frame: OutCell[][]) {
       if (o.token) o.token = toIsotope(o.token);
       if (o.rim) o.rim = toIsotope(o.rim);
       if (o.foamCol) o.foamCol = toIsotope(o.foamCol);
+      if (o.plotCol) o.plotCol = toIsotope(o.plotCol);
+      if (o.aoeCol) o.aoeCol = toIsotope(o.aoeCol);
       if (o.detail) o.detail = { ch: o.detail.ch, fg: toIsotope(o.detail.fg) };
     }
   }
@@ -203,8 +217,9 @@ export function toneFor(minutes: number, weather: string, indoor: boolean, mapNa
   return { warm, cool };
 }
 
-// Duotone tints for the grey world: a sepia lean toward Isotope orange and a moonlit lean
-// toward Isotope blue. isotopeRamps() carries matching tinted neutral ramps.
+// Duotone tints for the grey world: a sepia lean toward Isotope orange, a moonlit lean
+// toward Isotope blue, and seasonal duotone washes (Spring meadow, Summer sea-cyan, Fall amber,
+// Winter frost). isotopeRamps() carries matching tinted neutral ramps.
 const TONE_S = 0.28;
 const toneHue = (code: string): RGB => {
   const c = hexToRgb(`#${PALETTE[code]}`);
@@ -213,6 +228,9 @@ const toneHue = (code: string): RGB => {
 };
 const WARM_TONE = toneHue('09');
 const COOL_TONE = toneHue('0D');
+const SPRING_TONE = toneHue('0B');
+const SUMMER_TONE = toneHue('0C');
+const SEASON_TONES: RGB[] = [SPRING_TONE, SUMMER_TONE, WARM_TONE, COOL_TONE];
 /** A grey of luminance `y` leaned toward hue `t`, keeping its luminance (the tint changes hue, not light). */
 const tintGrey = (y: number, t: RGB): RGB => {
   const c: RGB = [1 - TONE_S + TONE_S * t[0], 1 - TONE_S + TONE_S * t[1], 1 - TONE_S + TONE_S * t[2]];
@@ -222,14 +240,19 @@ const tintGrey = (y: number, t: RGB): RGB => {
 // The neutral levels (palette black/white and the grey ramp) and their tinted twins.
 const TONE_LEVELS = [0, ...Array.from({ length: 23 }, (_, i) => ((i + 1) / 24) ** 1.4 * 255), 255];
 const tintHex = (level: number, t: RGB) => rgbToHex(tintGrey(level, t).map(Math.round) as RGB);
-const TONE_HEXES = [...TONE_LEVELS.map((l) => tintHex(l, WARM_TONE)), ...TONE_LEVELS.map((l) => tintHex(l, COOL_TONE))];
+const ALL_TONES: RGB[] = [WARM_TONE, COOL_TONE, SPRING_TONE, SUMMER_TONE];
+const TONE_HEXES = ALL_TONES.flatMap((tone) => TONE_LEVELS.map((l) => tintHex(l, tone)));
 const TONE_SET = new Set(TONE_HEXES);
 
 /** Grey, or the tinted twin of the nearest neutral level (an exact ramp colour, so snapping keeps it). */
-const toneCache = [new Map<string, string>(), new Map<string, string>()];
+const toneCache = new Map<RGB, Map<string, string>>(ALL_TONES.map((tone) => [tone, new Map<string, string>()]));
 function toned(hex: string, t: RGB | null): string {
   if (!t) return grey(hex);
-  const cache = toneCache[t === WARM_TONE ? 0 : 1];
+  let cache = toneCache.get(t);
+  if (!cache) {
+    cache = new Map<string, string>();
+    toneCache.set(t, cache);
+  }
   const hit = cache.get(hex);
   if (hit) return hit;
   const [r, g, b] = hexToRgb(hex);
@@ -245,12 +268,12 @@ function toned(hex: string, t: RGB | null): string {
   return out;
 }
 
-type Tone = { warm: number; cool: number; light: Float32Array | null; tags: (CellTag | null)[][] };
+type Tone = { warm: number; cool: number; light: Float32Array | null; tags: (CellTag | null)[][]; base?: RGB | null };
 
 /**
- * Black-and-white world with colour reserved for things of interest: everything not
- * flagged as an accent goes grey (keeping its light and shade); accents keep their hue,
- * pushed to a clear Isotope neon, over a grey background.
+ * Black-and-white (or seasonal duotone) world with colour reserved for things of interest:
+ * everything not flagged as an accent goes grey/duotone (keeping its light and shade); accents
+ * keep their hue, pushed to a clear Isotope neon, over a toned background.
  */
 function monochrome(out: OutCell[][], boxes: Screen['boxes'], tone?: Tone) {
   const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
@@ -260,8 +283,8 @@ function monochrome(out: OutCell[][], boxes: Screen['boxes'], tone?: Tone) {
       const o = out[y][x];
       if (o.ui || inBox(x, y)) continue;
       // Time of day leans the greys warm or cool; lamplight keeps its own warm pool at night.
-      // Blue noise (anchored to the world) dithers the change in and out.
-      let t: RGB | null = null;
+      // In 'duotone' mode, `tone.base` supplies the seasonal wash when neither warm nor cool dominates.
+      let t: RGB | null = tone?.base ?? null;
       if (tone) {
         const lit = tone.light ? Math.min(1, tone.light[y * W + x] * 3) : 0;
         const warm = Math.max(tone.warm, lit);
@@ -269,13 +292,14 @@ function monochrome(out: OutCell[][], boxes: Screen['boxes'], tone?: Tone) {
         if (warm > 0 || cool > 0) {
           const tg = tone.tags[y]?.[x];
           const bn = blueNoise(tg?.wx ?? x, tg?.wy ?? y);
-          t = warm > bn ? WARM_TONE : cool > bn ? COOL_TONE : null;
+          t = warm > bn ? WARM_TONE : cool > bn ? COOL_TONE : t;
         }
       }
       o.bg = toned(o.bg, t);
       if (o.detail) o.detail = { ch: o.detail.ch, fg: neon(o.detail.fg, 0.35) };
       if (o.token) o.token = toned(o.token, t);
       if (o.foamCol) o.foamCol = toned(o.foamCol, t);
+      if (o.plotCol) o.plotCol = toned(o.plotCol, t);
       if (o.accent) {
         o.fg = neon(o.fg, 0.35);
         continue;
@@ -424,6 +448,43 @@ export function skyFor(ctx: Pick<RenderCtx, 'minutes' | 'indoor' | 'mapName' | '
 }
 
 type Light = { x: number; y: number; r: number; col: RGB; k: number };
+
+const LIGHT_BLOCKERS = new Set(['wall', 'mwall', 'iwall', 'cliff', 'roof']);
+
+/**
+ * Raycast visibility factor (0..1) from a point light at `(x0, y0)` to `(x1, y1)`.
+ * Opaque walls, cliffs and roofs block light behind them while still receiving light on their
+ * exposed front face (`(x1, y1)` itself is not treated as self-occluding). Three parallel sub-rays
+ * produce a subtle penumbra around corners and doorways.
+ */
+export function lightReach(tags: (CellTag | null)[][], x0: number, y0: number, x1: number, y1: number): number {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const steps = Math.max(Math.abs(dx), Math.abs(dy));
+  if (steps <= 1) return 1;
+  const sourceOnWall = LIGHT_BLOCKERS.has(tags[y0]?.[x0]?.t ?? '');
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  let clear = 0;
+  for (const off of [0, -0.26, 0.26]) {
+    let blocked = false;
+    for (let s = 1; s < steps; s++) {
+      const u = s / steps;
+      const rx = Math.round(x0 + dx * u + nx * off);
+      const ry = Math.round(y0 + dy * u + ny * off);
+      if ((rx === x0 && ry === y0) || (rx === x1 && ry === y1)) continue;
+      if (sourceOnWall && Math.abs(rx - x0) <= 1 && Math.abs(ry - y0) <= 1) continue;
+      const bt = tags[ry]?.[rx]?.t;
+      if (bt && LIGHT_BLOCKERS.has(bt)) {
+        blocked = true;
+        break;
+      }
+    }
+    if (!blocked) clear++;
+  }
+  return clear / 3;
+}
 
 // ---------------------------------------------------------------- tile styling
 
@@ -643,6 +704,13 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
         return { ch: '◉', fg: '#b8702e', bg: soil, bold: false };
       case 'obj:branch':
         return { ch: '╱', fg: '#c58a4a', bg: soil, bold: true };
+      case 'obj:dig': {
+        // wriggling soil: twitches now and then so it catches the eye (F.t is 0 with reduced motion)
+        const wriggle = F.t > 0 && Math.floor(F.t * 2 + hs * 8) % 5 === 0;
+        return { ch: wriggle ? '∫' : '§', fg: '#d8b070', bg: mix(soil, '#3a2a18', 0.5), bold: true, accent: true };
+      }
+      case 'obj:starrock':
+        return { ch: '✦', fg: '#ffd060', bg: soil, bold: true, glow: '#ff9900', glowR: 4, accent: true };
     }
   }
   if (k === 'forage') {
@@ -656,11 +724,36 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
       if (wet && hash(wx * 2, wy, 64) < 0.12) return { ch: '·', fg: '#4a8ad8', bg, bold: true }; // a glint of water
       return { ch: wy % 2 ? '≡' : '═', fg: wet ? '#4a3424' : '#7a5230', bg, bold: false };
     }
-    if (k.startsWith('crop:seed')) return { ch: '∴', fg: '#c89058', bg, bold: false };
-    if (k.startsWith('crop:sprout')) return { ch: ',', fg: '#7ad04a', bg, bold: true };
-    if (k.startsWith('crop:young')) return { ch: '"', fg: '#5ae02a', bg, bold: true };
-    // ripe: the crop's own glyph and colour, with a gentle "ready" glow
-    return { ch: g, fg: pal(fg), bg, bold: true, glow: pal(fg), glowR: 6, accent: true };
+    const fam = cropFamily(tag.cropName);
+    const drop = wet ? { ch: '·', fg: '#6ac8ff' } : undefined;
+    if (k.startsWith('crop:seed')) {
+      if (fam === 'trellis') return { ch: '┼', fg: '#c89a62', bg, bold: false, plain: true, detail: drop };
+      if (fam === 'grass') return { ch: '∴', fg: '#8ac060', bg, bold: false, detail: drop };
+      return { ch: '∴', fg: '#c89058', bg, bold: false, detail: drop };
+    }
+    if (k.startsWith('crop:sprout')) {
+      if (fam === 'trellis') return { ch: '╽', fg: '#6ad044', bg, bold: true, plain: true, detail: drop };
+      if (fam === 'stalk') return { ch: '╿', fg: '#7ad844', bg, bold: true, plain: true, detail: drop };
+      if (fam === 'leafy') return { ch: 'ʷ', fg: '#68d43c', bg, bold: true, detail: drop };
+      if (fam === 'flower') return { ch: ',', fg: '#7ad04a', bg, bold: true, detail: drop ?? { ch: '·', fg: '#ffa8d8' } };
+      if (fam === 'grass') return { ch: '`', fg: '#62cc38', bg, bold: false };
+      return { ch: ',', fg: '#7ad04a', bg, bold: true, detail: drop };
+    }
+    if (k.startsWith('crop:young')) {
+      if (fam === 'trellis') return { ch: '┼', fg: '#48c828', bg, bold: true, plain: true, detail: drop ?? { ch: '·', fg: '#ffe066' } };
+      if (fam === 'stalk') return { ch: '║', fg: '#54d82c', bg, bold: true, plain: true, detail: drop ?? { ch: '`', fg: '#a8ec58' } };
+      if (fam === 'leafy') return { ch: '❀', fg: '#48cc28', bg, bold: true, plain: true, detail: drop };
+      if (fam === 'flower') return { ch: '╿', fg: '#52d030', bg, bold: true, plain: true, detail: drop ?? { ch: '∘', fg: pal(fg, '#ff9ad0') } };
+      if (fam === 'grass') return { ch: 'ʷ', fg: '#52cc2a', bg, bold: false };
+      return { ch: '"', fg: '#5ae02a', bg, bold: true, detail: drop };
+    }
+    // ripe: distinct botanical silhouette when cropName is known, else engine glyph; gentle "ready" glow
+    const col = pal(fg);
+    if (tag.cropName) {
+      const ripeGlyph = ripeCropGlyph(tag.cropName, fam, g);
+      return { ch: ripeGlyph.ch, fg: col, bg, bold: true, glow: col, glowR: 6, accent: true, plain: true, detail: ripeGlyph.detail };
+    }
+    return { ch: g, fg: col, bg, bold: true, glow: col, glowR: 6, accent: true };
   }
 
   switch (tag.t) {
@@ -903,22 +996,57 @@ export function styleTile(F: Frame, x: number, y: number, tag: CellTag, cell: Ce
   return { ch: g, fg: pal(fg), bg: F.indoor || cell[2] === '01' ? '#3a2818' : groundBg(F, tag), bold, accent: INTEREST.has(tag.t) };
 }
 
+export type CropFamily = 'root' | 'trellis' | 'stalk' | 'leafy' | 'flower' | 'grass';
+
+const TRELLIS_CROPS = new Set(['Cucumber', 'Tomato', 'Eggplant', 'Green Pepper', 'Strawberry']);
+const STALK_CROPS = new Set(['Corn', 'Pineapple']);
+const LEAFY_CROPS = new Set(['Cabbage', 'Pumpkin', 'Spinach']);
+
+/** Botanical family used to give growing & ripe crops distinct silhouettes on the field. */
+export function cropFamily(cropName?: string): CropFamily {
+  if (!cropName) return 'root';
+  if (cropName === 'Grass') return 'grass';
+  if (TRELLIS_CROPS.has(cropName)) return 'trellis';
+  if (STALK_CROPS.has(cropName)) return 'stalk';
+  if (LEAFY_CROPS.has(cropName)) return 'leafy';
+  if (cropName.includes('Flower') || cropName === 'Moondrop' || cropName === 'Pink Cat' || cropName === 'Magic Red') return 'flower';
+  return 'root';
+}
+
+function ripeCropGlyph(cropName: string, fam: CropFamily, fallback: string): { ch: string; detail?: { ch: string; fg: string } } {
+  if (cropName === 'Carrot') return { ch: '▼', detail: { ch: 'ʷ', fg: '#52d834' } };
+  if (cropName === 'Corn') return { ch: '║', detail: { ch: 'ʷ', fg: '#52d834' } };
+  if (cropName === 'Pineapple') return { ch: '◉', detail: { ch: 'ʷ', fg: '#48d030' } };
+  if (cropName === 'Pumpkin') return { ch: '◉', detail: { ch: '`', fg: '#48d030' } };
+  if (cropName === 'Cabbage') return { ch: '❀' };
+  if (cropName === 'Spinach') return { ch: 'w', detail: { ch: '`', fg: '#7ef050' } };
+  if (fam === 'trellis') {
+    if (cropName === 'Cucumber' || cropName === 'Green Pepper') return { ch: '╽', detail: { ch: '●', fg: '#48e838' } };
+    return { ch: '●', detail: { ch: '┼', fg: '#52c834' } };
+  }
+  if (fam === 'flower') return { ch: '✿' };
+  if (fam === 'grass') return { ch: '♣' };
+  if (fam === 'root') return { ch: '◉', detail: { ch: 'ʷ', fg: '#52d834' } };
+  return { ch: fallback };
+}
+
 /** Contour Farm treatment: only scenery changes; sprites, crops and cues stay full size. */
-function contourTile(F: Frame, tag: CellTag, o: OutCell): OutCell {
+function contourTile(F: Frame, tag: CellTag, o: OutCell, palette: PaletteMode = 'mono'): OutCell {
   if (F.indoor || tag.ent || o.accent || o.glow || o.ch === '˙' || o.ch === '✧' || tag.k?.startsWith('obj:') || tag.k?.startsWith('crop:') || tag.k?.startsWith('soil')) return o;
   const x = tag.wx ?? 0;
   const y = tag.wy ?? 0;
+  const fullCol = palette === 'isotope';
   if (['grass', 'field', 'sand'].includes(tag.t) && o.ch !== '╿' && o.ch !== '◦' && !F.theme.snow) {
     const texture: ContourTexture = { x, y, kind: 'ground' };
-    return { ...o, ch: contourPattern(texture, 1), fg: '#808080', bold: false, texture };
+    return { ...o, ch: contourPattern(texture, 1), fg: fullCol ? mix(o.fg, '#ffffff', 0.16) : '#808080', bold: false, texture };
   }
   if (tag.t === 'roof') {
     const texture: ContourTexture = { x, y, kind: 'roof' };
-    if ('▄◢◣'.includes(o.ch)) return { ...o, ch: o.ch === '◢' ? '╱' : o.ch === '◣' ? '╲' : '─', fg: '#d0d0d0' };
-    return { ...o, ch: contourPattern(texture, 1), fg: '#d0d0d0', bg: mix(o.bg, '#000000', 0.6), texture };
+    if ('▄◢◣'.includes(o.ch)) return { ...o, ch: o.ch === '◢' ? '╱' : o.ch === '◣' ? '╲' : '─', fg: fullCol ? o.fg : '#d0d0d0' };
+    return { ...o, ch: contourPattern(texture, 1), fg: fullCol ? o.fg : '#d0d0d0', bg: mix(o.bg, '#000000', fullCol ? 0.25 : 0.6), texture };
   }
-  if (tag.t === 'tree') return { ...o, fg: mix(o.fg, '#ffffff', 0.4), texture: { x, y, kind: 'tree' } };
-  if (tag.t === 'wall' && tag.k !== 'deco') return { ...o, ch: o.ch === '▀' ? '─' : o.ch, fg: mix(o.fg, '#ffffff', 0.55) };
+  if (tag.t === 'tree') return { ...o, fg: mix(o.fg, '#ffffff', fullCol ? 0.15 : 0.4), texture: { x, y, kind: 'tree' } };
+  if (tag.t === 'wall' && tag.k !== 'deco') return { ...o, ch: o.ch === '▀' ? '─' : o.ch, fg: mix(o.fg, '#ffffff', fullCol ? 0.25 : 0.55) };
   if (WATERY.has(tag.t)) return { ...o, texture: { x: x + (Math.floor(F.t * 1.5) % 8) * 0.15, y, kind: 'water' } };
   return o;
 }
@@ -940,7 +1068,14 @@ const WEATHER_ICON: Record<string, [string, string]> = {
   Blizzard: ['❄', '#9ae8ff'],
 };
 /** Creature glyphs for animals and pets (engine letters -> pictograms). */
-const CREATURE_GLYPH: Record<string, string> = { H: '♞', C: '♉', S: '☁' };
+const CREATURE_GLYPH: Record<string, string> = { H: '♞', C: '♉', S: '☁', s: '◦', c: 'ˇ', d: '▴' };
+const EMOTE_STYLE: Record<EmoteKind, [string, string]> = {
+  heart: ['♥', '#ff4fa8'],
+  note: ['✦', '#ffe066'],
+  alert: ['!', '#ff6a3a'],
+  cross: ['×', '#7fa8ff'],
+  sleep: ['☾', '#9ab8ff'],
+};
 const BOX: Record<string, string> = { 'box:h': '─', 'box:v': '│', 'box:tl': '╭', 'box:tr': '╮', 'box:bl': '╰', 'box:br': '╯' };
 
 /** Effect colour by tool tier (Cogmind's rule: colour shows strength). Basic to Blessed. */
@@ -1003,6 +1138,29 @@ function drawFx(
       }
       continue;
     }
+    if (f.kind === 'emote') {
+      const [ech, ecol] = EMOTE_STYLE[f.emote ?? 'heart'] ?? EMOTE_STYLE.heart;
+      const rise = motion && p > 0.35 && inView(f.x, f.y - 2) ? 2 : 1;
+      const ey = inView(f.x, f.y - rise) ? f.y - rise : f.y;
+      if (!inView(f.x, ey)) continue;
+      const fade = p < 0.7 ? 1 : Math.max(0.2, 1 - (p - 0.7) / 0.3);
+      const col = mix('#000000', ecol, fade);
+      const o = out[ey][f.x];
+      out[ey][f.x] = {
+        ...o,
+        ch: ech,
+        fg: col,
+        bold: true,
+        token: '#0e0e16',
+        rim: col,
+        glow: col,
+        glowR: 4,
+        accent: true,
+        plain: true,
+        detail: undefined,
+      };
+      continue;
+    }
     if (f.kind === 'text') {
       // the reward floats up off the spot and fades
       const txt = f.text ?? '';
@@ -1044,16 +1202,50 @@ export function shakeOffset(shake: RenderCtx['shake'], reducedMotion = false): [
   return [Math.round(amp * (k % 2 ? 1 : -1)), Math.round(amp * 0.5 * ((k >> 1) % 2 ? 1 : -1))];
 }
 
+function styleMinimapCell(k: string, t: number): OutCell {
+  switch (k) {
+    case 'minimap:water':
+      return { ch: '≈', fg: '#45a0ff', bg: '#071e3d', bold: false, plain: true };
+    case 'minimap:tree':
+      return { ch: '♣', fg: '#2fd010', bg: '#091a09', bold: false, plain: true };
+    case 'minimap:field':
+      return { ch: '░', fg: '#6a4c30', bg: '#18110b', bold: false, plain: true };
+    case 'minimap:soil':
+      return { ch: '≡', fg: '#9a683c', bg: '#22150c', bold: false, plain: true };
+    case 'minimap:crop':
+      return { ch: '•', fg: '#5ae02a', bg: '#1e160c', bold: true, plain: true };
+    case 'minimap:crop_ripe':
+      return { ch: '●', fg: '#ffcc33', bg: '#22180c', bold: true, glow: '#ff9900', glowR: 3, plain: true };
+    case 'minimap:path':
+      return { ch: '·', fg: '#8a8072', bg: '#1e1b18', bold: false, plain: true };
+    case 'minimap:cliff':
+      return { ch: '▲', fg: '#8a8070', bg: '#1a1714', bold: false, plain: true };
+    case 'minimap:roof':
+      return { ch: '▀', fg: '#d05848', bg: '#2a1814', bold: false, plain: true };
+    case 'minimap:door':
+      return { ch: '▯', fg: '#ffb050', bg: '#2a1810', bold: true, plain: true };
+    case 'minimap:npc':
+      return { ch: '●', fg: '#00ffff', bg: '#0e1822', bold: true, plain: true };
+    case 'minimap:player': {
+      const pulse = t > 0 && Math.floor(t * 4) % 2 === 1;
+      return { ch: pulse ? '◉' : '☻', fg: '#ffffff', bg: '#0066ff', bold: true, glow: '#00ffff', glowR: 5, plain: true };
+    }
+    default:
+      return { ch: '·', fg: '#2a4028', bg: '#0b140c', bold: false, plain: true };
+  }
+}
+
 /**
  * Build the styled frame for the current screen contents.
  * @param t seconds, used for animation (water, rain, snow, fireflies)
  */
 export function computeFrame(
-  scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'> & Partial<Pick<Screen, 'scene' | 'boxes'>>,
+  scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'> & Partial<Pick<Screen, 'scene' | 'boxes' | 'paletteMode'>>,
   t: number,
 ): OutCell[][] {
   const { buf, tags, ctx } = scr;
   const boxes = scr.boxes ?? [];
+  const palette: PaletteMode = ctx?.palette ?? scr.paletteMode ?? 'mono';
   const H = buf.length;
   const W = H ? buf[0].length : 0;
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
@@ -1076,6 +1268,15 @@ export function computeFrame(
           const isPlayer = tag.ent === 'player';
           const creature = tag.ent === 'animal' || tag.ent === 'pet';
           const sprite = isPlayer ? '☻' : creature ? CREATURE_GLYPH[cell[0]] ?? cell[0] : cell[0];
+          const detail = isPlayer && tag.riding
+            ? { ch: '♞', fg: '#ffb347' }
+            : creature && cell[0] === 'c'
+              ? { ch: '·', fg: '#ff3344' }
+              : creature && cell[0] === 'd'
+                ? { ch: '·', fg: '#ffcc33' }
+                : creature && cell[0] === 'H'
+                  ? { ch: '`', fg: '#ffe0a0' }
+                  : undefined;
           o = {
             ch: sprite,
             fg: pal(cell[1]),
@@ -1085,10 +1286,13 @@ export function computeFrame(
             glowR: isPlayer ? 5 : tag.ent === 'npc' ? 3 : undefined,
             token: mix(under.bg, '#000000', 0.45),
             rim: mix(under.bg, pal(cell[1]), isPlayer ? 0.55 : 0.4),
+            face: isPlayer ? tag.face : undefined,
+            riding: isPlayer ? tag.riding : undefined,
+            detail,
             accent: true,
           };
         } else {
-          o = contourTile(F, tag, styleTile(F, x, y, tag, cell));
+          o = contourTile(F, tag, styleTile(F, x, y, tag, cell), palette);
           if (o.texture) o.textureGlyph = o.ch;
         }
         if (tag.hl) {
@@ -1103,6 +1307,7 @@ export function computeFrame(
         const k = tag.k || '';
         uiCell = true;
         if (k in BOX) o = { ch: BOX[k], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: false };
+        else if (k.startsWith('minimap:')) o = styleMinimapCell(k, F.t);
         else if (k === 'bar') o = { ch: '█', fg: pal(cell[1]), bg: '#0c0c11', bold: false };
         else if (k === 'bar:empty') o = { ch: '░', fg: '#2c2c36', bg: '#0c0c11', bold: false };
         else o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
@@ -1166,7 +1371,9 @@ export function computeFrame(
         for (let x = 0; x < W; x++) out[y][x].ui = boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h); // prompts stay plain text
       }
       titleScene(out, buf, tags, boxes, t, W, H);
-      monochrome(out, boxes);
+      if (palette !== 'isotope') {
+        monochrome(out, boxes, palette === 'duotone' ? { warm: 0, cool: 1, light: null, tags, base: COOL_TONE } : undefined);
+      }
     }
     decorateBoxes(out, boxes, W, H, t);
     snapFrame(out);
@@ -1410,7 +1617,9 @@ export function computeFrame(
           const dy = y - L.y;
           const d = Math.sqrt(dx * dx + dy * dy);
           if (d >= L.r) continue;
-          const k = (1 - d / L.r) ** 1.1 * L.k * flick;
+          const reach = lightReach(tags, L.x, L.y, x, y);
+          if (reach <= 0) continue;
+          const k = (1 - d / L.r) ** 1.1 * L.k * flick * reach;
           const i = y * W + x;
           LR[i] += L.col[0] * k;
           LG[i] += L.col[1] * k;
@@ -1509,14 +1718,24 @@ export function computeFrame(
       }
     }
   }
+  // ---- indoor atmosphere: daytime slanted sunbeams & cozy nighttime room lamps
+  if (ctx.indoor && ctx.mapName !== 'mine') {
+    const indoorLit = indoorAtmosphere(out, tags, v, W, H, ctx, motion ? t : 0);
+    if (indoorLit) lightMap = indoorLit;
+  }
   // ---- reflections in calm water (after lighting, so lit windows reflect too)
   if (outdoor && ctx.weather === 'Sunny') reflections(out, tags, v, t, W, H);
   shoreFoam(out, tags, v, W, H, motion ? t : 0);
+  connectedBorders(out, tags, v, W, H, ctx.toolTier ?? 0);
   if (ctx.fx?.length) drawFx(out, ctx.fx, v, W, H, motion);
   if (!ctx.indoor) worldMargin(out, tags, buf, v, ctx.divX, ctx.divY, boxes);
 
   const tod = toneFor(ctx.minutes, ctx.weather, !!ctx.indoor, ctx.mapName);
-  monochrome(out, boxes, { ...tod, light: lightMap, tags });
+  if (palette !== 'isotope') {
+    const base = palette === 'duotone' ? (ctx.indoor ? WARM_TONE : SEASON_TONES[season]) : null;
+    monochrome(out, boxes, { ...tod, light: lightMap, tags, base });
+  }
+  if (ctx.wipe && motion && t > 0) applyWipe(out, v, W, H, ctx.wipe);
   decorateBoxes(out, boxes, W, H, t);
   snapFrame(out);
   return out;
@@ -1942,7 +2161,7 @@ function wildlife(
   amb: number
 ) {
   if (weather !== 'Sunny' && weather !== 'Cloudy' && weather !== 'Snow') return;
-  if (!['beach', 'farm', 'mountain', 'town', 'woods', 'ridge', 'river', 'point'].includes(mapName) || amb < 0.4) return;
+  if (!['beach', 'farm', 'mountain', 'town', 'woods', 'ridge', 'river', 'point', 'grove'].includes(mapName) || amb < 0.4) return;
   const count = SEA_MAPS.has(mapName) || mapName === 'woods' ? 2 : 1;
   for (let i = 0; i < count; i++) {
     const x = v.x + Math.floor(hash(i, mapName.length, 201) * v.w);
@@ -1953,7 +2172,7 @@ function wildlife(
     if (SEA_MAPS.has(mapName) && tg.t === 'sand') {
       const flip = Math.floor(t * 4 + i) % 2 === 0;
       out[y][x] = { ...o, ch: flip ? 'v' : 'w', fg: '#e08040', bold: true, accent: true, plain: true, seed: undefined };
-    } else if (['farm', 'mountain', 'woods', 'ridge', 'river'].includes(mapName) && tg.t === 'grass') {
+    } else if (['farm', 'mountain', 'woods', 'ridge', 'river', 'grove'].includes(mapName) && tg.t === 'grass') {
       const hop = Math.floor(t * 1.5 + i) % 3 === 0;
       out[y][x] = { ...o, ch: hop ? 'ᵣ' : 'r', fg: season === 3 ? '#e8f4ff' : '#d8c8a8', bold: true, accent: true, plain: true, seed: undefined };
     } else if (mapName === 'town' && (tg.t === 'path' || tg.t === 'grass')) {
@@ -2009,10 +2228,209 @@ function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][],
   }
 }
 
-/** Dialogs and menus: a raised panel and a soft drop shadow. */
+const INDOOR_SURFACES = new Set(['floor', 'iwall', 'table', 'bed', 'counter', 'shelf', 'bookcase', 'cal', 'kitchen', 'tv', 'fireplace', 'bath', 'exit']);
+
+/**
+ * Indoor daytime sunbeams & nighttime warm lamp pools. Only touches real indoor room tiles
+ * (`floor`, `iwall`, furniture), leaving synthetic outdoor tiles untouched.
+ */
+function indoorAtmosphere(
+  out: OutCell[][],
+  tags: (CellTag | null)[][],
+  v: RenderCtx['view'],
+  W: number,
+  H: number,
+  ctx: RenderCtx,
+  t: number,
+): Float32Array | null {
+  let hasIndoorTile = false;
+  for (let y = v.y; y < v.y + v.h && y < H && !hasIndoorTile; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      if (INDOOR_SURFACES.has(tags[y][x]?.t ?? '')) {
+        hasIndoorTile = true;
+        break;
+      }
+    }
+  }
+  if (!hasIndoorTile) return null;
+
+  const h = (((ctx.minutes / 60) % 24) + 24) % 24;
+  const fair = ctx.weather !== 'Rain' && ctx.weather !== 'Typhoon' && ctx.weather !== 'Blizzard';
+  const slant = h >= 12 ? 1 : -1;
+
+  // Daytime (6:00 AM - 5:30 PM): angled warm sunbeams from north clerestory windows and doorways
+  if (h >= 6 && h < 17.5 && fair) {
+    const origins: [number, number, number][] = []; // [x, y, dySign]
+    for (let y = v.y; y < v.y + v.h && y < H; y++) {
+      for (let x = v.x; x < v.x + v.w && x < W; x++) {
+        const tg = tags[y][x];
+        if (!tg) continue;
+        const wx = tg.wx ?? x;
+        if (tg.dch === '=') origins.push([x, y, 1]);
+        else if (tg.t === 'iwall' && tags[y + 1]?.[x]?.t === 'floor' && (wx % 6 === 2 || wx % 6 === 3)) {
+          origins.push([x, y, 1]);
+        } else if (tg.t === 'exit' || tg.t === 'door') {
+          origins.push([x, y, -1]);
+        }
+      }
+    }
+    const moteTick = Math.floor(t * 1.5);
+    for (const [ox, oy, dySign] of origins) {
+      for (let step = 1; step <= 3; step++) {
+        const bx = ox + (dySign > 0 ? slant * Math.floor(step / 2) : 0);
+        const by = oy + dySign * step;
+        if (by < v.y || by >= v.y + v.h || bx < v.x || bx >= v.x + v.w || by >= H || bx >= W) continue;
+        const tg = tags[by][bx];
+        if (!tg || tg.t !== 'floor') break;
+        const k = (1 - (step - 1) / 3.2) * 0.28;
+        const o = out[by][bx];
+        o.bg = mix(o.bg, '#ffe8b0', k);
+        if (!tg.ent && o.ch === ' ' && hash((tg.wx ?? bx) + moteTick, tg.wy ?? by, 241) < 0.22) {
+          o.ch = '˙';
+          o.fg = mix(o.bg, '#fff4d0', 0.55);
+          o.plain = true;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Evening / Night (6:30 PM - 5:30 AM): cozy dimmed room + occluded hearth/TV/lamp pools
+  if (h >= 18.5 || h < 5.5) {
+    const lights: Light[] = [];
+    for (let y = v.y; y < v.y + v.h && y < H; y++) {
+      for (let x = v.x; x < v.x + v.w && x < W; x++) {
+        const tg = tags[y][x];
+        if (!tg || tg.t === 'ui') continue;
+        if (tg.t === 'fireplace') lights.push({ x, y, r: 6.5, col: hexToRgb('#ff9648'), k: 0.95 });
+        else if (tg.t === 'tv') lights.push({ x, y, r: 4.2, col: hexToRgb('#7fe8ff'), k: 0.55 });
+        else if (tg.t === 'kitchen') lights.push({ x, y, r: 4.0, col: hexToRgb('#ffb870'), k: 0.6 });
+        else if (tg.t === 'exit') lights.push({ x, y, r: 3.5, col: hexToRgb('#ffb060'), k: 0.5 });
+        if (tg.ent === 'player') lights.push({ x, y, r: 5.5, col: hexToRgb('#ffd890'), k: 0.75 });
+      }
+    }
+    const lightMap = new Float32Array(W * H);
+    const amb = 0.72;
+    for (let y = v.y; y < v.y + v.h && y < H; y++) {
+      for (let x = v.x; x < v.x + v.w && x < W; x++) {
+        const tg = tags[y][x];
+        if (!tg || !INDOOR_SURFACES.has(tg.t)) continue;
+        let lr = 0;
+        let lg = 0;
+        let lb = 0;
+        let ls = 0;
+        for (const L of lights) {
+          const d = Math.hypot((x - L.x) * 0.5, y - L.y);
+          if (d >= L.r) continue;
+          const reach = lightReach(tags, L.x, L.y, x, y);
+          if (reach <= 0) continue;
+          const k = (1 - d / L.r) ** 1.15 * L.k * reach;
+          lr += L.col[0] * k;
+          lg += L.col[1] * k;
+          lb += L.col[2] * k;
+          ls += k;
+        }
+        lightMap[y * W + x] = ls;
+        const o = out[y][x];
+        const dim = Math.max(0, (1 - amb) * (1 - Math.min(1, ls)));
+        if (dim > 0 && !tg.ent) {
+          o.bg = mix(o.bg, '#06050a', dim);
+          o.fg = mix(o.fg, '#06050a', dim * 0.65);
+        }
+        if (ls > 0) {
+          const s = Math.min(0.45, ls * 0.32);
+          const warmHex = rgbToHex([lr / ls, lg / ls, lb / ls]);
+          o.bg = mix(o.bg, warmHex, s * 0.45);
+        }
+      }
+    }
+    return lightMap;
+  }
+  return null;
+}
+
+/**
+ * Connected outer borders for contiguous tilled-soil/crop beds (`plot`) and contiguous tool
+ * area-of-effect highlights (`aoe`), painted as seamless vector rules in `drawFrame()`.
+ */
+function connectedBorders(
+  out: OutCell[][],
+  tags: (CellTag | null)[][],
+  v: RenderCtx['view'],
+  W: number,
+  H: number,
+  toolTier: number,
+) {
+  const isPlot = (tg: CellTag | null | undefined) => {
+    const k = tg?.k || '';
+    return k.startsWith('soil') || k.startsWith('crop:');
+  };
+  const isAoe = (tg: CellTag | null | undefined) => !!(tg && tg.t !== 'ui' && (tg.hl || tg.hlArea));
+  const tierCol = TIER_COLOURS[Math.max(0, Math.min(TIER_COLOURS.length - 1, toolTier))];
+  const aoeCol = toolTier === 0 ? '#d8e2ff' : tierCol;
+
+  for (let y = v.y; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tg = tags[y][x];
+      if (!tg || tg.t === 'ui') continue;
+      const o = out[y][x];
+      if (isPlot(tg)) {
+        let pm = 0;
+        if (!isPlot(tags[y - 1]?.[x])) pm |= 1;
+        if (!isPlot(tags[y]?.[x + 1])) pm |= 2;
+        if (!isPlot(tags[y + 1]?.[x])) pm |= 4;
+        if (!isPlot(tags[y]?.[x - 1])) pm |= 8;
+        if (pm) {
+          o.plot = pm;
+          o.plotCol = mix(o.bg, '#9a683e', 0.5);
+        }
+      }
+      if (isAoe(tg)) {
+        let am = 0;
+        if (!isAoe(tags[y - 1]?.[x])) am |= 1;
+        if (!isAoe(tags[y]?.[x + 1])) am |= 2;
+        if (!isAoe(tags[y + 1]?.[x])) am |= 4;
+        if (!isAoe(tags[y]?.[x - 1])) am |= 8;
+        if (am) o.aoe = am;
+        o.aoeCol = aoeCol;
+        if (tg.hl) o.aoePrimary = true;
+      }
+    }
+  }
+}
+
+/** Fast radial lantern-iris reveal when stepping between maps. */
+function applyWipe(out: OutCell[][], v: RenderCtx['view'], W: number, H: number, wipe: NonNullable<RenderCtx['wipe']>) {
+  const p = wipe.age / Math.max(0.01, wipe.duration);
+  if (p < 0 || p >= 1) return;
+  const [fx, fy] = wipe.focus ?? [v.x + v.w / 2, v.y + v.h / 2];
+  const maxR = Math.hypot(v.w * 0.5, v.h) * 0.65 + 2;
+  const ease = 1 - (1 - p) * (1 - p);
+  const r = maxR * (0.1 + 0.9 * ease);
+  for (let y = v.y; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      if (out[y][x].ui) continue;
+      const d = Math.hypot((x - fx) * 0.5, y - fy) + (blueNoise(x, y) - 0.5) * 1.6;
+      if (d > r + 1.3) {
+        out[y][x] = { ch: ' ', fg: '#000000', bg: '#000000', bold: false };
+      } else if (d > r) {
+        const o = out[y][x];
+        out[y][x] = {
+          ch: d > r + 0.65 ? '░' : '▒',
+          fg: '#6a4418',
+          bg: mix(o.bg, '#000000', 0.75),
+          bold: false,
+          plain: true,
+        };
+      }
+    }
+  }
+}
+
+/** Dialogs and menus: a raised panel, optional speaker/TV styling, and a soft drop shadow. */
 function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: number, t = 0) {
   for (const b of boxes) {
-    const p = t <= 0 || b.born === undefined ? 1 : Math.min(1, Math.max(0, (t - b.born) / 0.11));
+    const p = t <= 0 || b.born === undefined || t < b.born ? 1 : Math.min(1, Math.max(0, (t - b.born) / 0.11));
     if (p < 1) {
       // a short top-down reveal: the panel wipes in instead of popping
       const reveal = b.y + Math.ceil(b.h * p);
@@ -2023,10 +2441,22 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
         }
       }
     }
+    const accentHex = b.accent ? pal(b.accent, '') : '';
     for (let y = b.y; y < b.y + b.h && y < H; y++) {
       for (let x = b.x; x < b.x + b.w && x < W; x++) {
         if (y < 0 || x < 0) continue;
-        if (out[y][x].bg === '#000000') out[y][x].bg = '#0e0e16';
+        const o = out[y][x];
+        if (b.kind === 'tv' && y > b.y && y < b.y + b.h - 1 && x > b.x && x < b.x + b.w - 1) {
+          // Subtle CRT phosphor scanlines across interior broadcast rows
+          o.bg = (y - b.y) % 2 === 0 ? '#0c1624' : '#09101a';
+        } else if (o.bg === '#000000') {
+          o.bg = '#0e0e16';
+        }
+        if (accentHex && y === b.y && '─╭╮'.includes(o.ch)) {
+          o.fg = mix(o.fg, accentHex, 0.65);
+        } else if (b.kind === 'tv' && (y === b.y || y === b.y + b.h - 1 || x === b.x || x === b.x + b.w - 1) && '─│╭╮╰╯'.includes(o.ch)) {
+          o.fg = mix(o.fg, '#4ac8ff', 0.45);
+        }
       }
     }
     const shadow = (x: number, y: number) => {
@@ -2069,8 +2499,12 @@ export function frameDirtyRect(prev: OutCell[][] | null, next: OutCell[][]): Dir
       if (
         p.ch !== n.ch || p.fg !== n.fg || p.bg !== n.bg || p.bold !== n.bold ||
         p.glow !== n.glow || p.glowR !== n.glowR || p.token !== n.token || p.rim !== n.rim ||
+        p.face?.[0] !== n.face?.[0] || p.face?.[1] !== n.face?.[1] || p.riding !== n.riding ||
         p.plain !== n.plain || p.ui !== n.ui || p.accent !== n.accent || p.seed !== n.seed ||
-        p.foam !== n.foam || p.foamCol !== n.foamCol || p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg ||
+        p.foam !== n.foam || p.foamCol !== n.foamCol ||
+        p.plot !== n.plot || p.plotCol !== n.plotCol ||
+        p.aoe !== n.aoe || p.aoeCol !== n.aoeCol || p.aoePrimary !== n.aoePrimary ||
+        p.detail?.ch !== n.detail?.ch || p.detail?.fg !== n.detail?.fg ||
         p.texture?.kind !== n.texture?.kind || p.texture?.x !== n.texture?.x || p.texture?.y !== n.texture?.y ||
         p.textureGlyph !== n.textureGlyph || p.meter !== n.meter ||
         p.label?.text !== n.label?.text || p.label?.scale !== n.label?.scale ||
@@ -2128,11 +2562,11 @@ const SUBPIX: Record<string, string[]> = {
   '♣': ['♣♠♣♣', '♣♣♠♣', '♠♣♣♣', '♣♣♣♠'],
   '♠': ['♠♠♣♠', '♠♣♠♠', '♠♠♠♣'],
   '░': ['░░░░'],
-  '▒': ['▒▒▒▒', '▒░▒▒'],
+  '▒': ['▒▒▒▒', '▒░▒▒', '▒▒░▒'],
   '▓': ['▓▒▒▓', '▒▓▓▒'],
   '═': ['════'],
   '≡': ['≡≡≡≡'],
-  '─': ['────'],
+  '─': ['────', '── ─', '─ ──'],
   '˙': ['˙  ˙', ' ˙  ', '  ˙ ', '˙   ', ' ˙˙ '],
 };
 
@@ -2310,6 +2744,45 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fill();
         continue;
       }
+      // Seamless vector box-drawing rules & rounded modal corners (no vertical/horizontal font gaps)
+      if (o.ui && !o.label && '─│╭╮╰╯'.includes(o.ch)) {
+        if (glowOn) { g.shadowBlur = 0; glowOn = false; }
+        const cx = px + cw / 2;
+        const cy = py + ch / 2;
+        const xL = Math.floor(px);
+        const xR = Math.ceil(px + cw);
+        const yT = Math.floor(py);
+        const yB = Math.ceil(py + ch);
+        const rad = Math.min(cw, ch) * 0.42;
+        g.strokeStyle = o.fg;
+        g.lineWidth = Math.max(1.25, Math.round(fontPx / 11));
+        g.beginPath();
+        if (o.ch === '─') {
+          g.moveTo(xL, cy);
+          g.lineTo(xR, cy);
+        } else if (o.ch === '│') {
+          g.moveTo(cx, yT);
+          g.lineTo(cx, yB);
+        } else if (o.ch === '╭') {
+          g.moveTo(cx, yB);
+          g.arcTo(cx, cy, xR, cy, rad);
+          g.lineTo(xR, cy);
+        } else if (o.ch === '╮') {
+          g.moveTo(xL, cy);
+          g.arcTo(cx, cy, cx, yB, rad);
+          g.lineTo(cx, yB);
+        } else if (o.ch === '╰') {
+          g.moveTo(cx, yT);
+          g.arcTo(cx, cy, xR, cy, rad);
+          g.lineTo(xR, cy);
+        } else if (o.ch === '╯') {
+          g.moveTo(xL, cy);
+          g.arcTo(cx, cy, cx, yT, rad);
+          g.lineTo(cx, yT);
+        }
+        g.stroke();
+        continue;
+      }
       // Small glyphs are queued and drawn in one batch after this loop, so the canvas font
       // switches once per frame instead of once per cell.
       const spr = spritePattern(o, fontPx, level);
@@ -2342,8 +2815,17 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fill();
         if (o.rim) {
           g.strokeStyle = o.rim;
-          g.lineWidth = 1;
+          g.lineWidth = o.riding ? 1.8 : 1.2;
           g.stroke();
+        }
+        if (o.face && (o.face[0] !== 0 || o.face[1] !== 0)) {
+          const [fx, fy] = o.face;
+          const tipX = px + cw / 2 + fx * cw * 0.66;
+          const tipY = py + ch / 2 + fy * ch * 0.5;
+          g.beginPath();
+          g.arc(tipX, tipY, Math.max(1.6, cw * 0.14), 0, Math.PI * 2);
+          g.fillStyle = o.fg;
+          g.fill();
         }
       }
       const f = `${o.bold ? 'bold ' : ''}${fontPx}px ${font}`;
@@ -2378,23 +2860,53 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
     g.globalAlpha = 1;
   }
 
-  // shoreline foam: a thin light line where water meets land
+  // shoreline foam, connected tilled-plot borders, and connected AoE tool reticles
   // at least two device pixels: single-pixel lines vanish on low-DPI screens and in recordings
   const fw = Math.max(2 / (m.dpr ?? 1), Math.round(ch / 12));
+  const pw = Math.max(1.5 / (m.dpr ?? 1), Math.round(ch / 14));
+  const aw = Math.max(2 / (m.dpr ?? 1), Math.round(ch / 10));
   for (let y = Y0; y < Y1; y++) {
     const row = frame[y];
     for (let x = X0; x < X1; x++) {
       const o = row[x];
-      if (!o.foam) continue;
-      g.fillStyle = o.foamCol ?? '#c0c0c0';
+      if (!o.foam && !o.plot && !o.aoe && !o.aoePrimary) continue;
       const X = Math.floor(x * cw);
       const Y = Math.floor(y * ch);
       const Wc = Math.ceil(cw);
       const Hc = Math.ceil(ch);
-      if (o.foam & 1) g.fillRect(X, Y, Wc, fw);
-      if (o.foam & 4) g.fillRect(X, Y + Hc - fw, Wc, fw);
-      if (o.foam & 8) g.fillRect(X, Y, fw, Hc);
-      if (o.foam & 2) g.fillRect(X + Wc - fw, Y, fw, Hc);
+      if (o.foam) {
+        g.fillStyle = o.foamCol ?? '#c0c0c0';
+        if (o.foam & 1) g.fillRect(X, Y, Wc, fw);
+        if (o.foam & 4) g.fillRect(X, Y + Hc - fw, Wc, fw);
+        if (o.foam & 8) g.fillRect(X, Y, fw, Hc);
+        if (o.foam & 2) g.fillRect(X + Wc - fw, Y, fw, Hc);
+      }
+      if (o.plot) {
+        g.fillStyle = o.plotCol ?? '#5a4028';
+        if (o.plot & 1) g.fillRect(X, Y, Wc, pw);
+        if (o.plot & 4) g.fillRect(X, Y + Hc - pw, Wc, pw);
+        if (o.plot & 8) g.fillRect(X, Y, pw, Hc);
+        if (o.plot & 2) g.fillRect(X + Wc - pw, Y, pw, Hc);
+      }
+      if (o.aoe) {
+        g.fillStyle = o.aoeCol ?? '#d8e2ff';
+        if (o.aoe & 1) g.fillRect(X, Y, Wc, aw);
+        if (o.aoe & 4) g.fillRect(X, Y + Hc - aw, Wc, aw);
+        if (o.aoe & 8) g.fillRect(X, Y, aw, Hc);
+        if (o.aoe & 2) g.fillRect(X + Wc - aw, Y, aw, Hc);
+      }
+      if (o.aoePrimary) {
+        g.fillStyle = o.aoeCol ?? '#ffffff';
+        const tk = Math.max(2, Math.round(Math.min(cw, ch) * 0.26));
+        g.fillRect(X, Y, tk, aw);
+        g.fillRect(X, Y, aw, tk);
+        g.fillRect(X + Wc - tk, Y, tk, aw);
+        g.fillRect(X + Wc - aw, Y, aw, tk);
+        g.fillRect(X, Y + Hc - aw, tk, aw);
+        g.fillRect(X, Y + Hc - tk, aw, tk);
+        g.fillRect(X + Wc - tk, Y + Hc - aw, tk, aw);
+        g.fillRect(X + Wc - aw, Y + Hc - tk, aw, tk);
+      }
     }
   }
   g.restore();
@@ -2404,6 +2916,6 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
 export function frameSignature(frame: OutCell[][]): string {
   let s = '';
   // the seed decides which high-res pattern a texture cell shows, so it must trigger repaints too
-  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '') + (o.texture ? `t${o.texture.kind}:${o.texture.x}:${o.texture.y}:${o.textureGlyph}` : '') + (o.label ? `l${o.label.text}:${o.label.scale}:${o.label.w}:${o.label.h}` : '') + (o.meter ? 'm' : '');
+  for (const row of frame) for (const o of row) s += o.ch + o.fg + o.bg + (o.bold ? 1 : 0) + (o.glow ? 'g' : '') + (o.seed ? (o.seed * 97) | 0 : '') + (o.foam ? 'f' + o.foam + o.foamCol : '') + (o.plot ? 'p' + o.plot + o.plotCol : '') + (o.aoe ? 'a' + o.aoe + o.aoeCol : '') + (o.aoePrimary ? 'P' : '') + (o.face ? `F${o.face[0]},${o.face[1]}` : '') + (o.riding ? 'R' : '') + (o.detail ? 'd' + o.detail.ch + o.detail.fg : '') + (o.texture ? `t${o.texture.kind}:${o.texture.x}:${o.texture.y}:${o.textureGlyph}` : '') + (o.label ? `l${o.label.text}:${o.label.scale}:${o.label.w}:${o.label.h}` : '') + (o.meter ? 'm' : '');
   return s;
 }

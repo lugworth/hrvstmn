@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, drawFrame, frameSignature, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv, type OutCell } from './enhanced';
+import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, drawFrame, frameSignature, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv, lightReach, cropFamily, type OutCell } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -1092,6 +1092,20 @@ describe('Contour Farm presentation', () => {
     assert.equal(computeFrame(scene({ indoor: true }), 0)[10][10].texture, undefined);
   });
 
+  test('dig spots wriggle and a fallen star glows; reduced motion keeps the soil still', () => {
+    const s = scene({ reducedMotion: true });
+    s.tag(10, 10, { t: 'grass', wx: 10, wy: 10, k: 'obj:dig' });
+    s.tag(12, 10, { t: 'field', wx: 12, wy: 10, k: 'obj:starrock' });
+    const still = computeFrame(s, 0);
+    assert.equal(still[10][10].ch, '§');
+    assert.equal(still[10][12].ch, '✦');
+    assert.ok(still[10][12].glow, 'the star lights the ground around it');
+    const live = scene();
+    live.tag(10, 10, { t: 'grass', wx: 10, wy: 10, k: 'obj:dig' });
+    const frames = Array.from({ length: 10 }, (_, i) => computeFrame(live, i * 0.5)[10][10].ch);
+    assert.ok(frames.includes('§') && frames.includes('∫'), `the soil twitches over time (${frames.join('')})`);
+  });
+
   test('later rain and dialog glyphs cannot inherit scenery patterns', () => {
     const s = scene({ weather: 'Rain' });
     const rain = computeFrame(s, 1).flat().filter((o) => o.ch === '╲');
@@ -1172,5 +1186,169 @@ describe('Contour metadata with incremental repainting', () => {
     }) as unknown as CanvasRenderingContext2D;
     drawFrame(canvas, [[terrain]], { cw: 10, ch: 20, fontPx: 16, font: 'monospace', dpr: 1 });
     assert.ok(painted.some((text) => text.trim()), 'contour strokes reach the canvas');
+  });
+});
+
+describe('7 graphical upgrades', () => {
+  test('1. Palette modes: Contour Mono, Seasonal Duotone, and Full Isotope stay within Isotope ramps', () => {
+    const allowed = new Set(isotopeRamps().map((c) => rgbToHex(c)));
+    const isGrey = (h: string) => { const [r, g, b] = hexToRgb(h); return r === g && g === b; };
+    const mono = computeFrame(scene({ palette: 'mono', season: 0 }), 0)[10][10];
+    const duoSpring = computeFrame(scene({ palette: 'duotone', season: 0 }), 0)[10][10];
+    const duoFall = computeFrame(scene({ palette: 'duotone', season: 2 }), 0)[10][10];
+    const iso = computeFrame(scene({ palette: 'isotope', season: 1 }), 0)[10][10];
+    assert.ok(isGrey(mono.bg), 'mono stays grey');
+    assert.ok(!isGrey(duoSpring.bg), 'duotone tints spring grass');
+    assert.notEqual(duoSpring.bg, duoFall.bg, 'seasonal duotone shifts between spring and autumn');
+    const [, gIso, bIso] = hexToRgb(iso.bg);
+    assert.ok(gIso > bIso, 'full isotope restores rich green meadow ground');
+    for (const o of [mono, duoSpring, duoFall, iso]) {
+      assert.ok(allowed.has(o.fg) && allowed.has(o.bg), `${o.fg} / ${o.bg}`);
+    }
+  });
+
+  test('2. Occluded point lighting: walls block lantern light behind them while lighting the exposed front face', () => {
+    const s = scene({ minutes: 22 * 60 });
+    // Build a solid horizontal wall between y=8 and the player lantern at (25, 11)
+    for (let x = 18; x <= 32; x++) {
+      s.put(x, 8, '#', '02', '01');
+      s.tag(x, 8, { t: 'wall', wx: x, wy: 8 });
+    }
+    s.put(25, 11, '@', '07', '00', true);
+    s.tag(25, 11, { t: 'grass', wx: 25, wy: 11, ent: 'player' });
+    assert.equal(lightReach(s.tags, 25, 11, 25, 6), 0, 'blocked behind wall');
+    assert.equal(lightReach(s.tags, 25, 11, 25, 8), 1, 'front face of wall still receives light');
+    assert.equal(lightReach(s.tags, 25, 11, 25, 14), 1, 'unobstructed south of player');
+    const out = computeFrame(s, 0);
+    // (25, 6) is 5 rows north (behind wall); (25, 16) is 5 rows south (unobstructed)
+    assert.ok(lum(out[14][25].bg) > lum(out[6][25].bg) + 8, 'unobstructed ground is much brighter than shadowed ground behind wall');
+  });
+
+  test('3. Connected plot borders & connected AoE reticles form outer perimeters without internal seams', () => {
+    const s = scene({ toolTier: 3 });
+    for (const y of [8, 9]) {
+      for (const x of [10, 11]) {
+        s.put(x, y, '=', '09', '00');
+        s.tag(x, y, { t: 'field', wx: x, wy: y, k: 'soil', hl: x === 10 && y === 8, hlArea: !(x === 10 && y === 8) });
+      }
+    }
+    const out = computeFrame(s, 0);
+    // Top-left cell (10,8) has top(1) + left(8) = 9, NOT right(2) or bottom(4)
+    assert.equal(out[8][10].plot, 1 | 8);
+    assert.equal(out[8][10].aoe, 1 | 8);
+    assert.equal(out[8][10].aoePrimary, true);
+    // Bottom-right cell (11,9) has right(2) + bottom(4) = 6
+    assert.equal(out[9][11].plot, 2 | 4);
+    assert.equal(out[9][11].aoe, 2 | 4);
+    assert.equal(out[9][11].aoePrimary, undefined);
+    assert.equal(out[8][10].aoeCol, toIsotope(TIER_COLOURS[3]));
+  });
+
+  test('4. Botanical crop families & watered droplet detail differentiate crops across growth stages', () => {
+    assert.equal(cropFamily('Tomato'), 'trellis');
+    assert.equal(cropFamily('Corn'), 'stalk');
+    assert.equal(cropFamily('Cabbage'), 'leafy');
+    assert.equal(cropFamily('Pink Cat Flower'), 'flower');
+    assert.equal(cropFamily('Grass'), 'grass');
+    assert.equal(cropFamily('Turnip'), 'root');
+
+    const s = scene();
+    s.put(10, 10, '"', '0B', '01');
+    s.tag(10, 10, { t: 'field', wx: 10, wy: 10, k: 'crop:young:wet', cropName: 'Tomato' });
+    s.put(12, 10, ',', '0B', '00');
+    s.tag(12, 10, { t: 'field', wx: 12, wy: 10, k: 'crop:sprout', cropName: 'Corn' });
+    s.put(13, 10, '"', '0B', '00');
+    s.tag(13, 10, { t: 'field', wx: 13, wy: 10, k: 'crop:young', cropName: 'Cabbage' });
+    s.put(14, 10, 'o', '08', '00', true);
+    s.tag(14, 10, { t: 'field', wx: 14, wy: 10, k: 'crop:ripe', cropName: 'Tomato' });
+    const out = computeFrame(s, 0);
+    assert.equal(out[10][10].ch, '┼', 'trellis crop shows stakes');
+    assert.equal(out[10][10].detail?.ch, '·', 'wet growing crop carries water droplet detail');
+    assert.equal(out[10][12].ch, '╿', 'stalk sprout shows shoot');
+    assert.equal(out[10][12].detail, undefined, 'dry sprout has no droplet');
+    assert.equal(out[10][13].ch, '❀', 'leafy young crop shows rosette');
+    assert.equal(out[10][14].ch, '●', 'ripe tomato gets botanical fruit glyph');
+  });
+
+  test('5. Expressive creature tokens, facing/riding player metadata, and floating emote bubbles', () => {
+    const s = scene({
+      fx: [{ kind: 'emote', x: 14, y: 10, age: 0.2, life: 1.0, emote: 'heart' }],
+    });
+    s.put(10, 10, 'c', '07', '00', true);
+    s.tag(10, 10, { t: 'grass', wx: 10, wy: 10, ent: 'animal' });
+    s.put(12, 10, 'd', '09', '00', true);
+    s.tag(12, 10, { t: 'grass', wx: 12, wy: 10, ent: 'pet' });
+    s.put(14, 10, 's', '05', '00', true);
+    s.tag(14, 10, { t: 'grass', wx: 14, wy: 10, ent: 'animal' });
+    s.put(16, 10, 'S', '05', '00', true);
+    s.tag(16, 10, { t: 'grass', wx: 16, wy: 10, ent: 'animal' });
+    s.put(18, 10, '@', '0A', '00', true);
+    s.tag(18, 10, { t: 'grass', wx: 18, wy: 10, ent: 'player', face: [1, 0], riding: true });
+    const out = computeFrame(s, 0);
+    assert.equal(out[10][10].ch, 'ˇ', 'chicken silhouette');
+    assert.ok(out[10][10].detail, 'chicken red comb detail');
+    assert.equal(out[10][12].ch, '▴', 'dog silhouette');
+    assert.ok(out[10][12].detail, 'dog collar detail');
+    assert.equal(out[10][14].ch, '◦', 'sheared sheep');
+    assert.equal(out[10][16].ch, '☁', 'woolly sheep');
+    assert.deepEqual(out[10][18].face, [1, 0]);
+    assert.equal(out[10][18].detail?.ch, '♞', 'mounted horseback badge');
+    assert.equal(out[9][14].ch, '♥', 'emote bubble floats above target');
+    assert.ok(out[9][14].token && out[9][14].rim, 'emote bubble renders on a token pill');
+  });
+
+  test('6. Indoor atmosphere casts daytime sunbeams and warm nighttime hearth/TV lamp pools', () => {
+    const buildRoom = (minutes: number) => {
+      const s = scene({ indoor: true, mapName: 'house', minutes, weather: 'Sunny' });
+      for (let y = 2; y < 16; y++) {
+        for (let x = 4; x < 24; x++) {
+          const wall = y === 2 || y === 15 || x === 4 || x === 23;
+          s.put(x, y, wall ? '#' : '.', '02', '00');
+          s.tag(x, y, { t: wall ? 'iwall' : 'floor', wx: x, wy: y });
+        }
+      }
+      // Window on north wall & fireplace at (8, 4)
+      s.put(12, 2, '=', '0C', '00');
+      s.tag(12, 2, { t: 'iwall', wx: 12, wy: 2, k: 'deco', dch: '=', dfg: '0C' });
+      s.put(8, 4, '&', '08', '00');
+      s.tag(8, 4, { t: 'fireplace', wx: 8, wy: 4 });
+      return s;
+    };
+    const noon = computeFrame(buildRoom(10 * 60), 0);
+    const beamCell = noon[4][13]; // floor tile in diagonal sunbeam path from window (12,2)
+    const cornerCell = noon[13][6]; // unlit far floor tile
+    assert.ok(lum(beamCell.bg) > lum(cornerCell.bg), 'daytime sunbeam warms floor beneath window');
+
+    const night = computeFrame(buildRoom(22 * 60), 0);
+    assert.ok(lum(night[5][8].bg) > lum(night[13][20].bg), 'nighttime hearth warms nearby floor while far corner dims');
+  });
+
+  test('7. Minimap cells, TV scanline boxes, vector box borders, and lantern-iris map wipe', () => {
+    const s = scene({
+      wipe: { age: 0.05, duration: 0.22, focus: [25, 10] },
+    });
+    s.put(6, 4, '@', '0D', '00', true);
+    s.tag(6, 4, { t: 'ui', k: 'minimap:player' });
+    s.put(7, 4, '*', '0A', '00');
+    s.tag(7, 4, { t: 'ui', k: 'minimap:crop_ripe' });
+    s.box(10, 12, 24, 6, '0D', '00', '▣ Weather Channel', '0C', { kind: 'tv', accent: '0C' });
+
+    const wiped = computeFrame(s, 0.3);
+    const unwiped = computeFrame({ ...s, ctx: { ...s.ctx!, wipe: undefined } }, 0.3);
+    assert.equal(wiped[4][6].ch, '◉', 'minimap player beacon pulses');
+    assert.equal(wiped[4][7].ch, '●', 'minimap ripe crop dot');
+    // Far corner (1, 1) is darkened during active iris wipe when t > 0, while focus (25, 10) stays clear
+    assert.ok(lum(wiped[1][1].bg) < lum(unwiped[1][1].bg), 'iris wipe darkens outer edge mid-transition');
+    assert.equal(wiped[10][25].bg, unwiped[10][25].bg, 'iris focus stays bright');
+    // TV box interior rows alternate scanline background slightly
+    assert.notEqual(wiped[14][15].bg, wiped[15][15].bg, 'TV broadcast box has subtle CRT scanlines');
+
+    // Verify drawFrame strokes vector box lines without throwing
+    let strokes = 0;
+    const canvas = new Proxy({ stroke: () => { strokes++; } }, {
+      get: (target, key) => key in target ? target[key as keyof typeof target] : () => {},
+    }) as unknown as CanvasRenderingContext2D;
+    drawFrame(canvas, wiped, { cw: 10, ch: 20, fontPx: 16, font: 'monospace', dpr: 1 });
+    assert.ok(strokes > 0, 'vector box borders and reticles stroke cleanly on canvas');
   });
 });
