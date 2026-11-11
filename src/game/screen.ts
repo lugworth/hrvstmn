@@ -78,7 +78,7 @@ export type RenderFx = FxExtra & {
   life: number;
 };
 
-export type HudIcon = { x: number; y: number; icon: 'stamina' | 'fatigue' | 'gold' | 'bin' | 'tool' | 'weather' };
+export type HudIcon = { x: number; y: number; icon: 'stamina' | 'fatigue' | 'gold' | 'bin' | 'tool' | 'weather' | 'season' | 'note' };
 
 /** Per-frame scene context for the renderer (null on title/menus). */
 export type RenderCtx = {
