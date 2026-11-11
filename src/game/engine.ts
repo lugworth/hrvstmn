@@ -87,6 +87,12 @@ import {
   LIGHTHOUSE_INTRO,
   LIGHTHOUSE_LOG,
   TIDE_POOL_TEXT,
+  INN_SCENES,
+  INN_EVENING_DAY,
+  INN_EVENING_HOURS,
+  INN_LISTEN_FRIEND,
+  INN_JOIN_FRIEND,
+  INN_CARDS_POT,
 } from './constants';
 import {
   CoordSet,
@@ -132,6 +138,8 @@ import {
   getBasketTotal,
   rollRegionCatch,
   rollStoneSkips,
+  innSceneFor,
+  innCardsWin,
 } from './rules';
 
 export interface VillagerRequest {
@@ -324,6 +332,9 @@ export class Game {
   skip_best: number = 0;
   lighthouse_log: number = 0;
   lighthouse_day: number = -1;
+  /** Friday evenings at Doug's Inn: scene ids seen so far, and the absday you last attended. */
+  inn_scenes_seen: string[] = [];
+  inn_evening_day: number = -1;
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -344,6 +355,7 @@ export class Game {
     'tv_watched_saturday', 'zack_paid_today', 'fest_attended', 'fest_declined',
     // outer-region landmarks
     'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
+    'inn_scenes_seen', 'inn_evening_day',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -467,6 +479,8 @@ export class Game {
     this.skip_best = 0;
     this.lighthouse_log = 0;
     this.lighthouse_day = -1;
+    this.inn_scenes_seen = [];
+    this.inn_evening_day = -1;
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -3186,7 +3200,11 @@ export class Game {
       ];
     }
     if (bid === 'inn') {
+      const scene = this.inn_evening_now() ? this.inn_scene() : null;
       return [
+        ...(scene && this.inn_evening_day !== this.absday()
+          ? ([[`Friday evening: ${scene.title}`, () => this.inn_evening()]] as [string, () => Promise<void>][])
+          : []),
         ['Eat Doug\'s Lunch (300G, +50 Stamina)', () => this.inn_lunch()],
         ['Use Inn Telephone (Order Saturday TV Shopping)', () => this.inn_phone_menu()],
       ];
@@ -3481,6 +3499,53 @@ export class Game {
     await this.say(`Leave your ${t} with me. It'll be ready tomorrow morning. Hmph.`, 'Saibara');
   }
 
+  /** True during the Friday-evening window at the inn. */
+  inn_evening_now(): boolean {
+    const [o, c] = INN_EVENING_HOURS;
+    return this.weekday === INN_EVENING_DAY && o * 60 <= this.minutes && this.minutes < c * 60;
+  }
+
+  /** This week's Friday scene: an unseen one if any are left, otherwise the rotation's pick. */
+  inn_scene(): (typeof INN_SCENES)[number] {
+    const week = Math.floor(this.absday() / 7);
+    const id = innSceneFor(week, INN_SCENES.map((s) => s.id), this.inn_scenes_seen || []);
+    return INN_SCENES.find((s) => s.id === id) || INN_SCENES[0];
+  }
+
+  /** One Friday scene per evening: listen in, or take part for a little more. */
+  async inn_evening(): Promise<void> {
+    const scene = this.inn_scene();
+    const sel = await this.menu(scene.title, ['Listen', scene.join, 'Not tonight']);
+    if (sel === null || sel === 2) return;
+    const joined = sel === 1;
+    for (const [who, line] of scene.listen) await this.say(line, who);
+    if (joined) {
+      for (const [who, line] of scene.joined) await this.say(line, who);
+      await this.inn_join_payoff(scene.id);
+    }
+    const pts = joined ? INN_JOIN_FRIEND : INN_LISTEN_FRIEND;
+    for (const n of scene.cast) {
+      if (n in NPCS) this.friend[n] = clamp((this.friend[n] || 0) + pts, 0, 100);
+    }
+    this.inn_evening_day = this.absday();
+    if (!this.inn_scenes_seen.includes(scene.id)) this.inn_scenes_seen.push(scene.id);
+    this.msg(`${joined ? 'You joined in' : 'You listened'}: ${scene.cast.join(', ')} +${pts} friendship.`, '0C');
+  }
+
+  async inn_join_payoff(id: string): Promise<void> {
+    if (id === 'cards') {
+      if (innCardsWin(this.absday())) {
+        this.gold += INN_CARDS_POT;
+        await this.say(`A full house! You take the pot. (+${INN_CARDS_POT}G)`, 'Gotz');
+      } else {
+        await this.say('Doug lays down four aces and grins. Better luck next Friday.', 'Doug');
+      }
+    } else if (id === 'recipes') {
+      this.give('Cookies', 1);
+      this.msg('Ann gave you a plate of Cookies.', '0B');
+    }
+  }
+
   async inn_lunch(): Promise<void> {
     if (this.gold < 300) {
       await this.say('Lunch is 300G, friend.', 'Doug');
@@ -3598,6 +3663,14 @@ export class Game {
     const festTomorrow = this.fest_on(1);
     if (festTomorrow) lines.push(`  Tomorrow’s festival: ${festTomorrow[0]}`);
     if (!bdays.length && !bdayTomorrow.length && !fest && !festTomorrow) lines.push('  No birthdays or festivals today.');
+    if (this.weekday === INN_EVENING_DAY) {
+      const [o, c] = INN_EVENING_HOURS;
+      lines.push(
+        this.inn_evening_day === this.absday()
+          ? '  Inn: you spent this Friday evening at Doug\'s.'
+          : `  Inn ${fmt_hour(o)}–${fmt_hour(c)}: ${this.inn_scene().title}`
+      );
+    }
     lines.push('');
     if (this.stamina <= 30 || this.fatigue >= 80) {
       lines.push('  Rest: stamina is low. Eat, soak at the Hot Spring, or sleep early.');
