@@ -232,6 +232,7 @@ Newest first.
 
 - `README.md`: feature list, controls, colour rules and renderer overview.
 - `docs/feature-research.md`: sourced backlog of gameplay/graphics ideas with implementation notes and a recommended order.
+- [docs/mechanics-tasks.md](docs/mechanics-tasks.md) lists 56 farming and slice-of-life tasks and the PR workflow for agents.
 - `docs/ascii-art-pack.md`: title plate, crop/animal/tool/building ASCII art and a farm vignette with Isotope colour maps.
 - `src/game/enhanced.test.ts`: precise spec of the visual behaviour.
 - `git log`: commit bodies and merged PRs describe each player-visible change.
