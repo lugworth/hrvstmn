@@ -18,6 +18,7 @@ import {
   DIG_CAP,
   DIG_MAPS,
   DIG_RELICS,
+  VALLEY_LANDMARKS,
 } from './constants';
 
 const store: Record<string, string> = {};
@@ -431,3 +432,157 @@ function await_rare(g: any): string | null {
   for (let i = 0; i < 5000; i++) if (g.roll_catch() === rare) return rare;
   return null;
 }
+
+describe('labeled valley map (task 33)', () => {
+  const rowText = (g: any, y: number) => g.scr.buf[y].map((c: any) => c[0]).join('');
+  const screenText = (g: any) => g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).join('\n');
+
+  test('every landmark sits on a real door or sign of its map', () => {
+    const g = fresh();
+    for (const lm of VALLEY_LANDMARKS) {
+      const m = g.maps[lm.map];
+      assert.ok(m, `${lm.id}: map ${lm.map}`);
+      const k = `${lm.x},${lm.y}`;
+      assert.ok(k in m.doors || k in m.signs, `${lm.id} at ${k} on ${lm.map}`);
+      if (lm.bid) assert.equal(m.doors[k], lm.bid, `${lm.id} door is ${lm.bid}`);
+    }
+    const glyphs = VALLEY_LANDMARKS.map((l) => l.glyph);
+    assert.equal(new Set(glyphs).size, glyphs.length, 'symbols are distinct');
+  });
+
+  test('the pin points to the next map exit, then to the landmark itself', () => {
+    const g = fresh();
+    g.map_pin = 'forge';
+    g.warp('farm', 14, 10);
+    let r = g.pin_route();
+    assert.equal(r.text, 'west exit to Ironwood Grove');
+    assert.equal(r.cell[0], 0, 'the exit cell is on the west edge');
+    assert.equal(g.maps.farm.warps[`${r.cell[0]},${r.cell[1]}`][0], 'grove');
+    g.warp('woods', 30, 2);
+    assert.equal(g.pin_route().text, 'north exit to Your Farm, toward Ironwood Grove');
+    g.warp('grove', 30, 16);
+    r = g.pin_route();
+    assert.match(r.text, /^\d+ steps west$/);
+    assert.deepEqual(r.cell, [18, 16]);
+    g.warp('in_inn', ...g.interiors.inn.entry);
+    assert.equal(g.pin_route().text, 'step outside to Mineral Town');
+    g.map_pin = 'lookout';
+    g.warp('beach', 30, 5);
+    assert.equal(g.pin_route().text, "north exit to Mineral Town, toward Skyline Ridge");
+  });
+
+  test('the minimap and the map view show where to go while a pin is set', () => {
+    const g = fresh();
+    g.warp('farm', 14, 10);
+    g.map_pin = 'forge';
+    g.show_minimap = true;
+    g.render();
+    const tags = g.scr.tags.flat().filter(Boolean).map((t: any) => t.k);
+    assert.ok(tags.includes('minimap:pin'), 'exit marked on the minimap');
+    assert.ok(screenText(g).includes('Map < Ironwood Grove'.slice(0, 19)), 'minimap title names the next region');
+    g.show_minimap = false;
+    g.render();
+    const hint = g.scr.buf[0].map((c: any) => c[0]).join('');
+    assert.ok(hint.includes("⚒ Saibara's Forge: west exit"), hint);
+    g.map_pin = null;
+    g.render();
+    assert.ok(!rowText(g, 0).includes("Saibara's Forge"), 'no pointer without a pin');
+  });
+
+  test('G opens the map; arrows pick a landmark, Enter pins and unpins, Esc closes', async () => {
+    const g = fresh();
+    g.warp('farm', 14, 10);
+    for (const k of ['right', 'enter', 'esc']) g.scr.pushKey(k);
+    await g.handle('g');
+    assert.equal(g.map_pin, 'forge', 'from the farmhouse, one step right is the forge');
+    for (const k of ['enter', 'esc']) g.scr.pushKey(k);
+    await g.handle('G');
+    assert.equal(g.map_pin, null, 'Enter on the pinned landmark clears it');
+    for (const k of ['down', 'enter', 'esc']) g.scr.pushKey(k);
+    await g.valley_map();
+    assert.equal(g.map_pin, 'forge', 'down moves to the next region');
+  });
+
+  for (const [w, h] of [[80, 24], [50, 24], [50, 28], [132, 40]]) {
+    test(`the valley map fits a ${w}x${h} screen with every symbol and the forge hours`, () => {
+      const g = fresh();
+      g.scr = new Screen(w, h);
+      g.warp('town', 30, 12);
+      g.render();
+      g.draw_valley(0);
+      const text = screenText(g);
+      for (const lm of VALLEY_LANDMARKS) assert.ok(text.includes(lm.glyph), `${lm.id} ${lm.glyph}`);
+      assert.ok(text.includes('Forge '), 'forge status line');
+      assert.ok(text.includes(w < 80 ? '<> pick  ^v region  Enter pin  Esc' : 'Left/Right landmark  Up/Down region  Enter pin  Esc close'), 'whole key hint');
+      for (const row of g.scr.buf) assert.equal(row.length, w);
+      // the right border of the overlay is intact on the region rows
+      for (let y = 1; y < 16; y++) assert.equal(g.scr.buf[y][w - 1][0], '|', `row ${y}: ${rowText(g, y)}`);
+    });
+  }
+
+  test("Today's Plan shows the forge hours always and the pin when set; the pin survives a reload", () => {
+    const g = fresh();
+    g.day = 2;
+    g.minutes = 12 * 60;
+    assert.ok(g.today_lines().includes('  Forge  open until 4PM'));
+    g.day = 4; // Thursday
+    assert.ok(g.today_lines().includes('  Forge  closed today (Thu); opens tomorrow 10AM'));
+    g.day = 7; // Spring 7, 5 PM: the eve of the Spring 8 festival
+    g.minutes = 17 * 60;
+    assert.ok(g.fest_on(1), 'Spring 8 is a festival');
+    assert.ok(!g.today_lines().includes('  Forge  closed for the day; opens tomorrow 10AM'), 'not "tomorrow" on a festival eve');
+    g.day = 2;
+    g.minutes = 12 * 60;
+    g.map_pin = 'museum';
+    g.warp('farm', 14, 10);
+    assert.ok(g.today_lines().some((l: string) => l.includes('Pin    Museum: east exit to Mineral Town')));
+    const h = fresh();
+    h.applySaveData(JSON.parse(JSON.stringify(g.snapshot())));
+    assert.equal(h.map_pin, 'museum');
+    const old = JSON.parse(JSON.stringify(g.snapshot()));
+    delete old.map_pin;
+    const k = fresh();
+    k.applySaveData(old);
+    assert.equal(k.map_pin, null);
+  });
+
+  test("inside the pinned building you're there; in a mine the pin points up the ladder", () => {
+    const g = fresh();
+    g.map_pin = 'museum';
+    g.warp('in_museum', ...g.interiors.museum.entry);
+    assert.equal(g.pin_route().text, "you're there");
+    g.map_pin = 'farmhouse';
+    g.warp('house', 5, 5);
+    assert.equal(g.pin_route().text, "you're there");
+    g.map_pin = 'forge';
+    g.enter_mine(3, 'spring');
+    const r = g.pin_route();
+    assert.equal(r.text, "climb out to Mother's Hill");
+    assert.equal(g.map.tile(r.cell[0], r.cell[1]), 'up');
+    assert.notEqual(r.arrow, '>', 'points at the ladder, not a default arrow');
+  });
+
+  test('at 50 columns the on-map pointer uses its short form, whole', () => {
+    const g = fresh();
+    g.scr = new Screen(50, 24);
+    g.warp('farm', 14, 10);
+    g.map_pin = 'forge';
+    g.render();
+    const row = g.scr.buf[1].map((c: any) => c[0]).join(''); // row 0 is the compact top bar
+    assert.ok(row.includes('⚒ west exit: Ironwood Grove'), row);
+    assert.ok(!row.includes('…'));
+  });
+
+  test('the forge reads as closed on its closed day and on festival days', () => {
+    const g = fresh();
+    g.day = 4; // absday 3: Thursday
+    g.minutes = 12 * 60;
+    assert.equal(g.weekday, 3);
+    assert.equal(g.forge_status().open, false);
+    g.day = 2;
+    g.fest_on = () => ['Test Festival', 9, 17];
+    assert.equal(g.forge_status().open, false);
+    g.fest_on = () => null;
+    assert.equal(g.forge_status().open, true);
+  });
+});

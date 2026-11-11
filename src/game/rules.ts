@@ -1,6 +1,7 @@
 // Pure game rules and mechanics for Harvest Moon: Friends of Mineral Town (ASCII Edition)
 
 import type { CatchEntry, CatchTable } from './constants';
+import { fmt_hour } from './constants';
 
 export const TOOL_LEVEL_NAMES = [
   'Basic',
@@ -397,4 +398,69 @@ export function rollStoneSkips(rand: () => number, calm: boolean = true): number
   let n = 1;
   while (n < MAX_STONE_SKIPS && rand() < keep) n++;
   return n;
+}
+
+/**
+ * Task 33: the next region on the shortest walk from `from` to `to` over the valley's region
+ * links (breadth-first, neighbours in sorted order so the answer is stable). Null when you
+ * are already there or no route exists.
+ */
+export function nextRegion(links: Record<string, string[]>, from: string, to: string): string | null {
+  if (from === to) return null;
+  const prev: Record<string, string> = {};
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const n of [...(links[cur] || [])].sort()) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      prev[n] = cur;
+      if (n === to) {
+        let step = n;
+        while (prev[step] !== from) step = prev[step];
+        return step;
+      }
+      queue.push(n);
+    }
+  }
+  return null;
+}
+
+/** 'north', 'south-east', ... for a step of (dx, dy) on the map (y grows southward). */
+export function compassWord(dx: number, dy: number): string {
+  const ns = dy < 0 ? 'north' : dy > 0 ? 'south' : '';
+  const ew = dx < 0 ? 'west' : dx > 0 ? 'east' : '';
+  // Mostly-straight lines read as one direction.
+  if (ns && ew && Math.abs(dx) > 2 * Math.abs(dy)) return ew;
+  if (ns && ew && Math.abs(dy) > 2 * Math.abs(dx)) return ns;
+  return ns && ew ? `${ns}-${ew}` : ns || ew || 'here';
+}
+
+/**
+ * Whether a shop keeping `hours` ([open, close, closed weekdays]) is open, and when it next
+ * opens. `festOn(d)` says whether the day `d` days from today is a festival (shops shut then).
+ */
+export function shopStatus(
+  hours: [number, number, number[]],
+  weekday: number,
+  minutes: number,
+  festOn: (offset: number) => boolean = () => false
+): { open: boolean; text: string } {
+  const [o, c, closed] = hours;
+  const hr = fmt_hour;
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const nextOpen = (): string => {
+    for (let d = 1; d <= 14; d++) {
+      const wd = (weekday + d) % 7;
+      if (closed.includes(wd) || festOn(d)) continue;
+      return d === 1 ? `tomorrow ${hr(o)}` : d < 7 ? `${DAYS[wd]} ${hr(o)}` : `in ${d} days`;
+    }
+    return 'not soon';
+  };
+  if (festOn(0)) return { open: false, text: `closed for the festival; opens ${nextOpen()}` };
+  if (closed.includes(weekday)) return { open: false, text: `closed today (${DAYS[weekday]}); opens ${nextOpen()}` };
+  if (minutes < o * 60) return { open: false, text: `opens at ${hr(o)} today` };
+  if (minutes >= c * 60) return { open: false, text: `closed for the day; opens ${nextOpen()}` };
+  return { open: true, text: `open until ${hr(c)}` };
 }

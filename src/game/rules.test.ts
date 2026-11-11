@@ -1,6 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  nextRegion,
+  compassWord,
+  shopStatus,
   getMaxStamina,
   getToolArea,
   calculateStaminaSpend,
@@ -192,5 +195,40 @@ describe('outer-region fishing and stone skipping', () => {
     assert.equal(rollStoneSkips(() => 0.99), 1);
     assert.equal(rollStoneSkips(() => 0.6, true), MAX_STONE_SKIPS);
     assert.equal(rollStoneSkips(() => 0.6, false), 1);
+  });
+});
+
+describe('valley map rules (task 33)', () => {
+  const links = {
+    farm: ['town', 'woods', 'grove'], town: ['farm', 'mountain', 'beach', 'river'], mountain: ['town', 'ridge'],
+    ridge: ['mountain'], beach: ['town', 'point'], point: ['beach'], river: ['town'], woods: ['farm'], grove: ['farm'],
+  };
+  test('the next region follows the shortest walk', () => {
+    assert.equal(nextRegion(links, 'farm', 'grove'), 'grove');
+    assert.equal(nextRegion(links, 'grove', 'ridge'), 'farm');
+    assert.equal(nextRegion(links, 'woods', 'point'), 'farm');
+    assert.equal(nextRegion(links, 'town', 'ridge'), 'mountain');
+    assert.equal(nextRegion(links, 'town', 'town'), null);
+    assert.equal(nextRegion({ a: [] }, 'a', 'b'), null);
+  });
+  test('compass words', () => {
+    assert.equal(compassWord(-5, 0), 'west');
+    assert.equal(compassWord(4, 4), 'south-east');
+    assert.equal(compassWord(10, -1), 'east');
+    assert.equal(compassWord(0, 0), 'here');
+  });
+  test('shop status: open, before opening, after closing, closed day, festival', () => {
+    const forge: [number, number, number[]] = [10, 16, [3]];
+    assert.deepEqual(shopStatus(forge, 0, 12 * 60), { open: true, text: 'open until 4PM' });
+    assert.equal(shopStatus(forge, 0, 9 * 60).text, 'opens at 10AM today');
+    assert.equal(shopStatus(forge, 0, 16 * 60).text, 'closed for the day; opens tomorrow 10AM');
+    assert.equal(shopStatus(forge, 2, 17 * 60).text, 'closed for the day; opens Fri 10AM', 'Wednesday evening skips closed Thursday');
+    assert.equal(shopStatus(forge, 3, 12 * 60).open, false);
+    assert.equal(shopStatus(forge, 3, 12 * 60).text, 'closed today (Thu); opens tomorrow 10AM');
+    assert.deepEqual(shopStatus(forge, 0, 12 * 60, (d) => d === 0), { open: false, text: 'closed for the festival; opens tomorrow 10AM' });
+    // festival eve: tomorrow is a festival, so the forge next opens the day after
+    assert.equal(shopStatus(forge, 0, 17 * 60, (d) => d === 1).text, 'closed for the day; opens Wed 10AM');
+    // a closed Thursday before a Friday festival
+    assert.equal(shopStatus(forge, 3, 12 * 60, (d) => d === 1).text, 'closed today (Thu); opens Sat 10AM');
   });
 });

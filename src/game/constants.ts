@@ -2521,6 +2521,7 @@ export const HELP: string[] = [
   "SUMMARY   m   Ranch Summary, Memo, Sprites, Fish & Collectibles",
   "TODAY     y   daily checklist: crops, animals, shipping, events",
   "MINIMAP   n   toggle the corner map overlay",
+  "VALLEY    g   labeled valley map: pin a landmark, see the way",
   "VILLAGERS r   hearts, favourite gifts and usual whereabouts",
   "DIARY     esc Save/Load anywhere (2 slots), Teleport, Status",
   "",
@@ -3306,3 +3307,68 @@ export const LIGHTHOUSE_LOG: string[] = [
 /** What you see in a Lighthouse Point tide pool. */
 export const TIDE_POOL_TEXT =
   "A tide pool among the rocks. Tiny crabs scuttle under the weed, and a red anemone opens and closes like a slow heartbeat.";
+
+/** Task 33: the labeled Valley Map. Where each outdoor region sits on the schematic grid. */
+export const VALLEY_GRID: Record<string, [number, number]> = {
+  ridge: [2, 0],
+  mountain: [2, 1],
+  grove: [0, 2],
+  farm: [1, 2],
+  town: [2, 2],
+  river: [3, 2],
+  woods: [1, 3],
+  beach: [2, 3],
+  point: [3, 3],
+};
+
+/** Short region names for the narrow schematic boxes. */
+export const VALLEY_SHORT: Record<string, string> = {
+  farm: 'Your Farm',
+  town: 'Town',
+  mountain: "Mother's",
+  beach: 'Beach',
+  woods: 'Cedar',
+  ridge: 'Ridge',
+  river: 'Willow',
+  point: 'Point',
+  grove: 'Ironwood',
+};
+
+export interface ValleyLandmark {
+  id: string;
+  name: string;
+  glyph: string;
+  map: string;
+  x: number;
+  y: number;
+  /** The building it stands for, when it keeps shop hours. */
+  bid?: string;
+}
+
+/** Major landmarks, each with its own symbol. Positions are the door or sign on its map. */
+export const VALLEY_LANDMARKS: ValleyLandmark[] = [
+  { id: 'farmhouse', name: 'Your farmhouse', glyph: '▣', map: 'farm', x: 8, y: 5 },
+  { id: 'forge', name: "Saibara's Forge", glyph: '⚒', map: 'grove', x: 18, y: 16, bid: 'blacksmith' },
+  { id: 'quarry', name: 'Old Quarry', glyph: '▙', map: 'grove', x: 23, y: 5 },
+  { id: 'supermarket', name: 'Supermarket', glyph: '$', map: 'town', x: 8, y: 6, bid: 'supermarket' },
+  { id: 'mayor', name: "Mayor's house", glyph: '▦', map: 'town', x: 57, y: 6, bid: 'mayor' },
+  { id: 'church', name: 'Church', glyph: '†', map: 'town', x: 67, y: 6, bid: 'church' },
+  { id: 'square', name: 'Rose Square board', glyph: '✦', map: 'town', x: 42, y: 10 },
+  { id: 'clinic', name: 'Clinic', glyph: '♥', map: 'town', x: 8, y: 19, bid: 'clinic' },
+  { id: 'inn', name: "Doug's Inn", glyph: '☻', map: 'town', x: 22, y: 19, bid: 'inn' },
+  { id: 'library', name: 'Library', glyph: '▤', map: 'town', x: 50, y: 19, bid: 'library' },
+  { id: 'museum', name: 'Museum', glyph: '◉', map: 'town', x: 65, y: 19, bid: 'museum' },
+  { id: 'carpenter', name: "Gotz's workshop", glyph: '▮', map: 'mountain', x: 40, y: 6, bid: 'carpenter' },
+  { id: 'spring_mine', name: 'Spring Mine', glyph: '▼', map: 'mountain', x: 52, y: 4 },
+  { id: 'lake_mine', name: 'Lake Mine', glyph: '◣', map: 'mountain', x: 15, y: 8 },
+  { id: 'goddess', name: 'Goddess Pond', glyph: '❀', map: 'mountain', x: 44, y: 8 },
+  { id: 'hot_spring', name: 'Hot Spring', glyph: '≋', map: 'mountain', x: 5, y: 17 },
+  { id: 'lookout', name: 'Ridge lookout', glyph: '▲', map: 'ridge', x: 33, y: 6 },
+  { id: 'poultry', name: 'Poultry Farm', glyph: '●', map: 'woods', x: 44, y: 6, bid: 'poultry' },
+  { id: 'yodel', name: 'Yodel Ranch', glyph: '♉', map: 'woods', x: 57, y: 6, bid: 'yodel' },
+  { id: 'winery', name: 'Winery', glyph: '♠', map: 'woods', x: 35, y: 18, bid: 'winery' },
+  { id: 'pier', name: 'Beach pier', glyph: '≈', map: 'beach', x: 30, y: 12 },
+  { id: 'sprites', name: 'Sprite hut', glyph: '✿', map: 'river', x: 53, y: 9 },
+  { id: 'zack', name: 'Zack & Won', glyph: '¦', map: 'point', x: 23, y: 9, bid: 'zack' },
+  { id: 'lighthouse', name: 'Lighthouse', glyph: '☾', map: 'point', x: 45, y: 10 },
+];

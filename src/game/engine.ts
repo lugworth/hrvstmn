@@ -87,6 +87,9 @@ import {
   LIGHTHOUSE_INTRO,
   LIGHTHOUSE_LOG,
   TIDE_POOL_TEXT,
+  VALLEY_GRID,
+  VALLEY_SHORT,
+  VALLEY_LANDMARKS,
 } from './constants';
 import {
   CoordSet,
@@ -132,6 +135,9 @@ import {
   getBasketTotal,
   rollRegionCatch,
   rollStoneSkips,
+  nextRegion,
+  compassWord,
+  shopStatus,
 } from './rules';
 
 export interface VillagerRequest {
@@ -324,6 +330,8 @@ export class Game {
   skip_best: number = 0;
   lighthouse_log: number = 0;
   lighthouse_day: number = -1;
+  /** Task 33: the Valley Map landmark you pinned (a VALLEY_LANDMARKS id), or null. */
+  map_pin: string | null = null;
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -344,6 +352,7 @@ export class Game {
     'tv_watched_saturday', 'zack_paid_today', 'fest_attended', 'fest_declined',
     // outer-region landmarks
     'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
+    'map_pin',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -467,6 +476,7 @@ export class Game {
     this.skip_best = 0;
     this.lighthouse_log = 0;
     this.lighthouse_day = -1;
+    this.map_pin = null;
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -868,6 +878,8 @@ export class Game {
       }
     } else if (k === 'y' || k === 'Y') {
       await this.today_panel();
+    } else if (k === 'g' || k === 'G') {
+      await this.valley_map();
     } else if (k === 'n' || k === 'N') {
       this.show_minimap = !this.show_minimap;
       this.msg(`Minimap ${this.show_minimap ? 'shown' : 'hidden'}.`, '0C');
@@ -3588,6 +3600,9 @@ export class Game {
       const extra = this.requests.length > 1 ? ` (+${this.requests.length - 1} more)` : '';
       lines.push(`  Board  ${r.npc} needs ${r.qty} × ${r.item}${extra}`);
     }
+    const pinRoute = this.pin_route();
+    if (pinRoute) lines.push(`  Pin    ${pinRoute.landmark.name}: ${pinRoute.text}`);
+    lines.push(`  Forge  ${this.forge_status().text}`);
     lines.push('');
     const bdays = this.birthdays();
     if (bdays.length) lines.push(`  Birthday today: ${bdays.join(', ')} (5× gift bonus!)`);
@@ -5115,6 +5130,7 @@ export class Game {
     if (!contour) this.draw_topbar(W);
     this.draw_map(0, mapY, vw, vh);
     if (this.show_minimap) this.draw_minimap(vw, vh);
+    this.draw_pin_hint(vw, mapY);
     if (compact) {
       s.put(0, H - 4, '-'.repeat(W), '01');
       this.draw_status(H - 4, W);
@@ -5417,6 +5433,215 @@ export class Game {
     }
   }
 
+  /** Region links between the outdoor maps, read from their edge warps. */
+  valley_links(): Record<string, string[]> {
+    const links: Record<string, string[]> = {};
+    for (const name of OUTDOOR_MAPS) {
+      const m = this.maps[name];
+      if (!m) continue;
+      links[name] = [...new Set(Object.values(m.warps).map((w) => w[0]).filter((d) => OUTDOOR_MAPS.includes(d) && d !== name))];
+    }
+    return links;
+  }
+
+  /** Saibara's Forge today: open now, or when it next opens (festivals close it too). */
+  forge_status(): { open: boolean; text: string } {
+    return this.shop_status('blacksmith');
+  }
+
+  /** Any shop's hours from here, skipping festival days the way fest_closed() does. */
+  shop_status(bid: string): { open: boolean; text: string } {
+    const festShut = (d: number) => !['church', 'sprites'].includes(bid) && !!this.fest_on(d);
+    return shopStatus(HOURS[bid], this.weekday, this.minutes, festShut);
+  }
+
+  /** Where the pinned landmark is from here: the exit to take next, or the way to walk. */
+  pin_route(): {
+    landmark: (typeof VALLEY_LANDMARKS)[number];
+    /** The cell to head for on this map (an exit, or the landmark itself), if any. */
+    cell: [number, number] | null;
+    arrow: string;
+    short: string;
+    text: string;
+    /** A short form for narrow screens. */
+    brief: string;
+  } | null {
+    const lm = VALLEY_LANDMARKS.find((l) => l.id === this.map_pin);
+    if (!lm) return null;
+    const m = this.map;
+    const arrowFor = (dx: number, dy: number) =>
+      dx === 0 && dy === 0 ? '·' : Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? '<' : '>') : dy < 0 ? '^' : 'v';
+    const nearestWarp = (pred: (dest: string) => boolean): [number, number] | null => {
+      let best: [number, number] | null = null;
+      let bestD = Infinity;
+      for (const [k, w] of Object.entries(m.warps)) {
+        if (!pred(w[0])) continue;
+        const [x, y] = parseCoordKey(k);
+        const d = Math.abs(x - this.px) + Math.abs(y - this.py);
+        if (d < bestD) [best, bestD] = [[x, y], d];
+      }
+      return best;
+    };
+    const towards = (cell: [number, number] | null, short: string, text: string, brief: string = text) => {
+      const [dx, dy] = cell ? [cell[0] - this.px, cell[1] - this.py] : [0, 0];
+      return { landmark: lm, cell, arrow: arrowFor(dx, dy), short, text, brief };
+    };
+    const inside = this.interior_bid[this.mapname];
+    if ((inside && inside === lm.bid) || (this.mapname === 'house' && lm.id === 'farmhouse')) {
+      return towards(null, lm.name, "you're there");
+    }
+    if (this.mapname === 'mine') {
+      let up: [number, number] | null = null;
+      for (let y = 0; y < m.h && !up; y++) for (let x = 0; x < m.w && !up; x++) if (m.tile(x, y) === 'up') up = [x, y];
+      return towards(up, "Mother's Hill", up ? "climb out to Mother's Hill" : 'find your way out first', 'climb out');
+    }
+    if (!OUTDOOR_MAPS.includes(this.mapname)) {
+      const out = nearestWarp((d) => OUTDOOR_MAPS.includes(d));
+      if (!out) return towards(null, 'way out', 'find your way out first');
+      const dest = m.warps[pkey(out[0], out[1])][0];
+      return towards(out, 'outside', dest === lm.map ? 'step outside' : `step outside to ${this.maps[dest].title}`, 'step outside');
+    }
+    if (this.mapname === lm.map) {
+      const [dx, dy] = [lm.x - this.px, lm.y - this.py];
+      const dist = Math.abs(dx) + Math.abs(dy);
+      return towards(dist <= 1 ? null : [lm.x, lm.y], lm.name, dist <= 1 ? "you're there" : `${dist} steps ${compassWord(dx, dy)}`);
+    }
+    const next = nextRegion(this.valley_links(), this.mapname, lm.map);
+    if (!next) return towards(null, lm.name, 'no path from here');
+    const cell = nearestWarp((d) => d === next);
+    const side = !cell ? '' : cell[0] === 0 ? 'west' : cell[0] === m.w - 1 ? 'east' : cell[1] === 0 ? 'north' : cell[1] === m.h - 1 ? 'south' : compassWord(cell[0] - this.px, cell[1] - this.py);
+    const title = this.maps[next].title;
+    const exitWord = side ? `${side} exit` : 'exit';
+    return towards(cell, title, `${exitWord} to ${title}${next === lm.map ? '' : `, toward ${this.maps[lm.map].title}`}`, `${exitWord}: ${title}`);
+  }
+
+  /** One short pointer line at the top-left of the map view while something is pinned. */
+  draw_pin_hint(vw: number, y: number): void {
+    const r = this.pin_route();
+    if (!r || this.show_minimap) return;
+    const text = isCompact(this.scr.w) ? ` ${r.arrow} ${r.landmark.glyph} ${r.brief} ` : ` ${r.arrow} ${r.landmark.glyph} ${r.landmark.name}: ${r.text} `;
+    const clip = text.length > vw - 2 ? text.slice(0, Math.max(0, vw - 3)) + '…' : text;
+    this.scr.put(1, y, clip, '0E', '00');
+    for (let i = 0; i < clip.length; i++) this.scr.tag(1 + i, y, { t: 'ui', k: 'hud:pin' });
+  }
+
+  /** Task 33: the labeled Valley Map. Arrows choose a landmark, Enter pins it, Esc closes. */
+  async valley_map(): Promise<void> {
+    let sel = Math.max(0, VALLEY_LANDMARKS.findIndex((l) => l.id === this.map_pin));
+    if (!this.map_pin) {
+      const here = VALLEY_LANDMARKS.findIndex((l) => l.map === this.mapname);
+      if (here >= 0) sel = here;
+    }
+    const n = VALLEY_LANDMARKS.length;
+    const regionStep = (dir: 1 | -1): number => {
+      const cur = VALLEY_LANDMARKS[sel].map;
+      for (let i = 1; i <= n; i++) {
+        const j = (((sel + dir * i) % n) + n) % n;
+        if (VALLEY_LANDMARKS[j].map !== cur) {
+          // land on the first landmark of that region
+          let k = j;
+          while (VALLEY_LANDMARKS[(k - 1 + n) % n].map === VALLEY_LANDMARKS[j].map && (k - 1 + n) % n !== j) k = (k - 1 + n) % n;
+          return k;
+        }
+      }
+      return sel;
+    };
+    while (true) {
+      const k = await this.modal(() => this.draw_valley(sel));
+      if (['left', 'a', 'h', 'btab'].includes(k)) sel = (sel - 1 + n) % n;
+      else if (['right', 'd', 'l', 'tab'].includes(k)) sel = (sel + 1) % n;
+      else if (['up', 'w', 'k'].includes(k)) sel = regionStep(-1);
+      else if (['down', 's', 'j'].includes(k)) sel = regionStep(1);
+      else if (OK_KEYS.has(k)) {
+        const lm = VALLEY_LANDMARKS[sel];
+        this.map_pin = this.map_pin === lm.id ? null : lm.id;
+        this.msg(this.map_pin ? `Pinned ${lm.name} on your map.` : 'Map pin cleared.', '0E');
+      } else if (CANCEL_KEYS.has(k) || k === 'g' || k === 'G') return;
+    }
+  }
+
+  /** Draw the Valley Map overlay: region boxes in their real arrangement, then the legend. */
+  draw_valley(sel: number): void {
+    const s = this.scr;
+    const [W, H] = [s.w, s.h];
+    s.box(0, 0, W, H, '0D', '00', 'Valley Map');
+    const cw = Math.min(24, Math.floor((W - 2) / 4));
+    const bw = cw - 1;
+    const iw = bw - 2;
+    const ox = 1 + Math.floor((W - 2 - cw * 4 + 1) / 2);
+    const oy = 1;
+    const at = (name: string): [number, number] => {
+      const [c, r] = VALLEY_GRID[name];
+      return [ox + c * cw, oy + r * 4];
+    };
+    const picked = VALLEY_LANDMARKS[sel];
+    const curRegion = OUTDOOR_MAPS.includes(this.mapname) ? this.mapname : null;
+    // connectors first, so boxes sit on top of them
+    const links = this.valley_links();
+    for (const [a, bs] of Object.entries(links)) {
+      for (const b of bs) {
+        if (!(a in VALLEY_GRID) || !(b in VALLEY_GRID) || a > b) continue;
+        const [[ax, ay], [bx2, by2]] = [at(a), at(b)];
+        if (ay === by2) s.put(Math.max(ax, bx2) - 1, ay + 1, '═', '03');
+        else s.put(ax + Math.floor(bw / 2), Math.max(ay, by2) - 1, '║', '03');
+      }
+    }
+    for (const name of Object.keys(VALLEY_GRID)) {
+      const m = this.maps[name];
+      if (!m) continue;
+      const [x, y] = at(name);
+      const title = m.title.length <= iw ? m.title : (VALLEY_SHORT[name] || name).slice(0, iw);
+      const hot = name === picked.map;
+      s.box(x, y, bw, 3, hot ? '0D' : name === curRegion ? '0C' : '03', '00');
+      s.put(x + 1, y, title, hot ? '07' : '04', '00', hot);
+      const used = new Set<number>();
+      const place = (wx: number) => {
+        let gx = Math.round((wx * (iw - 1)) / Math.max(1, m.w - 1));
+        for (let d = 0; d < iw; d++) {
+          for (const c of [gx + d, gx - d]) {
+            if (c >= 0 && c < iw && !used.has(c)) {
+              used.add(c);
+              return c;
+            }
+          }
+        }
+        return null;
+      };
+      for (const lm of VALLEY_LANDMARKS.filter((l) => l.map === name)) {
+        const gx = place(lm.x);
+        if (gx === null) continue;
+        const isSel = lm === picked;
+        const pinned = lm.id === this.map_pin;
+        s.put(x + 1 + gx, y + 1, lm.glyph, isSel ? '00' : pinned ? '0E' : '0A', isSel ? '0D' : '00', isSel || pinned);
+      }
+      if (name === curRegion) {
+        const gx = place(this.px);
+        if (gx !== null) s.put(x + 1 + gx, y + 1, '@', '0D', '00', true);
+      }
+    }
+    // legend
+    const lines: [string, string][] = [];
+    const region = this.maps[picked.map]?.title || picked.map;
+    lines.push([`> ${picked.glyph} ${picked.name}, ${region}${picked.id === this.map_pin ? '  [pinned]' : ''}`, '07']);
+    if (picked.bid && HOURS[picked.bid] && picked.bid !== 'blacksmith') {
+      lines.push([`  ${this.shop_status(picked.bid).text}`, '04']);
+    }
+    const f = this.forge_status();
+    lines.push([`  ⚒ Forge ${f.text}`, f.open ? '0B' : '08']);
+    const r = this.pin_route();
+    if (r) lines.push([`  Pin: ${r.landmark.name}: ${r.text}`, '0E']);
+    lines.push([`  ${VALLEY_LANDMARKS.filter((l) => l.map === picked.map).map((l) => `${l.glyph} ${l.name}`).join('  ')}`, '05']);
+    const pinWord = picked.id === this.map_pin ? 'unpin' : 'pin';
+    const hintText = isCompact(W) ? `<> pick  ^v region  Enter ${pinWord}  Esc` : `Left/Right landmark  Up/Down region  Enter ${pinWord}  Esc close`;
+    const top = oy + 4 * 4 - 1;
+    const room = H - 1 - top;
+    const wrap = (items: [string, string][]) => items.flatMap(([text, col]) => wrapLines([text], W - 4).map((ln): [string, string] => [ln, col]));
+    // the key hint always shows in full; the body drops its later lines (the region list first) when space runs out
+    const hint = wrap([[`  ${hintText}`, '03']]);
+    const body = wrap(lines).slice(0, Math.max(0, room - hint.length));
+    [...body, ...hint].forEach(([text, col], i) => s.put(2, top + i, text.slice(0, W - 4), col));
+  }
+
   draw_minimap(vw: number, vh: number): void {
     if (vw < 30 || vh < 12) return;
     const s = this.scr;
@@ -5426,7 +5651,8 @@ export class Game {
     const bx = vw - gw - 3;
     const by = 2;
     if (bx < 0 || by + gh + 2 > s.h) return;
-    s.box(bx, by, gw + 2, gh + 2, '0C', '00', 'Map', '07', { accent: '0C' });
+    const route = this.pin_route();
+    s.box(bx, by, gw + 2, gh + 2, '0C', '00', route ? `Map ${route.arrow} ${route.short}`.slice(0, gw) : 'Map', '07', { accent: '0C' });
     // Keep the map's aspect ratio and include its outer edges. Small interiors stay
     // 1:1; large outdoor maps sample the full extent without dropping the last row/column.
     const drawW = Math.min(gw, m.w);
@@ -5481,6 +5707,10 @@ export class Game {
     };
     for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
       if (NPCS[n]?.where?.[0] === this.mapname) mark(x, y, 'o', '0C', 'minimap:npc');
+    }
+    if (route?.cell) {
+      const [ex, ey] = route.cell;
+      mark(ex, ey, route.arrow, '0E', 'minimap:pin');
     }
     mark(this.px, this.py, '@', '0D', 'minimap:player');
   }
