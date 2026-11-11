@@ -32,6 +32,11 @@
   --base0D: #0066ff;
   --base0E: #cc00ff;
   --base0F: #3300ff;
+  /* Farm chrome: weathered wood from the dark end of the Isotope orange ramp, the same three
+     values the canvas HUD snaps its fence rails, posts and sign board to. */
+  --fence-rail: #6f4013;
+  --fence-post: #9a5a11;
+  --sign-board: #3d2310;
 }
 
 html, body {
@@ -67,7 +72,8 @@ html, body {
     env(safe-area-inset-left, 0px);
 }
 
-/* Contour Farm controls: sharp edges and one cyan primary action. */
+/* Contour Farm controls: sharp edges and one cyan primary action. The footer continues the
+   HUD's fence: a wooden rail along the top, and fence posts between the control groups. */
 .game-toolbar {
   position: relative; /* the game menu hangs above it */
   display: flex;
@@ -75,7 +81,7 @@ html, body {
   align-items: center;
   gap: 4px 10px;
   padding: 10px 16px;
-  border-top: 1px solid var(--base01);
+  border-top: 1px solid var(--fence-rail);
   background: var(--base00);
   font-size: 16px;
   line-height: 1.4;
@@ -94,7 +100,8 @@ html, body {
 .game-control-primary:hover { background: var(--base07); color: var(--base00); }
 .game-shortcut { color: var(--base07); }
 .game-control-primary .game-shortcut { color: inherit; }
-.game-sep { align-self: stretch; width: 1px; margin: 6px 4px; background: var(--base03); }
+.game-sep { align-self: center; margin: 0 4px; color: var(--fence-post); line-height: 1; user-select: none; }
+.game-sep::before { content: "╪"; content: "╪" / ""; } /* decorative: no text alternative */
 .game-sep-end { margin-left: auto; } /* the menu sits at the right end, as in the reference */
 .game-menu-btn { color: var(--base04); }
 .game-menu-btn[aria-expanded="true"] { color: var(--base0C); }
