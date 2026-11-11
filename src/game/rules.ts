@@ -1,7 +1,7 @@
 // Pure game rules and mechanics for Harvest Moon: Friends of Mineral Town (ASCII Edition)
+import { fmt_hour } from './constants';
 
 import type { CatchEntry, CatchTable } from './constants';
-import { fmt_hour } from './constants';
 
 export const TOOL_LEVEL_NAMES = [
   'Basic',
@@ -398,6 +398,68 @@ export function rollStoneSkips(rand: () => number, calm: boolean = true): number
   let n = 1;
   while (n < MAX_STONE_SKIPS && rand() < keep) n++;
   return n;
+}
+
+/**
+ * Which Friday scene the inn holds this week. Scenes you have not seen come first, starting
+ * from this week's place in the rotation, so a missed evening comes round again; once all
+ * have been seen the rotation simply repeats.
+ */
+export function innSceneFor(week: number, ids: string[], seen: string[]): string | null {
+  const n = ids.length;
+  if (!n) return null;
+  const start = ((week % n) + n) % n;
+  for (let i = 0; i < n; i++) {
+    const id = ids[(start + i) % n];
+    if (!seen.includes(id)) return id;
+  }
+  return ids[start];
+}
+
+/** Whether you win the inn's card game on a given day (deterministic, about two weeks in three). */
+export function innCardsWin(absday: number): boolean {
+  return ((absday * 2654435761) >>> 0) % 3 !== 0;
+}
+
+/** One watering-can step: the level it reaches, what Saibara charges, and what it waters. */
+export interface CanStep {
+  level: number;
+  cost: number;
+  ore: string;
+  tiles: number;
+  cap: number;
+}
+
+/**
+ * Gray's advice on the watering can (task 04). From the current level, `next` is the upgrade
+ * to save for now and `big` is the later Saibara upgrade that adds the most tiles per pour.
+ * Null once the can is Mystrile or beyond: Saibara's ore upgrades stop there.
+ */
+export function canUpgradeAdvice(
+  level: number,
+  upgrade: Record<number, [number, string]>,
+  caps: number[]
+): { now: CanStep; next: CanStep; big: CanStep | null } | null {
+  const step = (lvl: number): CanStep => ({
+    level: lvl,
+    cost: upgrade[lvl]?.[0] ?? 0,
+    ore: upgrade[lvl]?.[1] ?? '',
+    tiles: getToolArea('Watering Can', lvl, 0, 0, [0, 1]).length,
+    cap: caps[lvl] ?? 0,
+  });
+  const lvl = Math.max(0, Math.floor(level));
+  if (lvl >= 4) return null;
+  const next = step(lvl + 1);
+  let big: CanStep | null = null;
+  let bestGain = 0;
+  for (let l = lvl + 2; l <= 4; l++) {
+    const gain = step(l).tiles - step(l - 1).tiles;
+    if (gain > bestGain) {
+      bestGain = gain;
+      big = step(l);
+    }
+  }
+  return { now: step(lvl), next, big };
 }
 
 /**

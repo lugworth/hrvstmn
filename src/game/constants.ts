@@ -3308,6 +3308,78 @@ export const LIGHTHOUSE_LOG: string[] = [
 export const TIDE_POOL_TEXT =
   "A tide pool among the rocks. Tiny crabs scuttle under the weed, and a red anemone opens and closes like a slow heartbeat.";
 
+/** A Friday-evening scene at Doug's Inn (task 01). */
+export interface InnScene {
+  id: string;
+  title: string;
+  /** Villagers at the table; listening or joining raises friendship with each. */
+  cast: string[];
+  /** What you hear if you only listen. */
+  listen: [string, string][];
+  /** The menu label for taking part. */
+  join: string;
+  /** What happens when you take part. */
+  joined: [string, string][];
+}
+
+/** Friday evenings run 6 PM - 10 PM; the inn picks one scene per Friday. */
+export const INN_EVENING_DAY = 4; // WEEKDAYS index: Fri
+export const INN_EVENING_HOURS: [number, number] = [18, 22];
+export const INN_LISTEN_FRIEND = 1;
+export const INN_JOIN_FRIEND = 3;
+export const INN_CARDS_POT = 100;
+
+export const INN_SCENES: InnScene[] = [
+  {
+    id: 'cards',
+    title: 'Cards at the corner table',
+    cast: ['Doug', 'Gotz', 'Duke'],
+    listen: [
+      ['Gotz', 'Three of a kind. Read it and weep, Doug.'],
+      ['Doug', "That's the third Friday running. I'm checking that deck for sawdust."],
+      ['Duke', 'Deal me in again. A winemaker knows a hand improves with patience.'],
+    ],
+    join: 'Take the empty chair',
+    joined: [
+      ['Doug', 'Pull up a chair. House rules: no betting the farm, just the pot.'],
+    ],
+  },
+  {
+    id: 'recipes',
+    title: 'Recipe swap by the stove',
+    cast: ['Ann', 'Manna', 'Lillia'],
+    listen: [
+      ['Manna', 'A spoon of grape must in the stew. Duke swears he can taste it, he cannot.'],
+      ['Lillia', 'I fold a little honey into my bread dough. The crust browns like autumn leaves.'],
+      ['Ann', "Dad says recipes are for writing down. Mine are for changing every time."],
+    ],
+    join: 'Trade a recipe from the farm',
+    joined: [
+      ['Ann', 'Ooh, roasted with the skins on? I am trying that tomorrow. Here, take a plate of mine.'],
+    ],
+  },
+  {
+    id: 'story',
+    title: "Barley's harvest story",
+    cast: ['Barley', 'Saibara'],
+    listen: [
+      ['Barley', 'The year the valley flooded, we carried the seed sacks up to the mine road on our backs.'],
+      ['Saibara', 'Hmph. And I forged the hinges for the new barn doors that winter. Still swinging.'],
+      ['Barley', 'Every field you see started with somebody stubborn. Remember that.'],
+    ],
+    join: 'Ask what the valley was like',
+    joined: [
+      ['Barley', 'Before the town road, the only way in was the river trail. My father fished the bend every dawn.'],
+      ['Saibara', 'The old folk said the deep mine floors were warmer then. Bring me what you find down there.'],
+    ],
+  },
+];
+
+/** Task 04: Gray's two-chapter request. Chapter one asks for Spring Mine copper. */
+export const GRAY_COPPER_QTY = 3;
+export const GRAY_COPPER_REWARD = 300;
+export const GRAY_QUEST_FRIEND = 5;
+
 /** Task 33: the labeled Valley Map. Where each outdoor region sits on the schematic grid. */
 export const VALLEY_GRID: Record<string, [number, number]> = {
   ridge: [2, 0],
