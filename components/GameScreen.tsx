@@ -124,6 +124,8 @@ export default function GameScreen() {
   const reducedMotionRef = useRef(false);
   const [hires, setHiresState] = useState(true);
   const hiresRef = useRef(true);
+  const [crt, setCrtState] = useState(false);
+  const crtRef = useRef(false);
   const [paletteMode, setPaletteModeState] = useState<PaletteMode>('mono');
   const paletteModeRef = useRef<PaletteMode>('mono');
   const [haptics, setHapticsState] = useState(true);
@@ -323,6 +325,12 @@ export default function GameScreen() {
     }
   }, []);
 
+  const toggleCrt = useCallback(() => {
+    // Screen.setCrt -> onCrtChange (set up with the screen) updates the checkbox and storage
+    screenRef.current?.setCrt(!crtRef.current);
+    screenRef.current?.onRender?.();
+  }, []);
+
   const selectPalette = useCallback((mode: PaletteMode) => {
     paletteModeRef.current = mode;
     setPaletteModeState(mode);
@@ -485,6 +493,7 @@ export default function GameScreen() {
             run: () => selectPalette('isotope'),
           },
           { id: 'detail', label: 'High-res detail', kind: 'checkbox', checked: hires, run: toggleHires },
+          { id: 'crt', label: 'CRT scanlines', kind: 'checkbox', checked: crt, run: toggleCrt },
           { id: 'motion', label: 'Motion', kind: 'checkbox', checked: !reducedMotion, run: toggleMotion },
           ...(isTouch
             ? [{ id: 'buzz', label: 'Haptics', kind: 'checkbox' as const, checked: haptics, run: toggleHaptics }]
@@ -552,6 +561,24 @@ export default function GameScreen() {
       setHiresState(next);
       try {
         window.localStorage.setItem('hrvstmn-hires', next ? 'on' : 'off');
+      } catch {
+        // storage unavailable; the choice still applies this session
+      }
+    };
+    let crtOn = false;
+    try {
+      crtOn = window.localStorage.getItem('hrvstmn-crt') === 'on';
+    } catch {
+      crtOn = false;
+    }
+    screen.crt = crtOn;
+    crtRef.current = crtOn;
+    setCrtState(crtOn);
+    screen.onCrtChange = (next) => {
+      crtRef.current = next;
+      setCrtState(next);
+      try {
+        window.localStorage.setItem('hrvstmn-crt', next ? 'on' : 'off');
       } catch {
         // storage unavailable; the choice still applies this session
       }
@@ -650,14 +677,15 @@ export default function GameScreen() {
         lastSig = '';
       }
       const frame = computeFrame(screen, screen.reducedMotion ? 0 : performance.now() / 1000);
-      const prefix = `${screen.hires ? 'h' : 'p'}:${screen.paletteMode}:`;
+      // mode changes (detail, palette, CRT) force a full repaint
+      const prefix = `${screen.hires ? 'h' : 'p'}:${screen.paletteMode}:${screen.crt ? 'c' : ''}:`;
       const sig = `${prefix}${frameSignature(frame)}`;
       if (sig === lastSig) return;
       const modeChanged = !lastSig.startsWith(prefix);
       const dirty = frameDirtyRect(modeChanged ? null : prevFrame, frame);
       if (prevFrame && !dirty) return;
       lastSig = sig;
-      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1, hires: screen.hires }, dirty ?? undefined);
+      drawFrame(ctx, frame, { cw, ch, fontPx, font: FONT, dpr: window.devicePixelRatio || 1, hires: screen.hires, crt: screen.crt }, dirty ?? undefined);
       prevFrame = frame;
     };
 

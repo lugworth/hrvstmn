@@ -1,10 +1,12 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { ITEMS } from './constants';
 import {
   innSceneFor,
   innCardsWin,
   canUpgradeAdvice,
   nextRegion,
+  nextRegions,
   compassWord,
   shopStatus,
   absdayLabel,
@@ -19,6 +21,8 @@ import {
   getMilkQuality,
   getWoolQuality,
   convertWithMaker,
+  makerBatch,
+  MAKER_INPUTS,
   rollSpringMineDrop,
   rollLakeMineDrop,
   checkSecretCropUnlock,
@@ -100,6 +104,28 @@ describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
     assert.equal(calculateGiftPoints('love', false, false), 8);
     assert.equal(calculateGiftPoints('love', true, false), 40); // 5x on birthday
     assert.equal(calculateGiftPoints('love', true, true), 50); // 5x * 1.25 wrapped
+  });
+
+  test('Maker batches cover every tier and raise value at each step', () => {
+    assert.equal(convertWithMaker('Milk'), null, 'shop milk must not become cheese');
+    assert.deepEqual(makerBatch('Cheese Maker', { 'Small Milk': 2, 'P Milk': 1, Milk: 9, Egg: 4 }), [
+      { input: 'P Milk', output: 'P Cheese', qty: 1 },
+      { input: 'Small Milk', output: 'Small Cheese', qty: 2 },
+    ]);
+    for (const [maker, inputs] of Object.entries(MAKER_INPUTS)) {
+      let lastIn = Infinity;
+      let lastOut = Infinity;
+      for (const input of inputs) {
+        const res = convertWithMaker(input);
+        assert.equal(res?.maker, maker, input);
+        const pin = ITEMS[input][0] as number;
+        const pout = ITEMS[res!.output][0] as number;
+        assert.ok(pout > pin, `${res!.output} should be worth more than ${input}`);
+        assert.ok(pin <= lastIn && pout <= lastOut, `${input} should not out-sell a better tier`);
+        lastIn = pin;
+        lastOut = pout;
+      }
+    }
   });
 
   test('Livestock quality grades and Maker conversions', () => {
@@ -254,6 +280,15 @@ describe('valley map rules (task 33)', () => {
     assert.equal(nextRegion(links, 'town', 'ridge'), 'mountain');
     assert.equal(nextRegion(links, 'town', 'town'), null);
     assert.equal(nextRegion({ a: [] }, 'a', 'b'), null);
+  });
+  test('every neighbour that starts a shortest walk is offered, so callers can break ties', () => {
+    const gated = { ...links, woods: ['farm', 'beach'], beach: ['town', 'point', 'woods'] };
+    assert.deepEqual(nextRegions(gated, 'woods', 'town'), ['beach', 'farm']);
+    assert.deepEqual(nextRegions(gated, 'woods', 'point'), ['beach']);
+    assert.deepEqual(nextRegions(gated, 'town', 'woods'), ['beach', 'farm']);
+    assert.deepEqual(nextRegions(links, 'woods', 'point'), ['farm']);
+    assert.deepEqual(nextRegions(links, 'town', 'town'), []);
+    assert.deepEqual(nextRegions({ a: [] }, 'a', 'b'), []);
   });
   test('compass words', () => {
     assert.equal(compassWord(-5, 0), 'west');

@@ -396,6 +396,34 @@ export const THEMES: Theme[] = [
   },
 ];
 
+/**
+ * Seasonal palette theme, blending smoothly toward the next season during the final
+ * three days of a season (days 28..30). Days 1..27 (and undefined day) return the exact
+ * season theme.
+ */
+export function themeFor(season: number, day?: number): Theme {
+  const s = ((season % 4) + 4) % 4;
+  const cur = THEMES[s];
+  if (!day || day < 28) return cur;
+  const next = THEMES[(s + 1) % 4];
+  const k = Math.min(0.6, Math.max(0, ((day - 27) / 4) * 0.72));
+  return {
+    ...cur,
+    grassBg: mix(cur.grassBg, next.grassBg, k),
+    grassBg2: mix(cur.grassBg2, next.grassBg2, k),
+    grassDetail: mix(cur.grassDetail, next.grassDetail, k),
+    tuft: mix(cur.tuft, next.tuft, k),
+    trees: cur.trees.map((c, i) => mix(c, next.trees[i % next.trees.length], k)),
+    treeBg: mix(cur.treeBg, next.treeBg, k),
+    soilBg: mix(cur.soilBg, next.soilBg, k),
+    soilDot: mix(cur.soilDot, next.soilDot, k),
+    weed: mix(cur.weed, next.weed, k),
+    waterBg: mix(cur.waterBg, next.waterBg, k),
+    waterBg2: mix(cur.waterBg2, next.waterBg2, k),
+    waterFg: mix(cur.waterFg, next.waterFg, k),
+  };
+}
+
 // ---------------------------------------------------------------- lighting
 
 export type Sky = {
@@ -1251,7 +1279,7 @@ function styleMinimapCell(k: string, t: number): OutCell {
  * @param t seconds, used for animation (water, rain, snow, fireflies)
  */
 export function computeFrame(
-  scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'> & Partial<Pick<Screen, 'scene' | 'boxes' | 'paletteMode'>>,
+  scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'> & Partial<Pick<Screen, 'scene' | 'boxes' | 'paletteMode' | 'reducedMotion'>>,
   t: number,
 ): OutCell[][] {
   const { buf, tags, ctx } = scr;
@@ -1260,10 +1288,10 @@ export function computeFrame(
   const H = buf.length;
   const W = H ? buf[0].length : 0;
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
-  const motion = !ctx?.reducedMotion;
+  const motion = !(ctx?.reducedMotion ?? scr.reducedMotion);
   const skyNow = ctx ? skyFor(ctx) : null;
   // with reduced motion every tile animation (sway, ripples, twinkles) holds its first frame
-  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? ''), map: ctx?.mapName ?? '' };
+  const F: Frame = { buf, tags, theme: themeFor(season, ctx?.day), t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? ''), map: ctx?.mapName ?? '' };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -1383,7 +1411,7 @@ export function computeFrame(
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) out[y][x].ui = boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h); // prompts stay plain text
       }
-      titleScene(out, buf, tags, boxes, t, W, H);
+      titleScene(out, buf, tags, boxes, motion ? t : 0, W, H);
       if (palette !== 'isotope') {
         monochrome(out, boxes, palette === 'duotone' ? { warm: 0, cool: 1, light: null, tags, base: COOL_TONE } : undefined);
       }
@@ -1515,12 +1543,13 @@ export function computeFrame(
     }
   }
 
-  // ---- chimney smoke, butterflies, falling leaves, wildlife, water life
+  // ---- chimney smoke, butterflies, falling leaves, wildlife, water life, hot spring steam
   if (outdoor && motion) {
     chimneys(out, tags, v, t, W, H, ctx.weather);
     critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
     wildlife(out, tags, v, t, season, ctx.weather, ctx.mapName, sky.amb);
   }
+  if (motion && t > 0) hotSpringSteam(out, tags, v, t, W, H);
   if (outdoor) waterLife(out, tags, v, season, SEA_MAPS.has(ctx.mapName));
   if (outdoor && (ctx.weather === 'Rain' || ctx.weather === 'Typhoon')) {
     // everything looks wet and a touch darker in the rain
@@ -2207,6 +2236,60 @@ function wildlife(
   }
 }
 
+/** Rising vapour wisps over hot springs and indoor baths, plus warm embers above lit hearths. */
+function hotSpringSteam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], t: number, W: number, H: number) {
+  const step = Math.floor(t * 2.5);
+  for (let y = v.y + 1; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tg = tags[y][x];
+      if (!tg) continue;
+      const wx = tg.wx ?? x;
+      const wy = tg.wy ?? y;
+      if (tg.t === 'spring' || tg.t === 'bath') {
+        for (let k = 1; k <= 2; k++) {
+          const yy = y - k;
+          if (yy < v.y) break;
+          const drift = k === 2 ? Math.round(Math.sin(t * 1.4 + wx * 0.9) * 0.65) : 0;
+          const xx = x + drift;
+          if (xx < v.x || xx >= v.x + v.w || xx >= W) continue;
+          const up = tags[yy]?.[xx];
+          if (!up || up.t === 'ui' || up.ent) continue;
+          if (hash(wx + k * 7, wy + step, 251) > (k === 1 ? 0.52 : 0.34)) continue;
+          const o = out[yy][xx];
+          out[yy][xx] = {
+            ...o,
+            ch: k === 1 ? '°' : '·',
+            fg: mix('#dceeff', o.bg, k === 1 ? 0.22 : 0.45),
+            bold: k === 1,
+            glow: undefined,
+            plain: true,
+            seed: undefined,
+          };
+        }
+      } else if (tg.t === 'fireplace') {
+        const yy = y - 1;
+        if (yy < v.y) continue;
+        const up = tags[yy]?.[x];
+        if (!up || up.t === 'ui' || up.ent) continue;
+        if (hash(wx, wy + Math.floor(t * 3), 252) < 0.48) {
+          const o = out[yy][x];
+          out[yy][x] = {
+            ...o,
+            ch: '·',
+            fg: '#ff9900',
+            bold: true,
+            glow: '#ff7a30',
+            glowR: 4,
+            accent: true,
+            plain: true,
+            seed: undefined,
+          };
+        }
+      }
+    }
+  }
+}
+
 /** Night-sky backdrop, hills and a gradient logo for the title screen. */
 function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][], boxes: Screen['boxes'], t: number, W: number, H: number) {
   const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
@@ -2249,6 +2332,36 @@ function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][],
         }
       } else if (hillNear && fromBottom === Math.floor(near(x)) - 1 && hash(x, 0, 8) < 0.05) {
         out[y][x] = { ch: '▪', fg: '#ffd27a', bg, bold: true, glow: '#ffb040', glowR: 6, accent: true };
+      }
+    }
+  }
+  // Periodic shooting star streaking across the upper night sky
+  if (t > 0 && W >= 20 && H >= 8) {
+    const period = 6;
+    const p = (t % period) / 1.2;
+    if (p < 1) {
+      const cycle = Math.floor(t / period);
+      const y0 = 1 + Math.floor(hash(cycle, 1, 260) * Math.max(1, Math.floor(H * 0.25)));
+      const x0 = Math.floor(W * (0.18 + hash(cycle, 2, 261) * 0.42));
+      const span = Math.max(6, Math.floor(W * 0.26));
+      const hx = Math.round(x0 + p * span);
+      const hy = y0 + Math.floor(p * 2);
+      for (let s = 0; s < 3; s++) {
+        const sx = hx - s;
+        const sy = hy - (s === 2 ? 1 : 0);
+        if (sx < 0 || sx >= W || sy < 0 || sy >= Math.floor(H * 0.5)) continue;
+        if (inBox(sx, sy) || tags[sy][sx]?.k === 'logo' || buf[sy][sx][0] !== ' ' || (sx === moonX && sy === 2)) continue;
+        const o = out[sy][sx];
+        out[sy][sx] = {
+          ...o,
+          ch: s === 0 ? '★' : s === 1 ? '─' : '·',
+          fg: s === 0 ? '#ffffff' : '#9ab8ff',
+          bold: s === 0,
+          glow: s === 0 ? '#cfe8ff' : undefined,
+          glowR: s === 0 ? 6 : undefined,
+          accent: true,
+          plain: true,
+        };
       }
     }
   }
@@ -2478,6 +2591,12 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
         } else if (o.bg === '#000000') {
           o.bg = '#0e0e16';
         }
+        if (o.bg === '#0066ff' && o.ch === '>') {
+          o.ch = '▸';
+          o.fg = '#ffffff';
+          o.glow = '#00ffff';
+          o.glowR = 4;
+        }
         if (accentHex && y === b.y && '─╭╮'.includes(o.ch)) {
           o.fg = mix(o.fg, accentHex, 0.65);
         } else if (b.kind === 'tv' && (y === b.y || y === b.y + b.h - 1 || x === b.x || x === b.x + b.w - 1) && '─│╭╮╰╯'.includes(o.ch)) {
@@ -2498,7 +2617,7 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
 
 // ---------------------------------------------------------------- drawing
 
-export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number; hires?: boolean };
+export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number; hires?: boolean; crt?: boolean };
 
 export type DirtyRect = { x0: number; y0: number; x1: number; y1: number };
 
@@ -2878,7 +2997,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       }
       if (o.glow) {
         g.shadowColor = o.glow;
-        g.shadowBlur = o.glowR ?? 6;
+        g.shadowBlur = (o.glowR ?? 6) * (m.crt ? 1.4 : 1);
         glowOn = true;
       } else if (glowOn) {
         g.shadowBlur = 0;
@@ -2888,6 +3007,9 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       g.fillText(o.ch, px, py + ch / 2 + 1);
     }
   }
+  // a glyph's glow must not leak into the passes below (small glyphs, overlays, CRT scanlines)
+  g.shadowBlur = 0;
+  glowOn = false;
   // batched small glyphs (high-res textures and clusters)
   if (ms.length) {
     g.shadowBlur = 0;
@@ -2951,6 +3073,21 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fillRect(X + Wc - aw, Y + Hc - tk, aw, tk);
       }
     }
+  }
+  if (m.crt && X1 > X0 && Y1 > Y0) {
+    g.shadowBlur = 0;
+    // cover exactly the pixels the background pass just repainted, including its 1px overlap
+    // past the rect's right and bottom edges, so partial repaints leave no unlined seams
+    const pxX = Math.floor(X0 * cw);
+    const pxW = Math.ceil((X1 - X0) * cw) + 1;
+    const py0 = Math.floor(Y0 * ch);
+    const py1 = Math.floor((Y1 - 1) * ch) + Math.ceil(ch) + 1;
+    g.fillStyle = '#000000';
+    g.globalAlpha = 0.22;
+    for (let sy = py0 + (py0 & 1); sy < py1; sy += 2) {
+      g.fillRect(pxX, sy, pxW, 1);
+    }
+    g.globalAlpha = 1;
   }
   g.restore();
 }

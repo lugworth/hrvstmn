@@ -3,6 +3,7 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen } from './screen';
 import { Game } from './engine';
+import { HEDGE_GATE } from './map';
 import {
   ITEMS,
   FORAGE,
@@ -1032,5 +1033,166 @@ describe('the Willow Bend footbridge (task 12)', () => {
     assert.deepEqual(c.public_works, { delivered: {}, crop: null, done_day: null, built: false });
     for (const [x, y] of footbridge_cells()) assert.equal(c.maps.river.tile(x, y), 'water');
     assert.equal(c.works_line(), 'Gotz needs 12 Lumber, 2 Copper, 3 of one farm crop');
+describe('Cedar Hollow hedge gate (task 34)', () => {
+  const sign = (g: any, map: string, xy: readonly number[]) => g.maps[map].signs[`${xy[0]},${xy[1]}`];
+  const toBeach = (g: any) => Object.values(g.maps.woods.warps).filter((w: any) => w[0] === 'beach');
+  const toWoods = (g: any) => Object.values(g.maps.beach.warps).filter((w: any) => w[0] === 'woods');
+  /** Stand at the beach latch, answer the prompt with `keys`, and lift (or not). */
+  const atLatch = async (g: any, keys: string[]) => {
+    g.warp('beach', HEDGE_GATE.beachSign[0] + 1, HEDGE_GATE.beachSign[1], [-1, 0]);
+    for (const k of keys) g.scr.pushKey(k);
+    await g.interact();
+  };
+  const isOpen = (g: any) => g.shortcuts.includes('hollow_gate') && toBeach(g).length === 3 && toWoods(g).length === 3;
+
+  test('shut at first: the hedge is closed and the way to the beach runs through the farm', () => {
+    const g = fresh();
+    const m = g.maps.woods;
+    for (let y = HEDGE_GATE.at; y < HEDGE_GATE.at + 3; y++) {
+      assert.equal(g.walkable('woods', m.w - 1, y), false, `hedge at ${y}`);
+      assert.equal(m.tile(m.w - 3, y), 'grass', 'the clearing runs up to the hedge');
+    }
+    assert.equal(toBeach(g).length, 0);
+    assert.equal(toWoods(g).length, 0);
+    assert.ok(!g.valley_links().woods.includes('beach'));
+    g.map_pin = 'pier';
+    g.warp('woods', 45, 19);
+    assert.equal(g.pin_route().text, 'north exit to Your Farm, toward Mineral Beach');
+    assert.deepEqual(g.shortcuts, []);
+  });
+
+  test('the Cedar Hollow sign only describes the gate', async () => {
+    const g = fresh();
+    const said = quiet(g);
+    g.warp('woods', HEDGE_GATE.woodsSign[0], HEDGE_GATE.woodsSign[1] + 1, [0, -1]);
+    assert.equal(g.maps.woods.tile(g.px, g.py), 'grass', 'the sign is read from the clearing');
+    await g.interact();
+    assert.match(said[0], /latched fast from the other side/);
+    assert.deepEqual(g.shortcuts, []);
+    assert.equal(toBeach(g).length, 0);
+  });
+
+  test('declining at the latch leaves the gate shut', async () => {
+    const g = fresh();
+    await atLatch(g, ['down', 'enter']);
+    assert.deepEqual(g.shortcuts, []);
+    await atLatch(g, ['esc']);
+    assert.equal(isOpen(g), false);
+    assert.ok(g.msgs.some(([t]: [string]) => t.includes('leave the old gate latched')));
+  });
+
+  test('lifting the latch opens a 3-wide gate both ways, renames both signs and plays feedback', async () => {
+    const g = fresh();
+    await atLatch(g, ['enter']);
+    assert.ok(isOpen(g));
+    assert.ok(g.msgs.some(([t]: [string]) => t.includes('short way to Cedar Hollow')));
+    assert.ok(g.fx.some((f: any) => f.map === 'beach' && f.x === 0 && f.kind === 'dust'));
+    assert.equal(sign(g, 'woods', HEDGE_GATE.woodsSign), 'Hedge gate — the short way to Mineral Beach');
+    assert.equal(sign(g, 'beach', HEDGE_GATE.beachSign), 'Hedge gate — the short way to Cedar Hollow');
+    // walk east out of the hollow onto the beach...
+    const mid = HEDGE_GATE.at + 1;
+    g.warp('woods', g.maps.woods.w - 2, mid, [1, 0]);
+    await g.move(1, 0);
+    assert.equal(g.mapname, 'beach');
+    assert.ok(g.walkable('beach', g.px, g.py), `landed on open sand at ${g.px},${g.py}`);
+    // ...and west back again
+    await g.move(-1, 0);
+    assert.equal(g.mapname, 'woods');
+    assert.ok(g.walkable('woods', g.px, g.py));
+    assert.deepEqual([g.px, g.py], [g.maps.woods.w - 2, mid]);
+    // the latch sign now just names the shortcut; reading it again does not re-open anything
+    const said = quiet(g);
+    await atLatch(g, []);
+    assert.deepEqual(said, ['Hedge gate — the short way to Cedar Hollow']);
+    assert.deepEqual(g.shortcuts, ['hollow_gate']);
+  });
+
+  test('the valley map links the hollow and the beach, and the pin uses the gate', async () => {
+    const g = fresh();
+    g.scr = new Screen(80, 24);
+    g.warp('woods', 45, 19);
+    // with an 80-column screen the region boxes are 19 wide from x=2: the woods/beach gap is x=39, row 14
+    g.draw_valley(0);
+    assert.equal(g.scr.buf[14][39][0], ' ', 'no connector while shut');
+    await atLatch(g, ['enter']);
+    assert.ok(g.valley_links().woods.includes('beach'));
+    assert.ok(g.valley_links().beach.includes('woods'));
+    g.warp('woods', 45, 19);
+    g.map_pin = 'pier';
+    const r = g.pin_route();
+    assert.equal(r.text, 'east exit to Mineral Beach');
+    assert.equal(r.cell[0], g.maps.woods.w - 1);
+    g.render();
+    g.draw_valley(0);
+    assert.equal(g.scr.buf[14][39][0], '═', 'connector between the woods and beach boxes');
+  });
+
+  test('the gate stays open across a save and reload; old saves and new farms start shut', async () => {
+    const g = fresh();
+    await atLatch(g, ['enter']);
+    g.save(2);
+    const b = new Game(new Screen(132, 30), true) as any;
+    b.load(2);
+    assert.ok(isOpen(b), 'rebuilt maps carry the gate again');
+    assert.equal(sign(b, 'beach', HEDGE_GATE.beachSign), 'Hedge gate — the short way to Cedar Hollow');
+    // an old save without the field loads shut, even into a game whose gate was open
+    const old = JSON.parse(store['hrvstmn-save-2']);
+    delete old.shortcuts;
+    b.applySaveData(old);
+    assert.deepEqual(b.shortcuts, []);
+    assert.equal(toBeach(b).length, 0);
+    assert.equal(b.walkable('woods', b.maps.woods.w - 1, HEDGE_GATE.at + 1), false);
+    assert.equal(sign(b, 'beach', HEDGE_GATE.beachSign), 'hedge_latch');
+    // unknown ids are dropped
+    b.applySaveData({ ...old, shortcuts: ['hollow_gate', 'nowhere'] });
+    assert.deepEqual(b.shortcuts, ['hollow_gate']);
+    // a new farm starts with the gate shut
+    g.new_game('Pete', 'Moon');
+    assert.equal(isOpen(g), false);
+    assert.equal(toWoods(g).length, 0);
+  });
+
+  test('with the gate open, a pin with two equally short ways points to the exit nearer you', async () => {
+    const g = fresh();
+    await atLatch(g, ['enter']);
+    assert.ok(isOpen(g));
+    // Cedar Hollow -> town is two regions either way (via the farm, or via the beach)
+    g.map_pin = 'supermarket';
+    g.warp('woods', 30, 2); // by the north entrance
+    assert.equal(g.pin_route().text, 'north exit to Your Farm, toward Mineral Town');
+    g.warp('woods', g.maps.woods.w - 3, HEDGE_GATE.at + 1); // by the gate
+    assert.equal(g.pin_route().text, 'east exit to Mineral Beach, toward Mineral Town');
+    // town -> Poultry Farm: west through the farm from the west end, south through the beach from the south gate
+    g.map_pin = 'poultry';
+    g.warp('town', 3, 6);
+    assert.equal(g.pin_route().text, 'west exit to Your Farm, toward Cedar Hollow');
+    g.warp('town', 35, 29);
+    assert.equal(g.pin_route().text, 'south exit to Mineral Beach, toward Cedar Hollow');
+  });
+
+  test('the latch prompt reads cleanly at 50 columns', async () => {
+    const g = fresh();
+    g.scr = new Screen(50, 24);
+    g.warp('beach', HEDGE_GATE.beachSign[0] + 1, HEDGE_GATE.beachSign[1], [-1, 0]);
+    let shown = '';
+    const modal = g.modal.bind(g);
+    g.modal = async (draw: () => void) => {
+      g.render();
+      draw();
+      shown = g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).join('\n');
+      return 'esc';
+    };
+    await g.hedge_latch();
+    g.modal = modal;
+    for (const line of ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.']) {
+      assert.ok(shown.includes(line), `whole line: ${line}`);
+    }
+describe('renderer context', () => {
+  test('render() hands the renderer the day of the season, for late-season blending', () => {
+    const g = fresh();
+    g.day = 29;
+    g.warp('farm', 14, 10);
+    g.render();
+    assert.equal(g.scr.ctx.day, 29);
   });
 });

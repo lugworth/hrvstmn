@@ -2635,7 +2635,7 @@ Object.assign(ITEMS, {
   "P Cheese": [750, 55, "animal"],
   "X Cheese": [1500, 90, "animal"],
   // Wool & Yarn Quality Ladder
-  "Good Wool": [400, 0, "animal"],
+  "Good Wool": [150, 0, "animal"],
   "Golden Wool": [600, 0, "animal"],
   "P Wool": [1000, 0, "animal"],
   "X Wool": [2000, 0, "animal"],

@@ -88,6 +88,8 @@ export type RenderCtx = {
   minutes: number;
   /** 0 Spring, 1 Summer, 2 Fall, 3 Winter. */
   season: number;
+  /** Day of the season (1..30) for late-season palette interpolation. */
+  day?: number;
   weather: string;
   /** 0 = dry ground, 1 = fresh rain. Persists and fades after the rain stops. */
   wetness?: number;
@@ -134,8 +136,11 @@ export class Screen {
   hires: boolean = true;
   /** Colourblind-safe state cues: ripe/ wet/ ready markers in addition to colour. */
   accessibleCues: boolean = false;
+  /** Optional CRT scanline and phosphor bloom pass over the canvas. */
+  crt: boolean = false;
   onHiresChange?: (hires: boolean) => void;
   onPaletteChange?: (mode: PaletteMode) => void;
+  onCrtChange?: (crt: boolean) => void;
   keyQueue: string[] = [];
   private keyWaiters: Array<{
     resolve: (key: string | null) => void;
@@ -190,6 +195,12 @@ export class Screen {
     if (this.paletteMode === mode) return;
     this.paletteMode = mode;
     this.onPaletteChange?.(mode);
+  }
+
+  setCrt(crt: boolean) {
+    if (this.crt === crt) return;
+    this.crt = crt;
+    this.onCrtChange?.(crt);
   }
 
   put(x: number, y: number, text: string, fg: string = '05', bg: string = '00', bold: boolean = false) {

@@ -5,16 +5,10 @@ import { COMPACT_MIN_COLS, MIN_ROWS, isCompact, fitMessages, fitText, reflowPage
 import { fencePost } from './chrome';
 import {
   GameMap,
-  build_farm,
-  build_town,
-  build_mountain,
-  build_beach,
-  build_woods,
-  build_ridge,
-  build_river,
-  build_point,
-  build_grove,
-  link_regions,
+  build_valley,
+  open_shortcut,
+  SHORTCUT_IDS,
+  HEDGE_GATE,
   build_house,
   build_interior,
   build_house_upgraded,
@@ -136,7 +130,7 @@ import {
   getEggQuality,
   getMilkQuality,
   getWoolQuality,
-  convertWithMaker,
+  makerBatch,
   rollSpringMineDrop,
   rollLakeMineDrop,
   CURSED_TOOL_FLOORS,
@@ -151,7 +145,7 @@ import {
   innSceneFor,
   innCardsWin,
   canUpgradeAdvice,
-  nextRegion,
+  nextRegions,
   compassWord,
   shopStatus,
   absdayLabel,
@@ -170,6 +164,22 @@ export interface PublicWorks {
 /** A fresh (or copied, filled-in) public works state; older saves have none. */
 export function worksState(d: Partial<PublicWorks> | null | undefined = null): PublicWorks {
   return { delivered: { ...(d?.delivered || {}) }, crop: d?.crop ?? null, done_day: d?.done_day ?? null, built: !!d?.built };
+/** [input noun, output noun, message colour] per Maker. */
+const MAKER_NOUNS: Record<string, [string, string, string]> = {
+  'Mayonnaise Maker': ['eggs', 'mayonnaise', '0A'],
+  'Cheese Maker': ['milk', 'cheese', '09'],
+  'Yarn Maker': ['wool', 'yarn', '0E'],
+};
+
+/** Total items and sell value added by a Maker batch. */
+function makerGain(steps: { input: string; output: string; qty: number }[]): [number, number] {
+  let n = 0;
+  let gain = 0;
+  for (const st of steps) {
+    n += st.qty;
+    gain += ((ITEMS[st.output]?.[0] || 0) - (ITEMS[st.input]?.[0] || 0)) * st.qty;
+  }
+  return [n, gain];
 }
 
 export interface VillagerRequest {
@@ -374,6 +384,8 @@ export class Game {
   map_pin: string | null = null;
   /** Task 12: the Willow Bend footbridge (materials delivered, chosen crop, finish day, built). */
   public_works: PublicWorks = worksState();
+  /** Task 34: shortcuts opened for good (ids from SHORTCUT_IDS, e.g. 'hollow_gate'), carved after the maps are built. */
+  shortcuts: string[] = [];
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -397,6 +409,7 @@ export class Game {
     'inn_scenes_seen', 'inn_evening_day',
     'gray_quest', 'gray_note_level',
     'map_pin', 'public_works',
+    'map_pin', 'shortcuts',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -405,19 +418,7 @@ export class Game {
     this.started = false;
     this.running = true;
     this.msgs = [];
-    this.maps = {
-      farm: build_farm(),
-      town: build_town(),
-      mountain: build_mountain(),
-      beach: build_beach(),
-      woods: build_woods(),
-      ridge: build_ridge(),
-      river: build_river(),
-      point: build_point(),
-      grove: build_grove(),
-      house: build_house(),
-    };
-    link_regions(this.maps);
+    this.maps = { ...build_valley(), house: build_house() };
     this.last = Date.now() / 1000;
     this.acc = 0.0;
     this.npc_acc = 0.0;
@@ -527,6 +528,9 @@ export class Game {
     this.map_pin = null;
     this.public_works = worksState();
     this.apply_public_works();
+    // a carved shortcut lives in the maps, so a new farm gets a fresh valley
+    if (this.shortcuts.length) Object.assign(this.maps, build_valley());
+    this.shortcuts = [];
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -772,6 +776,8 @@ export class Game {
     this.forage = { mountain: {}, beach: {}, ...(d.forage || {}) };
     this.public_works = worksState(d.public_works);
     this.apply_public_works();
+    this.shortcuts = Array.isArray(this.shortcuts) ? this.shortcuts.filter((id) => SHORTCUT_IDS.includes(id)) : [];
+    for (const id of this.shortcuts) open_shortcut(this.maps, id);
     this.prune_forage();
     this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
     this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
@@ -2023,6 +2029,10 @@ export class Game {
       await this.lighthouse_read();
       return;
     }
+    if (signId === 'hedge_latch') {
+      await this.hedge_latch();
+      return;
+    }
 
     if (tile === 'bin') {
       await this.ship();
@@ -2058,6 +2068,23 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- outer-region landmarks
+
+  /** Task 34: the latch of the old hedge gate, on the Mineral Beach side. Lifting it opens the way to Cedar Hollow for good. */
+  async hedge_latch(): Promise<void> {
+    // short lines, so the compact layout (44 columns of text at 50) wraps nothing mid-sentence
+    const info = ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.'];
+    if ((await this.menu('Lift the latch?', ['Yes', 'No'], 0, info)) !== 0) {
+      this.msg('You leave the old gate latched.', '08');
+      return;
+    }
+    this.shortcuts = [...this.shortcuts, 'hollow_gate'];
+    open_shortcut(this.maps, 'hollow_gate');
+    this.prune_forage();
+    const mid = HEDGE_GATE.bAt + 1;
+    this.fx_add('dust', 0, mid, 0.7);
+    this.fx_add('sparkle', 1, mid, 0.9);
+    this.msg('The latch gives with a creak and the old gate swings wide. A short way to Cedar Hollow, for good!', '0B');
+  }
 
   /** Skyline Ridge lookout: the view reads tomorrow's weather, and once a day the cold air revives you. */
   async ridge_lookout(): Promise<void> {
@@ -2698,7 +2725,7 @@ export class Game {
         'Place Egg in Incubator (3 days to hatch)',
       ];
       if (this.makers.includes('Mayonnaise Maker')) {
-        opts.push('Use Mayonnaise Maker (Egg -> Mayonnaise)');
+        opts.push(`Use Mayonnaise Maker: ${this.maker_preview('Mayonnaise Maker')}`);
       }
       opts.push('Grazing / Outdoor Bell (+Outdoor Hours)', 'Leave');
       const sel = await this.menu('Chicken Coop', opts, 0, info);
@@ -2746,17 +2773,8 @@ export class Game {
           }
         }
       } else if (act.startsWith('Use Mayonnaise Maker')) {
-        const eggItem = ['X Egg', 'P Egg', 'Golden Egg', 'High Egg', 'Good Egg', 'Egg'].find((e) => (this.inv[e] || 0) > 0);
-        if (!eggItem) {
+        if (!this.run_maker('Mayonnaise Maker')) {
           await this.say('You have no Eggs in your rucksack to put into the Mayonnaise Maker.', null);
-        } else {
-          const res = convertWithMaker(eggItem);
-          if (res) {
-            const q = this.inv[eggItem];
-            this.take(eggItem, q);
-            this.give(res.output, q);
-            this.msg(`Mayonnaise Maker produced ${q} x ${res.output}!`, '0A');
-          }
         }
       } else if (act.startsWith('Grazing')) {
         if (this.weather !== 'Sunny') {
@@ -2769,6 +2787,42 @@ export class Game {
         }
       }
     }
+  }
+
+  /** Short menu label: what a Maker would take now and how much value it adds. */
+  maker_preview(maker: string): string {
+    const steps = makerBatch(maker, this.inv);
+    const noun = MAKER_NOUNS[maker];
+    if (!steps.length) return `no ${noun[0]}`;
+    const [n, gain] = makerGain(steps);
+    return `${n} ${noun[0]}, +${gain}G`;
+  }
+
+  /**
+   * Process every quality tier a Maker accepts in one go. Returns the message, or null if nothing to do.
+   * The message stays one short line (it must fit the single desktop message row): a lone tier is
+   * named, several tiers are summarised; the per-tier result is visible in the rucksack.
+   */
+  run_maker(maker: string): string | null {
+    if (!this.makers.includes(maker)) return null;
+    const steps = makerBatch(maker, this.inv);
+    if (!steps.length) return null;
+    for (const st of steps) {
+      this.take(st.input, st.qty);
+      this.give(st.output, st.qty);
+    }
+    const [n, gain] = makerGain(steps);
+    const line =
+      steps.length === 1
+        ? `${maker} made ${n} x ${steps[0].output}! (+${gain}G)`
+        : `${maker} made ${n} ${MAKER_NOUNS[maker][1]} in ${steps.length} grades! (+${gain}G)`;
+    this.msg(line, MAKER_NOUNS[maker][2]);
+    return line;
+  }
+
+  /** Raw goods in the rucksack that an installed Maker could process right now. */
+  maker_ready_count(): number {
+    return py_sum(this.makers.map((m) => py_sum(makerBatch(m, this.inv).map((st) => st.qty))));
   }
 
   barn_cap(): number {
@@ -2802,10 +2856,10 @@ export class Game {
         ...this.animals.map((a) => this.animal_line(a)),
       ];
       if (this.makers.includes('Cheese Maker')) {
-        opts.push('Use Cheese Maker (Milk -> Cheese)');
+        opts.push(`Use Cheese Maker: ${this.maker_preview('Cheese Maker')}`);
       }
       if (this.makers.includes('Yarn Maker')) {
-        opts.push('Use Yarn Maker (Wool -> Yarn)');
+        opts.push(`Use Yarn Maker: ${this.maker_preview('Yarn Maker')}`);
       }
       opts.push('Leave');
       const sel = await this.menu('Livestock Barn', opts, 0, info);
@@ -2825,34 +2879,12 @@ export class Game {
           this.msg(`Your livestock grazed in the pasture! (Outdoor hours: ${this.outdoor_hours}h)`, '0B');
         }
       } else if (choice.startsWith('Use Cheese Maker')) {
-        const mItem = ['X Milk', 'P Milk', 'Golden Milk', 'Large Milk', 'Medium Milk', 'Small Milk', 'Milk'].find(
-          (i) => (this.inv[i] || 0) > 0
-        );
-        if (!mItem) {
-          await this.say('You have no Milk in your rucksack.', null);
-        } else {
-          const res = convertWithMaker(mItem);
-          if (res) {
-            const q = this.inv[mItem];
-            this.take(mItem, q);
-            this.give(res.output, q);
-            this.msg(`Cheese Maker produced ${q} x ${res.output}!`, '09');
-          }
+        if (!this.run_maker('Cheese Maker')) {
+          await this.say("You have no Milk from your cows in your rucksack. (Shop milk won't set.)", null);
         }
       } else if (choice.startsWith('Use Yarn Maker')) {
-        const wItem = ['X Wool', 'P Wool', 'Golden Wool', 'Large Wool', 'Good Wool', 'Wool'].find(
-          (i) => (this.inv[i] || 0) > 0
-        );
-        if (!wItem) {
+        if (!this.run_maker('Yarn Maker')) {
           await this.say('You have no Wool in your rucksack.', null);
-        } else {
-          const res = convertWithMaker(wItem);
-          if (res) {
-            const q = this.inv[wItem];
-            this.take(wItem, q);
-            this.give(res.output, q);
-            this.msg(`Yarn Maker spun ${q} x ${res.output}!`, '0E');
-          }
         }
       } else {
         const animalIdx = sel - 2;
@@ -3462,7 +3494,13 @@ export class Game {
     ];
     const sel = await this.menu(
       'Saibara — Order Maker (20,000G + 1 Adamantite)',
-      makers.map(([m]) => `${m} ${this.makers.includes(m) ? '(Built)' : ''}`)
+      makers.map(([m, req]) =>
+        this.makers.includes(m)
+          ? `${m} (Built)`
+          : `${m} ${this.house_flags.includes(req) ? '(ready to order)' : `(needs ${req})`}`
+      ),
+      0,
+      [`  Gold: ${this.gold}G   Adamantite: ${this.inv['Adamantite'] || 0}`]
     );
     if (sel === null) return;
     const [mName, req, desc] = makers[sel];
@@ -3471,7 +3509,11 @@ export class Game {
     } else if (!this.house_flags.includes(req)) {
       await this.say(`Have Gotz build the ${req} first so there's room for the ${mName}!`, 'Saibara');
     } else if (this.gold < 20000 || (this.inv['Adamantite'] || 0) < 1) {
-      await this.say('I need 20,000G and 1 Adamantite from the Spring Mine (Floor 10+).', 'Saibara');
+      const missing = [
+        this.gold < 20000 ? `${20000 - this.gold}G more` : '',
+        (this.inv['Adamantite'] || 0) < 1 ? '1 Adamantite from the Spring Mine (Floor 10+)' : '',
+      ].filter(Boolean);
+      await this.say(`It costs 20,000G and 1 Adamantite. You still need ${missing.join(' and ')}.`, 'Saibara');
     } else {
       this.gold -= 20000;
       this.take('Adamantite', 1);
@@ -3814,6 +3856,8 @@ export class Game {
     lines.push(`  Water  ${this.crop_water_count()} crop${this.crop_water_count() === 1 ? '' : 's'} still dry`);
     lines.push(`  Feed   ${this.animal_feed_count()} animal${this.animal_feed_count() === 1 ? '' : 's'} still hungry`);
     lines.push(`  Ready  ${this.ready_livestock_count()} product${this.ready_livestock_count() === 1 ? '' : 's'} to collect`);
+    const makerReady = this.maker_ready_count();
+    if (makerReady) lines.push(`  Makers ${makerReady} item${makerReady === 1 ? '' : 's'} ready to process`);
     lines.push(`  Museum ${this.museum.length}/${this.museum_total()} donated`);
     if (this.requests.length) {
       const r = this.requests[0];
@@ -5351,6 +5395,7 @@ export class Game {
       indoor: !!this.map.indoor,
       minutes: this.minutes,
       season: this.season,
+      day: this.day,
       weather: this.map.indoor ? 'Sunny' : this.weather,
       wetness: this.wetness[this.mapname] || 0,
       cues: s.accessibleCues,
@@ -5778,8 +5823,14 @@ export class Game {
       const dist = Math.abs(dx) + Math.abs(dy);
       return towards(dist <= 1 ? null : [lm.x, lm.y], lm.name, dist <= 1 ? "you're there" : `${dist} steps ${compassWord(dx, dy)}`);
     }
-    const next = nextRegion(this.valley_links(), this.mapname, lm.map);
-    if (!next) return towards(null, lm.name, 'no path from here');
+    // of the neighbours on a shortest region walk, take the one whose exit is nearest you
+    const options = nextRegions(this.valley_links(), this.mapname, lm.map);
+    if (!options.length) return towards(null, lm.name, 'no path from here');
+    const exitDist = (n: string) => {
+      const c = nearestWarp((d) => d === n);
+      return c ? Math.abs(c[0] - this.px) + Math.abs(c[1] - this.py) : Infinity;
+    };
+    const next = options.reduce((best, n) => (exitDist(n) < exitDist(best) ? n : best));
     const cell = nearestWarp((d) => d === next);
     const side = !cell ? '' : cell[0] === 0 ? 'west' : cell[0] === m.w - 1 ? 'east' : cell[1] === 0 ? 'north' : cell[1] === m.h - 1 ? 'south' : compassWord(cell[0] - this.px, cell[1] - this.py);
     const title = this.maps[next].title;

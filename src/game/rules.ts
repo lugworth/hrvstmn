@@ -254,8 +254,8 @@ export function convertWithMaker(inputItem: string): { output: string; maker: st
   }
 
   const milkMap: Record<string, string> = {
+    // Shop-bought 'Milk' (150G) is deliberately not accepted: Small Cheese sells for 300G.
     'Small Milk': 'Small Cheese',
-    'Milk': 'Small Cheese',
     'Medium Milk': 'Medium Cheese',
     'Large Milk': 'Large Cheese',
     'Golden Milk': 'Golden Cheese',
@@ -279,6 +279,30 @@ export function convertWithMaker(inputItem: string): { output: string; maker: st
   }
 
   return null;
+}
+
+/** Inputs each Maker accepts, best quality first. */
+export const MAKER_INPUTS: Record<string, string[]> = {
+  'Mayonnaise Maker': ['X Egg', 'P Egg', 'Golden Egg', 'High Egg', 'Good Egg', 'Egg'],
+  'Cheese Maker': ['X Milk', 'P Milk', 'Golden Milk', 'Large Milk', 'Medium Milk', 'Small Milk'],
+  'Yarn Maker': ['X Wool', 'P Wool', 'Golden Wool', 'Large Wool', 'Good Wool', 'Wool'],
+};
+
+export interface MakerStep {
+  input: string;
+  output: string;
+  qty: number;
+}
+
+/** Everything a Maker would process from the rucksack in one go, every quality tier at once. */
+export function makerBatch(maker: string, inv: Record<string, number>): MakerStep[] {
+  const steps: MakerStep[] = [];
+  for (const input of MAKER_INPUTS[maker] || []) {
+    const qty = inv[input] || 0;
+    const res = convertWithMaker(input);
+    if (qty > 0 && res && res.maker === maker) steps.push({ input, output: res.output, qty });
+  }
+  return steps;
 }
 
 export function rollSpringMineDrop(floor: number, allToolsBlessed: boolean, rngPct: number): string | null {
@@ -487,6 +511,30 @@ export function nextRegion(links: Record<string, string[]>, from: string, to: st
     }
   }
   return null;
+}
+
+/**
+ * Every neighbour of `from` that starts a shortest region walk to `to` (sorted). Ties are
+ * common once shortcuts open; callers choose among them, e.g. by the nearest exit.
+ */
+export function nextRegions(links: Record<string, string[]>, from: string, to: string): string[] {
+  if (from === to) return [];
+  // distances to `to` over the (two-way) region links
+  const dist: Record<string, number> = { [to]: 0 };
+  const queue = [to];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const [a, bs] of Object.entries(links)) {
+      for (const b of bs) {
+        const [u, w] = a === cur ? [a, b] : b === cur ? [b, a] : [null, null];
+        if (u === null || w === null || w in dist) continue;
+        dist[w] = dist[cur] + 1;
+        queue.push(w);
+      }
+    }
+  }
+  if (!(from in dist)) return [];
+  return [...(links[from] || [])].filter((n) => dist[n] === dist[from] - 1).sort();
 }
 
 /** 'north', 'south-east', ... for a step of (dx, dy) on the map (y grows southward). */
