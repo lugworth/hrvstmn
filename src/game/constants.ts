@@ -2517,6 +2517,7 @@ export const HELP: string[] = [
   "ACT       x / e / enter   talk, gift held item, harvest, forage,",
   "                          ship, enter doors, soak in Hot Spring",
   "TOOLS     tab / shift-tab cycle,  1-6 pick tool",
+  "SEED POUCH f / F  pin a favorite seed bag and swap back",
   "RUCKSACK  i   hold/eat/wrap items, equip Gems, blow Whistle",
   "SUMMARY   m   Ranch Summary, Memo, Sprites, Fish & Collectibles",
   "TODAY     y   daily checklist: crops, animals, shipping, events",

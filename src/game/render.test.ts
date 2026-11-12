@@ -100,6 +100,17 @@ describe('engine + renderer', () => {
     g.modal_depth = 0;
   });
 
+  test('the HUD facing summary names the target and stamina cost for the next action', () => {
+    const { g } = farm();
+    const [tx, ty] = [g.px + 1, g.py];
+    g.face = [1, 0];
+    g.tool = 'Watering Can';
+    g.crops[`${tx},${ty}`] = ['Turnip', 0];
+    const facing = g.facing_action();
+    assert.equal(facing.label, 'WATER');
+    assert.match(facing.summary, /Water turnip.*2 stamina/i);
+  });
+
   test('save snapshots restore the farm state', () => {
     const { g } = farm();
     g.gold = 4321;

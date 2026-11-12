@@ -272,6 +272,10 @@ export class Game {
   inv: Record<string, number> = {};
   held: string | null = null;
   tool: string = 'Hoe';
+  /** A quick seed bag chosen for planting convenience; press S to pin or toggle back to the previous tool. */
+  favorite_seed: string | null = null;
+  /** The tool active before the current seed-bag shortcut toggled in. */
+  previous_tool: string | null = null;
   levels: Record<string, number> = {};
   tool_exp: Record<string, number> = {};
   cursed_uses: Record<string, number> = {};
@@ -392,7 +396,7 @@ export class Game {
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
     'stamina', 'max_stamina', 'fatigue', 'power_berries', 'berry_sources', 'has_mystic_berry',
-    'inv', 'held', 'tool', 'levels', 'tool_exp', 'cursed_uses', 'cursed_days', 'cursed_blesses',
+    'inv', 'held', 'tool', 'favorite_seed', 'previous_tool', 'levels', 'tool_exp', 'cursed_uses', 'cursed_days', 'cursed_blesses',
     'water', 'upgrading', 'bin', 'basket', 'shipped_counts', 'chickens', 'chicken_aff', 'chicken_fest_won',
     'outdoor_hours', 'animals_grazing', 'incubator_days', 'fed', 'eggs', 'dog_aff', 'dog_frisbee_dist',
     'horse_aff', 'horse_grown', 'medals', 'friend', 'sprite_aff', 'sprite_jobs',
@@ -453,6 +457,8 @@ export class Game {
     this.inv = { 'Turnip Seeds': 2, 'Pedometer': 1 };
     this.held = null;
     this.tool = 'Hoe';
+    this.favorite_seed = null;
+    this.previous_tool = null;
     this.levels = Object.fromEntries(UPGRADABLE.map((t) => [t, 0]));
     this.tool_exp = Object.fromEntries(UPGRADABLE.map((t) => [t, 0]));
     this.cursed_uses = {};
@@ -925,6 +931,8 @@ export class Game {
       await this.rucksack();
     } else if (k === 'm') {
       await this.ranch_summary();
+    } else if (k === 'f' || k === 'F') {
+      this.seed_pouch_shortcut();
     } else if (k === 'H') {
       // Shift+H: plain 'h' is vim-style movement (hjkl) and is handled above
       this.whistle_horse();
@@ -1401,6 +1409,43 @@ export class Game {
     const i = tl.includes(this.tool) ? tl.indexOf(this.tool) : 0;
     const nextIdx = ((i + d) % tl.length + tl.length) % tl.length;
     this.tool = tl[nextIdx];
+  }
+
+  /** Pin a seed bag for fast planting and return to the previous tool with one action. */
+  seed_pouch_shortcut(): void {
+    const bags = this.tool_list().filter((t) => t.endsWith(' Seeds') && (this.inv[t] || 0) > 0);
+    if (!bags.length) {
+      this.msg('You do not have any seed bags ready in your rucksack.', '08');
+      return;
+    }
+
+    const isSeedBag = this.tool.endsWith(' Seeds');
+    if (isSeedBag && this.previous_tool && this.tool_list().includes(this.previous_tool)) {
+      const previous = this.previous_tool;
+      this.tool = previous;
+      this.previous_tool = null;
+      this.msg(`Back to ${previous}.`, '0C');
+      return;
+    }
+
+    if (isSeedBag) {
+      this.favorite_seed = this.tool;
+      this.msg(`Pinned ${this.tool} as your seed pouch shortcut.`, '0C');
+      return;
+    }
+
+    const bag = this.favorite_seed && (this.inv[this.favorite_seed] || 0) > 0 ? this.favorite_seed : bags[0];
+    if (this.favorite_seed && this.tool !== this.favorite_seed && this.tool_list().includes(this.favorite_seed)) {
+      this.previous_tool = this.tool;
+      this.tool = this.favorite_seed;
+      this.msg(`Seed pouch: ${this.favorite_seed}.`, '0C');
+      return;
+    }
+
+    this.favorite_seed = bag;
+    this.previous_tool = this.tool;
+    this.tool = bag;
+    this.msg(`Seed pouch: ${bag}.`, '0C');
   }
 
   area(): [number, number][] {
@@ -3953,6 +3998,55 @@ export class Game {
     return { cost, faint: res.fainted };
   }
 
+  facing_action(): { label: string; summary: string } {
+    const [tx, ty] = this.target();
+    const pKey = pkey(tx, ty);
+    const m = this.map;
+    const cost = this.action_preview().cost;
+    const stamina = cost > 0 ? ` · ${cost} stamina` : '';
+    const withTarget = (verb: string, target: string, actionLabel: string, includeCost = true) => ({
+      label: actionLabel,
+      summary: `${verb} ${target}${includeCost && cost > 0 ? stamina : ''}`,
+    });
+    if (this.typing) return { label: 'DONE', summary: 'Done' };
+    if (this.modal_depth > 0) return { label: 'OK', summary: 'OK' };
+    if (this.npc_at(tx, ty)) {
+      const name = this.npc_at(tx, ty)!;
+      return { label: 'TALK', summary: `Talk to ${NPCS[name]?.name || name}` };
+    }
+    if (pKey in m.doors || pKey in m.warps) return { label: 'ENTER', summary: 'Enter' };
+    if (this.mapname === 'farm' && ((tx === 21 && ty === 6) || (!this.riding_horse && tx === 25 && ty === 6))) {
+      return { label: 'CARE', summary: 'Care for the farm' };
+    }
+    const tile = m.tile(tx, ty);
+    if (tile === 'spring') return { label: 'SOAK', summary: 'Soak in the spring' };
+    if (tile === 'pond') return { label: this.mapname === 'point' ? 'LOOK' : 'OFFER', summary: this.mapname === 'point' ? 'Look at the water' : 'Offer to the pond' };
+    if (this.mapname === 'farm' && pKey in this.crops) {
+      const [crop, age] = this.crops[pKey];
+      const name = crop.toLowerCase();
+      if (age < CROPS[crop][2] && this.tool === 'Watering Can' && !this.wet.has(pKey)) {
+        return withTarget('Water', name, 'WATER');
+      }
+      const hasCrop = age >= CROPS[crop][2];
+      return withTarget(hasCrop ? 'Harvest' : 'Check', name, hasCrop ? 'HARVEST' : 'CHECK', false);
+    }
+    if (pKey in (this.forage[this.mapname] || {})) return { label: 'PICK', summary: 'Pick forage' };
+    const obj = this.objs[this.mapname]?.[pKey];
+    if (obj === 'dig') return this.tool === 'Hoe' ? { label: 'DIG', summary: `Dig up ${this.tool.toLowerCase()}${stamina}` } : { label: 'LOOK', summary: 'Look at the soil' };
+    if (obj === 'starrock') return this.tool === 'Hammer' ? { label: 'CRACK', summary: `Crack the starrock${stamina}` } : { label: 'LOOK', summary: 'Look at the stone' };
+    if (tile === 'bin') return { label: 'SHIP', summary: 'Ship produce' };
+    if (tile === 'bed') return { label: 'SLEEP', summary: 'Sleep' };
+    if (tile === 'tv') return { label: 'WATCH', summary: 'Watch the TV' };
+    if (tile === 'cal') return { label: 'CALENDAR', summary: 'Check the calendar' };
+    if (['counter', 'bookcase', 'kitchen', 'bath', 'shelf', 'vase', 'fireplace', 'sign', 'doghouse', 'stable', 'mill', 'trash', 'phone'].includes(tile)) {
+      return { label: 'USE', summary: 'Use the object' };
+    }
+    if (this.tool === 'Fishing Rod' && (tile === 'water' || tile === 'pond')) return withTarget('Cast', 'your line', 'CAST');
+    if (this.mapname === 'river' && tile === 'water' && this.tool !== 'Watering Can') return { label: 'SKIP', summary: 'Skip the water' };
+    const short = this.tool.endsWith(' Seeds') ? this.tool.slice(0, -6) : this.tool;
+    return withTarget('Use', short.length > 7 ? short.toLowerCase() : short.toLowerCase(), short.length > 7 ? 'USE' : `USE ${short.toUpperCase()}`);
+  }
+
   /** What the big touch button should do for the tile the player is facing. */
   context_action(): { key: 'x' | 'space' | 'enter'; label: string } {
     if (this.typing) return { key: 'enter', label: 'DONE' };
@@ -5492,6 +5586,7 @@ export class Game {
 
     const tool = this.tool;
     const preview = this.action_preview();
+    const facing = this.facing_action();
     const cost = preview.cost > 0 ? `-${preview.cost}st${preview.faint ? '!' : ''}` : '';
     pair(y++, 'EQUIPPED', cost, preview.faint ? '08' : '04');
     const idx = TOOLS.includes(tool) ? `[${TOOLS.indexOf(tool) + 1}] ` : '';
@@ -5545,6 +5640,7 @@ export class Game {
       ledger(y++, 'BARN', hungry ? `${hungry} hungry` : `${this.animals.length} fed`, hungry ? '08' : '04');
     }
     if (this.power_berries || this.has_mystic_berry) ledger(y++, 'BERRIES', `${this.power_berries}${this.has_mystic_berry ? ' + Mystic' : ''}`);
+    if (y + 1 < end) pair(y++, 'FACING', facing.summary, '0E');
     if (y + 2 < end) line(end - 1, this.map.title + (this.map.indoor ? ' / INDOORS' : ''), '04');
   }
 
@@ -6054,6 +6150,8 @@ export class Game {
     const s = this.scr;
     const t = this.tool;
     const preview = this.action_preview();
+    const action = this.context_action();
+    const facing = this.facing_action();
     let x = 1;
     const seg = (text: string, fg: string, bold = false): boolean => {
       if (x + text.length > W - 1) return false;
@@ -6077,6 +6175,10 @@ export class Game {
       seg(`x${this.inv[t] || 0}${ok ? '' : ' off-season'} `, ok ? '0B' : '08');
     }
     if (preview.cost > 0) seg(`-${preview.cost}st${preview.faint ? '!' : ''} `, preview.faint ? '08' : '03');
+    const compactFacing = facing.summary.length > 13 ? action.label : facing.summary;
+    if (compactFacing && !this.modal_depth && x + compactFacing.length + 1 < W) {
+      seg(` ${compactFacing} `, '0E');
+    }
     x += 1;
     const frac = this.stamina / this.max_stamina;
     const col = frac > 0.5 ? '0B' : frac > 0.2 ? '09' : '08';
@@ -6111,6 +6213,7 @@ export class Game {
 
     const t = this.tool;
     const preview = this.action_preview();
+    const facing = this.facing_action();
     const costTxt = preview.cost > 0 ? `-${preview.cost}st` : '';
     const icon = (iy: number, kind: 'stamina' | 'fatigue' | 'gold' | 'bin' | 'tool') => s.ctx?.icons.push({ x: x - 1, y: iy, icon: kind });
     icon(y, 'tool');
@@ -6135,6 +6238,9 @@ export class Game {
         s.put(x + 15, y, '(off-season)', '08');
       }
     }
+    y += 1;
+    s.put(x, y, 'Facing', '02');
+    s.put(x + 7, y, facing.summary.slice(0, Math.max(0, w - 7)), '0E');
     y += 1;
     if (this.upgrading) {
       s.put(x, y, `Forge: ${this.upgrading[0]}`.slice(0, w), '02');

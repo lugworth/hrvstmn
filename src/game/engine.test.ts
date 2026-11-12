@@ -78,6 +78,22 @@ describe('engine regressions', () => {
     assert.equal(g.riding_horse, true, 'H whistles the horse');
   });
 
+  test('seed pouch shortcut pins a seed bag and toggles back to the prior tool', async () => {
+    const g = fresh();
+    g.tool = 'Hoe';
+    g.inv['Turnip Seeds'] = 5;
+    g.inv['Tomato Seeds'] = 2;
+
+    await g.handle('f');
+    assert.ok(['Turnip Seeds', 'Tomato Seeds'].includes(g.tool));
+    assert.ok(['Turnip Seeds', 'Tomato Seeds'].includes(g.favorite_seed!));
+    assert.equal(g.previous_tool, 'Hoe');
+
+    await g.handle('F');
+    assert.equal(g.tool, 'Hoe');
+    assert.equal(g.previous_tool, null);
+  });
+
   test('barn animals and once-per-day flags survive save/load', () => {
     const a = fresh();
     a.animals = [{ kind: 'cow', name: 'Bess', aff: 40 }];
