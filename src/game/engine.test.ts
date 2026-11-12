@@ -832,3 +832,13 @@ describe('labeled valley map (task 33)', () => {
     assert.equal(g.forge_status().open, true);
   });
 });
+
+describe('renderer context', () => {
+  test('render() hands the renderer the day of the season, for late-season blending', () => {
+    const g = fresh();
+    g.day = 29;
+    g.warp('farm', 14, 10);
+    g.render();
+    assert.equal(g.scr.ctx.day, 29);
+  });
+});

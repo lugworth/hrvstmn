@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen, RenderCtx } from './screen';
-import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, drawFrame, frameSignature, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv, lightReach, cropFamily, type OutCell } from './enhanced';
+import { grey, windowLit, blueNoise, toneFor, shakeOffset, TIER_COLOURS, edgeGlyph, SPRITE_KEEP, spritePattern, rowAlpha, hiresLevel, effectiveHiresLevel, subAlpha, subPattern, HIRES_MIN_FONT, resetTrail, computeFrame, drawFrame, frameSignature, frameDirtyRect, skyFor, mix, hexToRgb, hash, lightning, toIsotope, isotopeRamps, rgbToHex, neon, hsv, lightReach, cropFamily, themeFor, THEMES, type OutCell } from './enhanced';
 
 const lum = (hex: string) => {
   const [r, g, b] = hexToRgb(hex);
@@ -1350,5 +1350,190 @@ describe('7 graphical upgrades', () => {
     }) as unknown as CanvasRenderingContext2D;
     drawFrame(canvas, wiped, { cw: 10, ch: 20, fontPx: 16, font: 'monospace', dpr: 1 });
     assert.ok(strokes > 0, 'vector box borders and reticles stroke cleanly on canvas');
+  });
+});
+
+describe('late-season blending, hot-spring steam, hearth embers and CRT scanlines', () => {
+  const dist = (a: string, b: string) => {
+    const [x, y] = [hexToRgb(a), hexToRgb(b)];
+    return Math.abs(x[0] - y[0]) + Math.abs(x[1] - y[1]) + Math.abs(x[2] - y[2]);
+  };
+
+  test('days 1-27 (and no day) use the exact season theme', () => {
+    for (const season of [0, 1, 2, 3]) {
+      for (const day of [undefined, 1, 15, 27]) assert.deepEqual(themeFor(season, day), THEMES[season]);
+    }
+  });
+
+  test('days 28-30 move the colours steadily toward the next season, without arriving', () => {
+    for (const season of [0, 1, 2, 3]) {
+      const next = THEMES[(season + 1) % 4];
+      const gaps = [27, 28, 29, 30].map((day) => dist(themeFor(season, day).grassBg, next.grassBg));
+      for (let i = 1; i < gaps.length; i++) assert.ok(gaps[i] <= gaps[i - 1], `season ${season}: ${gaps}`);
+      if (gaps[0] > 0) assert.ok(gaps[3] < gaps[0] && gaps[3] > 0, `season ${season} day 30 is partway: ${gaps}`);
+    }
+    // winter's last days lean toward spring, not past the end of the list
+    assert.notDeepEqual(themeFor(3, 30), THEMES[3]);
+  });
+
+  test('the frame follows the day the engine reports', () => {
+    const cells = (day?: number) => computeFrame(scene({ season: 0, day, reducedMotion: true }), 0).flat().map((o) => o.fg + o.bg).join();
+    assert.equal(cells(10), cells(undefined));
+    assert.notEqual(cells(30), cells(10), 'late Spring grass differs from mid Spring');
+  });
+
+  const spring = (over: Partial<RenderCtx> = {}) => {
+    const s = scene(over);
+    for (let x = 10; x < 30; x++) { s.put(x, 12, '~', '0C', '01'); s.tag(x, 12, { t: 'spring', wx: x, wy: 12 }); }
+    return s;
+  };
+  const steamCount = (out: OutCell[][]) => [10, 11].reduce((n, y) => n + out[y].slice(8, 32).filter((o) => o.ch === '°' || o.ch === '·').length, 0);
+
+  test('steam rises over hot-spring water when motion is on', () => {
+    let seen = 0;
+    for (const t of [0.5, 1.3, 2.7, 4.1]) seen += steamCount(computeFrame(spring(), t));
+    assert.ok(seen > 0, 'some steam over the spring');
+    assert.equal(steamCount(computeFrame(scene(), 1.3)), 0, 'no steam over plain grass');
+  });
+
+  test('no steam with reduced motion or a frozen clock', () => {
+    assert.equal(steamCount(computeFrame(spring({ reducedMotion: true }), 2.7)), 0);
+    assert.equal(steamCount(computeFrame(spring(), 0)), 0);
+  });
+
+  test('embers rise above a lit hearth and keep their colour', () => {
+    const s = scene();
+    for (let x = 10; x < 30; x++) { s.put(x, 12, '^', '08', '01'); s.tag(x, 12, { t: 'fireplace', wx: x, wy: 12 }); }
+    let embers = 0;
+    for (const t of [0.4, 1.1, 2.2, 3.9]) embers += computeFrame(s, t)[11].slice(10, 30).filter((o) => o.ch === '·' && o.accent).length;
+    assert.ok(embers > 0);
+  });
+
+  test('steam, embers and late-season colours stay within the Isotope ramps', () => {
+    const allowed = new Set(isotopeRamps().map((c) => rgbToHex(c)));
+    const hearth = scene({ season: 3, day: 29 });
+    for (let x = 10; x < 30; x++) { hearth.put(x, 14, '^', '08', '01'); hearth.tag(x, 14, { t: 'fireplace', wx: x, wy: 14 }); }
+    for (const s of [spring({ day: 30 }), hearth, scene({ season: 2, day: 28 })]) {
+      for (const o of computeFrame(s, 1.3).flat()) assert.ok(allowed.has(o.fg) && allowed.has(o.bg), `${o.fg} / ${o.bg}`);
+    }
+  });
+
+  test('embers stay put with reduced motion or a frozen clock', () => {
+    const hearth = (over: Partial<RenderCtx> = {}) => {
+      const s = scene(over);
+      for (let x = 10; x < 30; x++) { s.put(x, 12, '^', '08', '01'); s.tag(x, 12, { t: 'fireplace', wx: x, wy: 12 }); }
+      return s;
+    };
+    const embers = (s: Screen, t: number) => computeFrame(s, t)[11].slice(10, 30).filter((o) => o.ch === '·' && o.accent).length;
+    for (const t of [0.4, 1.1, 2.2]) assert.equal(embers(hearth({ reducedMotion: true }), t), 0);
+    assert.equal(embers(hearth(), 0), 0);
+  });
+
+  test('steam never covers a menu, a villager or the HUD above the spring', () => {
+    const s = spring();
+    for (let x = 10; x < 30; x++) {
+      s.tag(x, 11, x < 20 ? { t: 'ui' } : { t: 'grass', wx: x, wy: 11, ent: 'npc' });
+      s.tag(x, 10, { t: 'ui' });
+    }
+    for (const t of [0.5, 1.3, 2.7, 4.1, 5.9]) assert.equal(steamCount(computeFrame(s, t)), 0);
+  });
+
+  test('indoor baths steam too', () => {
+    const s = scene({ indoor: true, mapName: 'house' });
+    for (let x = 10; x < 30; x++) { s.put(x, 12, '~', '0C', '01'); s.tag(x, 12, { t: 'bath', wx: x, wy: 12 }); }
+    let seen = 0;
+    for (const t of [0.5, 1.3, 2.7, 4.1]) seen += steamCount(computeFrame(s, t));
+    assert.ok(seen > 0);
+  });
+
+  test('a shooting star crosses the title sky now and then, never with motion off and never over text', () => {
+    const title = (reduced = false) => {
+      const s = new Screen(80, 24);
+      s.scene = 'title';
+      s.reducedMotion = reduced;
+      s.put(30, 3, 'HRVSTMN', '07', '00', true);
+      return s;
+    };
+    const stars = (s: Screen, t: number) => computeFrame(s, t).flat().filter((o) => o.ch === '★').length;
+    const ts = Array.from({ length: 60 }, (_, i) => i * 0.2);
+    assert.ok(ts.some((t) => stars(title(), t) > 0), 'appears at some point');
+    assert.ok(ts.every((t) => stars(title(), t) <= 1), 'one star at a time');
+    assert.ok(ts.every((t) => stars(title(true), t) === 0), 'none with reduced motion');
+    assert.equal(stars(title(), 0), 0);
+    for (const t of ts) {
+      const out = computeFrame(title(), t);
+      for (let x = 30; x < 37; x++) assert.notEqual(out[3][x].ch, '★', 'never over the title text');
+    }
+  });
+
+  test("the highlighted menu row's cursor becomes a glowing ▸; other '>' stay as typed", () => {
+    const s = scene();
+    s.box(10, 5, 24, 6, '0D', '00', 'Menu');
+    s.put(11, 6, ' > Pick me'.padEnd(22), '00', '0D', true);
+    s.put(11, 7, '   Not me > there', '05');
+    const out = computeFrame(s, 0);
+    assert.equal(out[6][12].ch, '▸');
+    assert.ok(out[6][12].glow);
+    assert.equal(out[7][21].ch, '>');
+  });
+
+  test('CRT: a partial repaint leaves exactly the scanlines a full paint would, with no glow on them', () => {
+    const W = 20, H = 6, cw = 9.6, ch = 19.2;
+    const px = (w: number, h: number) => Array.from({ length: Math.ceil(h * ch) + 4 }, () => new Array(Math.ceil(w * cw) + 4).fill(0));
+    const paint = (grid: number[][], frame: OutCell[][], dirty?: { x0: number; y0: number; x1: number; y1: number }) => {
+      let alpha = 1, blur = 0, glowyScanlines = 0;
+      const target: Record<string, unknown> = {
+        fillRect: (x: number, y: number, w: number, h: number) => {
+          const scan = alpha !== 1;
+          if (scan && blur > 0) glowyScanlines++;
+          for (let yy = Math.max(0, Math.floor(y)); yy < Math.min(grid.length, Math.ceil(y + h)); yy++)
+            for (let xx = Math.max(0, Math.floor(x)); xx < Math.min(grid[0].length, Math.ceil(x + w)); xx++)
+              grid[yy][xx] = scan ? grid[yy][xx] + 1 : 0;
+        },
+      };
+      const canvas = new Proxy(target, {
+        get: (t, key) => key === 'globalAlpha' ? alpha : key === 'shadowBlur' ? blur : key in t ? t[key as string] : () => {},
+        set: (t, key, value) => { if (key === 'globalAlpha') alpha = value; else if (key === 'shadowBlur') blur = value; else t[key as string] = value; return true; },
+      }) as unknown as CanvasRenderingContext2D;
+      drawFrame(canvas, frame, { cw, ch, fontPx: 16, font: 'monospace', dpr: 1, crt: true }, dirty);
+      return glowyScanlines;
+    };
+    const frame = (glowAt?: [number, number]): OutCell[][] => Array.from({ length: H }, (_, y) => Array.from({ length: W }, (_, x) => ({
+      ch: glowAt && x === glowAt[0] && y === glowAt[1] ? '^' : '.', fg: '#c0c0c0', bg: '#202020', bold: false,
+      ...(glowAt && x === glowAt[0] && y === glowAt[1] ? { glow: '#ff9900', glowR: 8 } : {}),
+    })));
+    const before = frame();
+    const after = frame([6, 3]);
+    const partial = px(W, H);
+    paint(partial, before);
+    const rect = frameDirtyRect(before, after)!;
+    const glowy = paint(partial, after, rect);
+    const full = px(W, H);
+    paint(full, after);
+    let diff = 0;
+    for (let y = 0; y < full.length; y++) for (let x = 0; x < full[0].length; x++) if (partial[y][x] !== full[y][x]) diff++;
+    assert.equal(diff, 0, 'no unlined seams or double-darkened rows after a partial repaint');
+    assert.equal(glowy, 0, 'scanlines are drawn without the last glyph\'s glow');
+  });
+
+  test('CRT scanlines are drawn only when the setting is on', () => {
+    const frame = computeFrame(scene({ reducedMotion: true }), 0);
+    const scanRows = (crt: boolean) => {
+      const rows: number[] = [];
+      let alpha = 1;
+      const target: Record<string, unknown> = {
+        fillRect: (_x: number, y: number, _w: number, h: number) => { if (alpha === 0.22 && h === 1) rows.push(y); },
+      };
+      const canvas = new Proxy(target, {
+        get: (t, key) => key === 'globalAlpha' ? alpha : key in t ? t[key as string] : () => {},
+        set: (t, key, value) => { if (key === 'globalAlpha') alpha = value; else t[key as string] = value; return true; },
+      }) as unknown as CanvasRenderingContext2D;
+      drawFrame(canvas, frame, { cw: 10, ch: 20, fontPx: 16, font: 'monospace', dpr: 1, crt });
+      return rows;
+    };
+    assert.equal(scanRows(false).length, 0);
+    const rows = scanRows(true);
+    assert.ok(rows.length > 100, `${rows.length} scanlines`);
+    assert.ok(rows.every((y) => y % 2 === 0), 'every other pixel row');
   });
 });
