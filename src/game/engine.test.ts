@@ -988,5 +988,12 @@ describe('Cedar Hollow hedge gate (task 34)', () => {
     for (const line of ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.']) {
       assert.ok(shown.includes(line), `whole line: ${line}`);
     }
+describe('renderer context', () => {
+  test('render() hands the renderer the day of the season, for late-season blending', () => {
+    const g = fresh();
+    g.day = 29;
+    g.warp('farm', 14, 10);
+    g.render();
+    assert.equal(g.scr.ctx.day, 29);
   });
 });

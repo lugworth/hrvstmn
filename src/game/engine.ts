@@ -5328,6 +5328,7 @@ export class Game {
       indoor: !!this.map.indoor,
       minutes: this.minutes,
       season: this.season,
+      day: this.day,
       weather: this.map.indoor ? 'Sunny' : this.weather,
       wetness: this.wetness[this.mapname] || 0,
       cues: s.accessibleCues,
