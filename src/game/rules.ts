@@ -1,5 +1,5 @@
 // Pure game rules and mechanics for Harvest Moon: Friends of Mineral Town (ASCII Edition)
-import { fmt_hour } from './constants';
+import { fmt_hour, SEASONS } from './constants';
 
 import type { CatchEntry, CatchTable } from './constants';
 
@@ -525,4 +525,33 @@ export function shopStatus(
   if (minutes < o * 60) return { open: false, text: `opens at ${hr(o)} today` };
   if (minutes >= c * 60) return { open: false, text: `closed for the day; opens ${nextOpen()}` };
   return { open: true, text: `open until ${hr(c)}` };
+}
+
+/** An absday() as 'Summer 3, Year 1' (or 'Summer 3' with year = false). */
+export function absdayLabel(n: number, year: boolean = true): string {
+  const d = `${SEASONS[Math.floor((n % 120) / 30)]} ${(n % 30) + 1}`;
+  return year ? `${d}, Year ${Math.floor(n / 120) + 1}` : d;
+}
+
+/**
+ * Task 12: a public project's materials, delivered against needed. The crop slot comes last;
+ * its item is null until the player picks which crop to bring.
+ */
+export function worksNeeds(
+  needs: Record<string, number>,
+  cropQty: number,
+  delivered: Record<string, number>,
+  crop: string | null
+): { item: string | null; got: number; need: number }[] {
+  const rows = Object.entries(needs).map(([item, need]) => ({ item: item as string | null, got: Math.min(need, delivered[item] || 0), need }));
+  rows.push({ item: crop, got: crop ? Math.min(cropQty, delivered[crop] || 0) : 0, need: cropQty });
+  return rows;
+}
+
+/** 'Lumber 4/12, Copper 0/2, Turnip 3/3' style summary, or just what is still missing. */
+export function worksSummary(rows: { item: string | null; got: number; need: number }[], missingOnly: boolean = false): string {
+  return rows
+    .filter((r) => !missingOnly || r.got < r.need)
+    .map((r) => (missingOnly ? `${r.need - r.got} ${r.item ?? 'of one farm crop'}` : `${r.item ?? 'One farm crop'} ${r.got}/${r.need}`))
+    .join(', ');
 }

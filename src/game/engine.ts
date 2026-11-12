@@ -19,6 +19,7 @@ import {
   build_interior,
   build_house_upgraded,
   build_mine,
+  footbridge_cells,
 } from './map';
 import {
   SECS_PER_10MIN,
@@ -100,7 +101,9 @@ import {
   VALLEY_GRID,
   VALLEY_SHORT,
   VALLEY_LANDMARKS,
+  PUBLIC_WORKS,
 } from './constants';
+import type { ValleyLandmark } from './constants';
 import {
   CoordSet,
   parseCoordKey,
@@ -151,7 +154,23 @@ import {
   nextRegion,
   compassWord,
   shopStatus,
+  absdayLabel,
+  worksNeeds,
+  worksSummary,
 } from './rules';
+
+/** Task 12: the Willow Bend footbridge project. done_day is the absday it opens (set once everything is in). */
+export interface PublicWorks {
+  delivered: Record<string, number>;
+  crop: string | null;
+  done_day: number | null;
+  built: boolean;
+}
+
+/** A fresh (or copied, filled-in) public works state; older saves have none. */
+export function worksState(d: Partial<PublicWorks> | null | undefined = null): PublicWorks {
+  return { delivered: { ...(d?.delivered || {}) }, crop: d?.crop ?? null, done_day: d?.done_day ?? null, built: !!d?.built };
+}
 
 export interface VillagerRequest {
   id: number;
@@ -353,6 +372,8 @@ export class Game {
   gray_note_level: number = 0;
   /** Task 33: the Valley Map landmark you pinned (a VALLEY_LANDMARKS id), or null. */
   map_pin: string | null = null;
+  /** Task 12: the Willow Bend footbridge (materials delivered, chosen crop, finish day, built). */
+  public_works: PublicWorks = worksState();
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -375,7 +396,7 @@ export class Game {
     'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
     'inn_scenes_seen', 'inn_evening_day',
     'gray_quest', 'gray_note_level',
-    'map_pin',
+    'map_pin', 'public_works',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -504,6 +525,8 @@ export class Game {
     this.gray_quest = 0;
     this.gray_note_level = 0;
     this.map_pin = null;
+    this.public_works = worksState();
+    this.apply_public_works();
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -747,6 +770,8 @@ export class Game {
     this.objs.farm = { ...(d.objs || {}) };
     this.hp = { ...(d.hp || {}) };
     this.forage = { mountain: {}, beach: {}, ...(d.forage || {}) };
+    this.public_works = worksState(d.public_works);
+    this.apply_public_works();
     this.prune_forage();
     this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
     this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
@@ -2023,6 +2048,8 @@ export class Game {
       } else if (text === 'request_board') {
         await this.request_menu();
         return;
+      } else if (text === 'footbridge') {
+        text = this.footbridge_sign();
       }
       await this.say(text, 'Sign');
     } else if (this.held) {
@@ -3317,6 +3344,9 @@ export class Game {
     }
     if (bid === 'carpenter') {
       return [
+        ...(this.public_works.built
+          ? []
+          : ([[`Village project: ${PUBLIC_WORKS.name}`, () => this.works_menu()]] as [string, () => Promise<void>][])),
         ['Buy Lumber (50G)', () => this.buy('Lumber', 50)],
         ['Buy Golden Lumber (100,000G)', () => this.buy('Golden Lumber', 100000)],
         ['Order a House / Farm Expansion', () => this.order_expansion()],
@@ -3795,6 +3825,8 @@ export class Game {
     } else if (this.gray_quest === 2) {
       lines.push(`  Note   ${this.gray_note()}`);
     }
+    const works = this.works_line();
+    if (works) lines.push(`  Bridge ${works}`);
     const pinRoute = this.pin_route();
     if (pinRoute) lines.push(`  Pin    ${pinRoute.landmark.name}: ${pinRoute.text}`);
     lines.push(`  Forge  ${this.forge_status().text}`);
@@ -4948,6 +4980,7 @@ export class Game {
 
     // Carpentry completion
     report.push(...this.carpentry_day());
+    report.push(...this.works_day());
 
     // Marriage & Child Birth milestone
     if (this.married && !this.child_name && this.marriage_day >= 0 && this.absday() - this.marriage_day >= 30) {
@@ -5689,6 +5722,11 @@ export class Game {
     return shopStatus(HOURS[bid], this.weekday, this.minutes, festShut);
   }
 
+  /** The Valley Map's landmarks today: project landmarks appear once built. */
+  valley_landmarks(): ValleyLandmark[] {
+    return VALLEY_LANDMARKS.filter((l) => !l.when || this.public_works.built);
+  }
+
   /** Where the pinned landmark is from here: the exit to take next, or the way to walk. */
   pin_route(): {
     landmark: (typeof VALLEY_LANDMARKS)[number];
@@ -5700,7 +5738,7 @@ export class Game {
     /** A short form for narrow screens. */
     brief: string;
   } | null {
-    const lm = VALLEY_LANDMARKS.find((l) => l.id === this.map_pin);
+    const lm = this.valley_landmarks().find((l) => l.id === this.map_pin);
     if (!lm) return null;
     const m = this.map;
     const arrowFor = (dx: number, dy: number) =>
@@ -5761,20 +5799,21 @@ export class Game {
 
   /** Task 33: the labeled Valley Map. Arrows choose a landmark, Enter pins it, Esc closes. */
   async valley_map(): Promise<void> {
-    let sel = Math.max(0, VALLEY_LANDMARKS.findIndex((l) => l.id === this.map_pin));
+    const lms = this.valley_landmarks();
+    let sel = Math.max(0, lms.findIndex((l) => l.id === this.map_pin));
     if (!this.map_pin) {
-      const here = VALLEY_LANDMARKS.findIndex((l) => l.map === this.mapname);
+      const here = lms.findIndex((l) => l.map === this.mapname);
       if (here >= 0) sel = here;
     }
-    const n = VALLEY_LANDMARKS.length;
+    const n = lms.length;
     const regionStep = (dir: 1 | -1): number => {
-      const cur = VALLEY_LANDMARKS[sel].map;
+      const cur = lms[sel].map;
       for (let i = 1; i <= n; i++) {
         const j = (((sel + dir * i) % n) + n) % n;
-        if (VALLEY_LANDMARKS[j].map !== cur) {
+        if (lms[j].map !== cur) {
           // land on the first landmark of that region
           let k = j;
-          while (VALLEY_LANDMARKS[(k - 1 + n) % n].map === VALLEY_LANDMARKS[j].map && (k - 1 + n) % n !== j) k = (k - 1 + n) % n;
+          while (lms[(k - 1 + n) % n].map === lms[j].map && (k - 1 + n) % n !== j) k = (k - 1 + n) % n;
           return k;
         }
       }
@@ -5787,7 +5826,7 @@ export class Game {
       else if (['up', 'w', 'k'].includes(k)) sel = regionStep(-1);
       else if (['down', 's', 'j'].includes(k)) sel = regionStep(1);
       else if (OK_KEYS.has(k)) {
-        const lm = VALLEY_LANDMARKS[sel];
+        const lm = lms[sel];
         this.map_pin = this.map_pin === lm.id ? null : lm.id;
         this.msg(this.map_pin ? `Pinned ${lm.name} on your map.` : 'Map pin cleared.', '0E');
       } else if (CANCEL_KEYS.has(k) || k === 'g' || k === 'G') return;
@@ -5796,6 +5835,7 @@ export class Game {
 
   /** Draw the Valley Map overlay: region boxes in their real arrangement, then the legend. */
   draw_valley(sel: number): void {
+    const lms = this.valley_landmarks();
     const s = this.scr;
     const [W, H] = [s.w, s.h];
     s.box(0, 0, W, H, '0D', '00', 'Valley Map');
@@ -5808,7 +5848,7 @@ export class Game {
       const [c, r] = VALLEY_GRID[name];
       return [ox + c * cw, oy + r * 4];
     };
-    const picked = VALLEY_LANDMARKS[sel];
+    const picked = lms[sel];
     const curRegion = OUTDOOR_MAPS.includes(this.mapname) ? this.mapname : null;
     // connectors first, so boxes sit on top of them
     const links = this.valley_links();
@@ -5841,7 +5881,7 @@ export class Game {
         }
         return null;
       };
-      for (const lm of VALLEY_LANDMARKS.filter((l) => l.map === name)) {
+      for (const lm of lms.filter((l) => l.map === name)) {
         const gx = place(lm.x);
         if (gx === null) continue;
         const isSel = lm === picked;
@@ -5864,7 +5904,7 @@ export class Game {
     lines.push([`  ⚒ Forge ${f.text}`, f.open ? '0B' : '08']);
     const r = this.pin_route();
     if (r) lines.push([`  Pin: ${r.landmark.name}: ${r.text}`, '0E']);
-    lines.push([`  ${VALLEY_LANDMARKS.filter((l) => l.map === picked.map).map((l) => `${l.glyph} ${l.name}`).join('  ')}`, '05']);
+    lines.push([`  ${lms.filter((l) => l.map === picked.map).map((l) => `${l.glyph} ${l.name}`).join('  ')}`, '05']);
     const pinWord = picked.id === this.map_pin ? 'unpin' : 'pin';
     const hintText = isCompact(W) ? `<> pick  ^v region  Enter ${pinWord}  Esc` : `Left/Right landmark  Up/Down region  Enter ${pinWord}  Esc close`;
     const top = oy + 4 * 4 - 1;
@@ -6538,6 +6578,100 @@ export class Game {
     }
     this.rebuild_house();
     return [`Gotz finished building your ${name}! ${EXPANSIONS[name]?.[3] || ''}`];
+  }
+
+  // ---------------------------------------------------------------- task 12: the Willow Bend footbridge
+
+  /** Lay the footbridge planks over the washed-out water once built; put the water back otherwise (a fresh game). */
+  apply_public_works(): void {
+    const m = this.maps['river'];
+    if (!m) return;
+    for (const [x, y] of footbridge_cells()) m.set(x, y, this.public_works.built ? 'bridge' : 'water');
+  }
+
+  works_rows(): { item: string | null; got: number; need: number }[] {
+    const w = this.public_works;
+    return worksNeeds(PUBLIC_WORKS.needs, PUBLIC_WORKS.crop_qty, w.delivered, w.crop);
+  }
+
+  /** The footbridge's line in Today's Plan, or null once it's open. */
+  works_line(): string | null {
+    const w = this.public_works;
+    if (w.built) return null;
+    if (w.done_day !== null) return `Gotz and Basil are building the footbridge (done ${absdayLabel(w.done_day, false)})`;
+    return `Gotz needs ${worksSummary(this.works_rows(), true)}`;
+  }
+
+  footbridge_sign(): string {
+    const w = this.public_works;
+    if (w.built && w.done_day !== null) {
+      return `Willow Bend footbridge — Rebuilt by Gotz, Basil and ${this.name}, ${absdayLabel(w.done_day)}.`;
+    }
+    const base = 'Footbridge (washed out) — The spring flood took the planks. Gotz could rebuild it with help from the valley; ask at his workshop on Mother\'s Hill.';
+    return w.done_day === null ? base : `${base} Gotz and Basil are at work: it opens ${absdayLabel(w.done_day, false)}.`;
+  }
+
+  /** What the rucksack can put toward the project: [item, how many it would hand over]. */
+  works_offers(): [string, number][] {
+    const out: [string, number][] = [];
+    for (const r of this.works_rows()) {
+      if (r.got >= r.need) continue;
+      const items = r.item ? [r.item] : Object.keys(this.inv).filter((i) => i in CROPS && i !== 'Grass');
+      for (const i of items) if (this.inv[i]) out.push([i, Math.min(this.inv[i], r.need - r.got)]);
+    }
+    return out;
+  }
+
+  /** Hand over what you carry of one material (partial deliveries count). Returns how many went in. */
+  works_deliver(item: string): number {
+    const w = this.public_works;
+    if (w.done_day !== null) return 0;
+    const offer = this.works_offers().find(([i]) => i === item);
+    if (!offer) return 0;
+    if (!(item in PUBLIC_WORKS.needs)) w.crop = item;
+    this.take(item, offer[1]);
+    w.delivered[item] = (w.delivered[item] || 0) + offer[1];
+    if (this.works_rows().every((r) => r.got >= r.need)) w.done_day = this.absday() + PUBLIC_WORKS.days;
+    return offer[1];
+  }
+
+  /** Gotz's village project: what's needed, what's in, and hand over what you carry. */
+  async works_menu(): Promise<void> {
+    const w = this.public_works;
+    if (w.done_day !== null) {
+      await this.say(`Basil and I are out at Willow Bend every morning. It'll be open ${absdayLabel(w.done_day, false)}.`, 'Gotz');
+      return;
+    }
+    if (!Object.keys(w.delivered).length) {
+      await this.say(
+        `The footbridge below the Willow Bend dock washed out in the spring flood. Basil keeps asking after it: his plant notes stop at the river, and the best of the far bank is on the other side. I'll rebuild it if the valley chips in: ${PUBLIC_WORKS.needs.Lumber} Lumber for the deck, ${PUBLIC_WORKS.needs.Copper} Copper for the fittings, and ${PUBLIC_WORKS.crop_qty} of any one crop from your farm to feed the crew.`,
+        'Gotz'
+      );
+    }
+    while (w.done_day === null) {
+      const offers = this.works_offers();
+      const opts = [...offers.map(([i, n]) => `Hand over ${n} ${i}`), 'Leave'];
+      const info = [`  Delivered: ${worksSummary(this.works_rows())}`, `  Still needed: ${worksSummary(this.works_rows(), true)}`];
+      if (!offers.length) info.push('  Nothing in your rucksack for it yet: Lumber, Copper or a farm crop.');
+      const sel = await this.menu(`Village project: ${PUBLIC_WORKS.name}`, opts, 0, info);
+      if (sel === null || sel >= offers.length) return;
+      const n = this.works_deliver(offers[sel][0]);
+      this.msg(`You handed Gotz ${n} ${offers[sel][0]} for the footbridge.`, '0B');
+    }
+    await this.say(
+      `That's everything. Basil's been itching to get across, so he and I start in the morning. Give us ${PUBLIC_WORKS.days} days: it'll be open ${absdayLabel(w.done_day!, false)}.`,
+      'Gotz'
+    );
+  }
+
+  /** Overnight: the crew finishes the footbridge on its day. */
+  works_day(): string[] {
+    const w = this.public_works;
+    if (w.built || w.done_day === null || this.absday() < w.done_day) return [];
+    w.built = true;
+    this.apply_public_works();
+    for (const n of PUBLIC_WORKS.helpers) this.friend[n] = clamp((this.friend[n] || 0) + PUBLIC_WORKS.friend, 0, 100);
+    return ['Gotz and Basil finished the Willow Bend footbridge! You can cross the river below the dock now.'];
   }
 
   async order_expansion(): Promise<void> {

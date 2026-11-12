@@ -3415,6 +3415,8 @@ export interface ValleyLandmark {
   y: number;
   /** The building it stands for, when it keeps shop hours. */
   bid?: string;
+  /** Only on the map once this village project is built (see Game.valley_landmarks()). */
+  when?: 'footbridge';
 }
 
 /** Major landmarks, each with its own symbol. Positions are the door or sign on its map. */
@@ -3441,6 +3443,23 @@ export const VALLEY_LANDMARKS: ValleyLandmark[] = [
   { id: 'winery', name: 'Winery', glyph: '♠', map: 'woods', x: 35, y: 18, bid: 'winery' },
   { id: 'pier', name: 'Beach pier', glyph: '≈', map: 'beach', x: 30, y: 12 },
   { id: 'sprites', name: 'Sprite hut', glyph: '✿', map: 'river', x: 53, y: 9 },
+  { id: 'footbridge', name: 'Willow Bend footbridge', glyph: '≡', map: 'river', x: 31, y: 18, when: 'footbridge' },
   { id: 'zack', name: 'Zack & Won', glyph: '¦', map: 'point', x: 23, y: 9, bid: 'zack' },
   { id: 'lighthouse', name: 'Lighthouse', glyph: '☾', map: 'point', x: 45, y: 10 },
 ];
+
+/**
+ * Task 12, small public works: Gotz and Basil rebuild the Willow Bend footbridge once the
+ * valley chips in. Materials come from forestry (Lumber), mining (Copper) and the farm
+ * (crop_qty of any one crop, to feed the crew).
+ */
+export const PUBLIC_WORKS = {
+  name: 'Willow Bend footbridge',
+  needs: { Lumber: 12, Copper: 2 } as Record<string, number>,
+  crop_qty: 3,
+  /** Days from the last delivery to the finished bridge. */
+  days: 2,
+  /** Friendship with each helper when it opens. */
+  friend: 5,
+  helpers: ['Gotz', 'Basil'],
+};

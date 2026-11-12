@@ -7,6 +7,9 @@ import {
   nextRegion,
   compassWord,
   shopStatus,
+  absdayLabel,
+  worksNeeds,
+  worksSummary,
   getMaxStamina,
   getToolArea,
   calculateStaminaSpend,
@@ -271,5 +274,26 @@ describe('valley map rules (task 33)', () => {
     assert.equal(shopStatus(forge, 0, 17 * 60, (d) => d === 1).text, 'closed for the day; opens Wed 10AM');
     // a closed Thursday before a Friday festival
     assert.equal(shopStatus(forge, 3, 12 * 60, (d) => d === 1).text, 'closed today (Thu); opens Sat 10AM');
+  });
+
+  test('absday labels: season and day, with or without the year', () => {
+    assert.equal(absdayLabel(0), 'Spring 1, Year 1');
+    assert.equal(absdayLabel(31, false), 'Summer 2');
+    assert.equal(absdayLabel(120 + 89), 'Fall 30, Year 2');
+    assert.equal(absdayLabel(119, false), 'Winter 30');
+  });
+  test('public works needs: materials capped at what is needed, the crop slot last', () => {
+    const needs = { Lumber: 12, Copper: 2 };
+    let rows = worksNeeds(needs, 3, {}, null);
+    assert.deepEqual(rows, [
+      { item: 'Lumber', got: 0, need: 12 },
+      { item: 'Copper', got: 0, need: 2 },
+      { item: null, got: 0, need: 3 },
+    ]);
+    assert.equal(worksSummary(rows, true), '12 Lumber, 2 Copper, 3 of one farm crop');
+    rows = worksNeeds(needs, 3, { Lumber: 15, Copper: 1, Turnip: 3 }, 'Turnip');
+    assert.deepEqual(rows.map((r) => r.got), [12, 1, 3]);
+    assert.equal(worksSummary(rows), 'Lumber 12/12, Copper 1/2, Turnip 3/3');
+    assert.equal(worksSummary(rows, true), '1 Copper');
   });
 });
