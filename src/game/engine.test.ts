@@ -1033,6 +1033,9 @@ describe('the Willow Bend footbridge (task 12)', () => {
     assert.deepEqual(c.public_works, { delivered: {}, crop: null, done_day: null, built: false });
     for (const [x, y] of footbridge_cells()) assert.equal(c.maps.river.tile(x, y), 'water');
     assert.equal(c.works_line(), 'Gotz needs 12 Lumber, 2 Copper, 3 of one farm crop');
+  });
+});
+
 describe('Cedar Hollow hedge gate (task 34)', () => {
   const sign = (g: any, map: string, xy: readonly number[]) => g.maps[map].signs[`${xy[0]},${xy[1]}`];
   const toBeach = (g: any) => Object.values(g.maps.woods.warps).filter((w: any) => w[0] === 'beach');
@@ -1187,6 +1190,9 @@ describe('Cedar Hollow hedge gate (task 34)', () => {
     for (const line of ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.']) {
       assert.ok(shown.includes(line), `whole line: ${line}`);
     }
+  });
+});
+
 describe('renderer context', () => {
   test('render() hands the renderer the day of the season, for late-season blending', () => {
     const g = fresh();

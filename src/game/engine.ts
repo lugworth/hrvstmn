@@ -164,6 +164,8 @@ export interface PublicWorks {
 /** A fresh (or copied, filled-in) public works state; older saves have none. */
 export function worksState(d: Partial<PublicWorks> | null | undefined = null): PublicWorks {
   return { delivered: { ...(d?.delivered || {}) }, crop: d?.crop ?? null, done_day: d?.done_day ?? null, built: !!d?.built };
+}
+
 /** [input noun, output noun, message colour] per Maker. */
 const MAKER_NOUNS: Record<string, [string, string, string]> = {
   'Mayonnaise Maker': ['eggs', 'mayonnaise', '0A'],
