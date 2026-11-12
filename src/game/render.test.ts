@@ -281,6 +281,52 @@ describe('engine + renderer', () => {
     assert.equal(g.museum.length, 2);
   });
 
+  test('a Maker processes every quality tier in one use', () => {
+    const { g } = farm();
+    g.makers = ['Mayonnaise Maker'];
+    g.inv['Egg'] = 3;
+    g.inv['Good Egg'] = 2;
+    g.inv['Golden Egg'] = 1;
+    assert.match(g.maker_preview('Mayonnaise Maker'), /^6 eggs, \+\d+G$/);
+    assert.equal(g.maker_ready_count(), 6);
+    assert.ok(g.today_lines().some((l: string) => l.includes('Makers 6 items')));
+    const xp = JSON.stringify(g.mastery_xp);
+    const line = g.run_maker('Mayonnaise Maker');
+    assert.match(line ?? '', /^Mayonnaise Maker made 6 mayonnaise in 3 grades! \(\+\d+G\)$/);
+    assert.equal(JSON.stringify(g.mastery_xp), xp, 'Maker use grants no XP (per-press XP was farmable)');
+    assert.equal(g.inv['Small Mayonnaise'], 3);
+    assert.equal(g.inv['Medium Mayonnaise'], 2);
+    assert.equal(g.inv['Golden Mayonnaise'], 1);
+    assert.equal(g.inv['Egg'], undefined);
+    assert.equal(g.run_maker('Mayonnaise Maker'), null);
+    assert.equal(g.maker_preview('Mayonnaise Maker'), 'no eggs');
+    assert.ok(!g.today_lines().some((l: string) => l.includes('Makers')));
+  });
+
+  test('the Maker result line fits the single desktop message row even for huge mixed stacks', () => {
+    const { g } = farm();
+    g.makers = ['Mayonnaise Maker', 'Cheese Maker'];
+    for (const e of ['X Egg', 'P Egg', 'Golden Egg', 'High Egg', 'Good Egg', 'Egg']) g.inv[e] = 99;
+    const multi = g.run_maker('Mayonnaise Maker');
+    assert.ok(multi && multi.length <= 78, multi ?? '');
+    g.inv['X Milk'] = 99;
+    const single = g.run_maker('Cheese Maker');
+    assert.equal(single, `Cheese Maker made 99 x X Cheese! (+${(1500 - 800) * 99}G)`);
+    assert.ok(single.length <= 78);
+  });
+
+  test('a Maker that is not installed does nothing, and shop milk is not cheese', () => {
+    const { g } = farm();
+    g.inv['Wool'] = 4;
+    assert.equal(g.run_maker('Yarn Maker'), null);
+    assert.equal(g.inv['Wool'], 4);
+    g.makers = ['Cheese Maker'];
+    g.inv['Milk'] = 5;
+    assert.equal(g.run_maker('Cheese Maker'), null);
+    assert.equal(g.inv['Milk'], 5);
+    assert.equal(g.maker_ready_count(), 0);
+  });
+
   test('request board creates deliverable villager requests', () => {
     const { g } = farm();
     assert.equal(g.request_refresh(3), 3);
