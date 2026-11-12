@@ -5,16 +5,10 @@ import { COMPACT_MIN_COLS, MIN_ROWS, isCompact, fitMessages, fitText, reflowPage
 import { fencePost } from './chrome';
 import {
   GameMap,
-  build_farm,
-  build_town,
-  build_mountain,
-  build_beach,
-  build_woods,
-  build_ridge,
-  build_river,
-  build_point,
-  build_grove,
-  link_regions,
+  build_valley,
+  open_shortcut,
+  SHORTCUT_IDS,
+  HEDGE_GATE,
   build_house,
   build_interior,
   build_house_upgraded,
@@ -148,7 +142,7 @@ import {
   innSceneFor,
   innCardsWin,
   canUpgradeAdvice,
-  nextRegion,
+  nextRegions,
   compassWord,
   shopStatus,
 } from './rules';
@@ -353,6 +347,8 @@ export class Game {
   gray_note_level: number = 0;
   /** Task 33: the Valley Map landmark you pinned (a VALLEY_LANDMARKS id), or null. */
   map_pin: string | null = null;
+  /** Task 34: shortcuts opened for good (ids from SHORTCUT_IDS, e.g. 'hollow_gate'), carved after the maps are built. */
+  shortcuts: string[] = [];
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -375,7 +371,7 @@ export class Game {
     'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
     'inn_scenes_seen', 'inn_evening_day',
     'gray_quest', 'gray_note_level',
-    'map_pin',
+    'map_pin', 'shortcuts',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -384,19 +380,7 @@ export class Game {
     this.started = false;
     this.running = true;
     this.msgs = [];
-    this.maps = {
-      farm: build_farm(),
-      town: build_town(),
-      mountain: build_mountain(),
-      beach: build_beach(),
-      woods: build_woods(),
-      ridge: build_ridge(),
-      river: build_river(),
-      point: build_point(),
-      grove: build_grove(),
-      house: build_house(),
-    };
-    link_regions(this.maps);
+    this.maps = { ...build_valley(), house: build_house() };
     this.last = Date.now() / 1000;
     this.acc = 0.0;
     this.npc_acc = 0.0;
@@ -504,6 +488,9 @@ export class Game {
     this.gray_quest = 0;
     this.gray_note_level = 0;
     this.map_pin = null;
+    // a carved shortcut lives in the maps, so a new farm gets a fresh valley
+    if (this.shortcuts.length) Object.assign(this.maps, build_valley());
+    this.shortcuts = [];
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -747,6 +734,8 @@ export class Game {
     this.objs.farm = { ...(d.objs || {}) };
     this.hp = { ...(d.hp || {}) };
     this.forage = { mountain: {}, beach: {}, ...(d.forage || {}) };
+    this.shortcuts = Array.isArray(this.shortcuts) ? this.shortcuts.filter((id) => SHORTCUT_IDS.includes(id)) : [];
+    for (const id of this.shortcuts) open_shortcut(this.maps, id);
     this.prune_forage();
     this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
     this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
@@ -1998,6 +1987,10 @@ export class Game {
       await this.lighthouse_read();
       return;
     }
+    if (signId === 'hedge_latch') {
+      await this.hedge_latch();
+      return;
+    }
 
     if (tile === 'bin') {
       await this.ship();
@@ -2031,6 +2024,23 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- outer-region landmarks
+
+  /** Task 34: the latch of the old hedge gate, on the Mineral Beach side. Lifting it opens the way to Cedar Hollow for good. */
+  async hedge_latch(): Promise<void> {
+    // short lines, so the compact layout (44 columns of text at 50) wraps nothing mid-sentence
+    const info = ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.'];
+    if ((await this.menu('Lift the latch?', ['Yes', 'No'], 0, info)) !== 0) {
+      this.msg('You leave the old gate latched.', '08');
+      return;
+    }
+    this.shortcuts = [...this.shortcuts, 'hollow_gate'];
+    open_shortcut(this.maps, 'hollow_gate');
+    this.prune_forage();
+    const mid = HEDGE_GATE.bAt + 1;
+    this.fx_add('dust', 0, mid, 0.7);
+    this.fx_add('sparkle', 1, mid, 0.9);
+    this.msg('The latch gives with a creak and the old gate swings wide. A short way to Cedar Hollow, for good!', '0B');
+  }
 
   /** Skyline Ridge lookout: the view reads tomorrow's weather, and once a day the cold air revives you. */
   async ridge_lookout(): Promise<void> {
@@ -5740,8 +5750,14 @@ export class Game {
       const dist = Math.abs(dx) + Math.abs(dy);
       return towards(dist <= 1 ? null : [lm.x, lm.y], lm.name, dist <= 1 ? "you're there" : `${dist} steps ${compassWord(dx, dy)}`);
     }
-    const next = nextRegion(this.valley_links(), this.mapname, lm.map);
-    if (!next) return towards(null, lm.name, 'no path from here');
+    // of the neighbours on a shortest region walk, take the one whose exit is nearest you
+    const options = nextRegions(this.valley_links(), this.mapname, lm.map);
+    if (!options.length) return towards(null, lm.name, 'no path from here');
+    const exitDist = (n: string) => {
+      const c = nearestWarp((d) => d === n);
+      return c ? Math.abs(c[0] - this.px) + Math.abs(c[1] - this.py) : Infinity;
+    };
+    const next = options.reduce((best, n) => (exitDist(n) < exitDist(best) ? n : best));
     const cell = nearestWarp((d) => d === next);
     const side = !cell ? '' : cell[0] === 0 ? 'west' : cell[0] === m.w - 1 ? 'east' : cell[1] === 0 ? 'north' : cell[1] === m.h - 1 ? 'south' : compassWord(cell[0] - this.px, cell[1] - this.py);
     const title = this.maps[next].title;

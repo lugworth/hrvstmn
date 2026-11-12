@@ -5,6 +5,7 @@ import {
   innCardsWin,
   canUpgradeAdvice,
   nextRegion,
+  nextRegions,
   compassWord,
   shopStatus,
   getMaxStamina,
@@ -251,6 +252,15 @@ describe('valley map rules (task 33)', () => {
     assert.equal(nextRegion(links, 'town', 'ridge'), 'mountain');
     assert.equal(nextRegion(links, 'town', 'town'), null);
     assert.equal(nextRegion({ a: [] }, 'a', 'b'), null);
+  });
+  test('every neighbour that starts a shortest walk is offered, so callers can break ties', () => {
+    const gated = { ...links, woods: ['farm', 'beach'], beach: ['town', 'point', 'woods'] };
+    assert.deepEqual(nextRegions(gated, 'woods', 'town'), ['beach', 'farm']);
+    assert.deepEqual(nextRegions(gated, 'woods', 'point'), ['beach']);
+    assert.deepEqual(nextRegions(gated, 'town', 'woods'), ['beach', 'farm']);
+    assert.deepEqual(nextRegions(links, 'woods', 'point'), ['farm']);
+    assert.deepEqual(nextRegions(links, 'town', 'town'), []);
+    assert.deepEqual(nextRegions({ a: [] }, 'a', 'b'), []);
   });
   test('compass words', () => {
     assert.equal(compassWord(-5, 0), 'west');
