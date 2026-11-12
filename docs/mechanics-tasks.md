@@ -68,7 +68,7 @@ Pick an unchecked task that fits the current assignment. Keep its number stable 
 ## Trails, fishing, and mines
 
 - [x] **33. A labeled valley map.** Give major landmarks distinct symbols and names. Pin one destination, point to the next map exit, and show whether the forge will be open.
-- [ ] **34. A shortcut earned on foot.** Open a gate from the far side of a trail or repair a crossing after seeing both banks. Make the route a permanent part of the valley once earned.
+- [x] **34. A shortcut earned on foot.** Open a gate from the far side of a trail or repair a crossing after seeing both banks. Make the route a permanent part of the valley once earned.
 - [ ] **35. Weather worth exploring.** After a rainy night, show a mushroom flush in Cedar Hollow or an unusual tide-pool find at Lighthouse Point. Put the hint in the morning forecast or a villager’s dialogue.
 - [ ] **36. People you meet along the trail.** Place a neighbor sketching the view or looking for a dropped scarf. A one-screen detour earns a story or clue.
 - [ ] **37. A field notebook.** Record the place, weather, and time for interesting observations. Give the next hint in words such as “near shallow water after rain.”
