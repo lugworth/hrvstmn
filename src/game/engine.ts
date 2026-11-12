@@ -2,18 +2,13 @@
 
 import { Screen, CellTag, FxExtra, FxKind, BoxStyle, EmoteKind, PaletteMode } from './screen';
 import { COMPACT_MIN_COLS, MIN_ROWS, isCompact, fitMessages, fitText, reflowPages, wrapLines } from './compact';
+import { fencePost } from './chrome';
 import {
   GameMap,
-  build_farm,
-  build_town,
-  build_mountain,
-  build_beach,
-  build_woods,
-  build_ridge,
-  build_river,
-  build_point,
-  build_grove,
-  link_regions,
+  build_valley,
+  open_shortcut,
+  SHORTCUT_IDS,
+  HEDGE_GATE,
   build_house,
   build_interior,
   build_house_upgraded,
@@ -87,6 +82,18 @@ import {
   LIGHTHOUSE_INTRO,
   LIGHTHOUSE_LOG,
   TIDE_POOL_TEXT,
+  INN_SCENES,
+  INN_EVENING_DAY,
+  INN_EVENING_HOURS,
+  INN_LISTEN_FRIEND,
+  INN_JOIN_FRIEND,
+  INN_CARDS_POT,
+  GRAY_COPPER_QTY,
+  GRAY_COPPER_REWARD,
+  GRAY_QUEST_FRIEND,
+  VALLEY_GRID,
+  VALLEY_SHORT,
+  VALLEY_LANDMARKS,
 } from './constants';
 import {
   CoordSet,
@@ -132,6 +139,12 @@ import {
   getBasketTotal,
   rollRegionCatch,
   rollStoneSkips,
+  innSceneFor,
+  innCardsWin,
+  canUpgradeAdvice,
+  nextRegions,
+  compassWord,
+  shopStatus,
 } from './rules';
 
 /** [input noun, output noun, message colour] per Maker. */
@@ -342,6 +355,18 @@ export class Game {
   skip_best: number = 0;
   lighthouse_log: number = 0;
   lighthouse_day: number = -1;
+  /** Friday evenings at Doug's Inn: scene ids seen so far, and the absday you last attended. */
+  inn_scenes_seen: string[] = [];
+  inn_evening_day: number = -1;
+
+  /** Gray's two-chapter request: 0 not asked, 1 copper wanted, 2 note left, 3 finished. */
+  gray_quest: number = 0;
+  /** The watering-can level Gray's note points at (chapter two ends when the can reaches it). */
+  gray_note_level: number = 0;
+  /** Task 33: the Valley Map landmark you pinned (a VALLEY_LANDMARKS id), or null. */
+  map_pin: string | null = null;
+  /** Task 34: shortcuts opened for good (ids from SHORTCUT_IDS, e.g. 'hollow_gate'), carved after the maps are built. */
+  shortcuts: string[] = [];
 
   SAVE_FIELDS = [
     'name', 'farm', 'year', 'season', 'day', 'minutes', 'weather', 'tomorrow', 'gold',
@@ -362,6 +387,9 @@ export class Game {
     'tv_watched_saturday', 'zack_paid_today', 'fest_attended', 'fest_declined',
     // outer-region landmarks
     'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
+    'inn_scenes_seen', 'inn_evening_day',
+    'gray_quest', 'gray_note_level',
+    'map_pin', 'shortcuts',
   ];
 
   constructor(scr: Screen, autostart: boolean = false) {
@@ -370,19 +398,7 @@ export class Game {
     this.started = false;
     this.running = true;
     this.msgs = [];
-    this.maps = {
-      farm: build_farm(),
-      town: build_town(),
-      mountain: build_mountain(),
-      beach: build_beach(),
-      woods: build_woods(),
-      ridge: build_ridge(),
-      river: build_river(),
-      point: build_point(),
-      grove: build_grove(),
-      house: build_house(),
-    };
-    link_regions(this.maps);
+    this.maps = { ...build_valley(), house: build_house() };
     this.last = Date.now() / 1000;
     this.acc = 0.0;
     this.npc_acc = 0.0;
@@ -485,6 +501,14 @@ export class Game {
     this.skip_best = 0;
     this.lighthouse_log = 0;
     this.lighthouse_day = -1;
+    this.inn_scenes_seen = [];
+    this.inn_evening_day = -1;
+    this.gray_quest = 0;
+    this.gray_note_level = 0;
+    this.map_pin = null;
+    // a carved shortcut lives in the maps, so a new farm gets a fresh valley
+    if (this.shortcuts.length) Object.assign(this.maps, build_valley());
+    this.shortcuts = [];
     this.prayed = false;
     this.fest_wins = [];
     this.fest_attended = false;
@@ -728,6 +752,8 @@ export class Game {
     this.objs.farm = { ...(d.objs || {}) };
     this.hp = { ...(d.hp || {}) };
     this.forage = { mountain: {}, beach: {}, ...(d.forage || {}) };
+    this.shortcuts = Array.isArray(this.shortcuts) ? this.shortcuts.filter((id) => SHORTCUT_IDS.includes(id)) : [];
+    for (const id of this.shortcuts) open_shortcut(this.maps, id);
     this.prune_forage();
     this.max_stamina = getMaxStamina(this.power_berries || 0) + (this.house_flags.includes('Big Bed') ? 20 : 0);
     this.stamina = Math.min(this.max_stamina, d.stamina ?? this.max_stamina);
@@ -886,6 +912,8 @@ export class Game {
       }
     } else if (k === 'y' || k === 'Y') {
       await this.today_panel();
+    } else if (k === 'g' || k === 'G') {
+      await this.valley_map();
     } else if (k === 'n' || k === 'N') {
       this.show_minimap = !this.show_minimap;
       this.msg(`Minimap ${this.show_minimap ? 'shown' : 'hidden'}.`, '0C');
@@ -1977,6 +2005,10 @@ export class Game {
       await this.lighthouse_read();
       return;
     }
+    if (signId === 'hedge_latch') {
+      await this.hedge_latch();
+      return;
+    }
 
     if (tile === 'bin') {
       await this.ship();
@@ -2010,6 +2042,23 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- outer-region landmarks
+
+  /** Task 34: the latch of the old hedge gate, on the Mineral Beach side. Lifting it opens the way to Cedar Hollow for good. */
+  async hedge_latch(): Promise<void> {
+    // short lines, so the compact layout (44 columns of text at 50) wraps nothing mid-sentence
+    const info = ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.'];
+    if ((await this.menu('Lift the latch?', ['Yes', 'No'], 0, info)) !== 0) {
+      this.msg('You leave the old gate latched.', '08');
+      return;
+    }
+    this.shortcuts = [...this.shortcuts, 'hollow_gate'];
+    open_shortcut(this.maps, 'hollow_gate');
+    this.prune_forage();
+    const mid = HEDGE_GATE.bAt + 1;
+    this.fx_add('dust', 0, mid, 0.7);
+    this.fx_add('sparkle', 1, mid, 0.9);
+    this.msg('The latch gives with a creak and the old gate swings wide. A short way to Cedar Hollow, for good!', '0B');
+  }
 
   /** Skyline Ridge lookout: the view reads tomorrow's weather, and once a day the cold air revives you. */
   async ridge_lookout(): Promise<void> {
@@ -2358,6 +2407,16 @@ export class Game {
       return;
     }
 
+    if (n === 'Gray' && (await this.gray_quest_talk())) {
+      if (!this.talked.has(n)) {
+        this.talked.add(n);
+        this.friend[n] = clamp((this.friend[n] || 0) + 2, 0, 100);
+      }
+      emitNpcEmote('note');
+      await this.check_heart_and_rival_events(n);
+      return;
+    }
+
     let line = '';
     if (n === this.married && this.mapname === 'house') {
       line = py_rng().choice(SPOUSE_LINES);
@@ -2377,6 +2436,108 @@ export class Game {
     }
     await this.say(line, n);
     await this.check_heart_and_rival_events(n);
+  }
+
+  /** Gray's watering-can advice from the current can level, or null once it is past Saibara's ore upgrades. */
+  gray_advice() {
+    return canUpgradeAdvice(this.can_level_soon(), UPGRADE, CAN_CAP);
+  }
+
+  /** The watering can's level, counting an upgrade already paid for at Saibara's forge. */
+  can_level_soon(): number {
+    const lvl = this.levels['Watering Can'] || 0;
+    return this.upgrading?.[0] === 'Watering Can' ? lvl + 1 : lvl;
+  }
+
+  /** The one-line next step Gray's note gives (Today's Plan and his reminder). */
+  gray_note(): string {
+    const lvl = this.levels['Watering Can'] || 0;
+    if (lvl >= this.gray_note_level) return 'Your can is ready; tell Gray how it went.';
+    if (this.can_level_soon() >= this.gray_note_level) return 'Saibara has your can; collect it, then tell Gray.';
+    const soon = this.can_level_soon();
+    const [cost, ore] = UPGRADE[soon + 1] || [0, ''];
+    return `Take Saibara ${cost}G + 1 ${ore} for a ${LEVELS[soon + 1]} can.`;
+  }
+
+  /** What Gray says when Saibara's ore upgrades have nothing more for the can (Mystrile and up). */
+  gray_past_ore_line(lvl: number): string {
+    if (lvl >= 7) return "A Mythic can? There's nothing left to forge. I just wanted to see it.";
+    if (lvl === 6) {
+      const [cost, ore] = UPGRADE[7];
+      return `Blessed, huh. The only step left is Mythic: ${cost.toLocaleString('en-US')}G and a ${ore} from the deep Spring Mine.`;
+    }
+    if (lvl === 5) return 'That cursed can needs Carter at the church before anyone forges it again.';
+    return "Mystrile's the last thing Saibara forges from ore. Past that, people talk about cursed tools in the Lake Mine.";
+  }
+
+  /**
+   * Task 04. Chapter one: Gray asks for Spring Mine copper. Chapter two: after delivery he
+   * explains which watering-can upgrade is worth saving for and leaves a note; it closes when
+   * the can reaches that level. Returns false when the quest has nothing to say this time.
+   */
+  async gray_quest_talk(): Promise<boolean> {
+    const have = this.inv['Copper'] || 0;
+    if (this.gray_quest === 0) {
+      this.gray_quest = 1;
+      await this.say(
+        `Got a minute? Saibara has me practising on scrap, and I'm out of copper. Bring me ${GRAY_COPPER_QTY} Copper from the Spring Mine and I'll make it worth your while.`,
+        'Gray'
+      );
+      return true;
+    }
+    if (this.gray_quest === 1) {
+      if (have < GRAY_COPPER_QTY) {
+        if (this.talked.has('Gray')) return false;
+        await this.say(`Still need ${GRAY_COPPER_QTY} Copper from the Spring Mine. You've got ${have}.`, 'Gray');
+        return true;
+      }
+      this.take('Copper', GRAY_COPPER_QTY);
+      this.gold += GRAY_COPPER_REWARD;
+      this.friend['Gray'] = clamp((this.friend['Gray'] || 0) + GRAY_QUEST_FRIEND, 0, 100);
+      this.requests_done += 1;
+      this.fx_add('coin', this.px, this.py, 0.8);
+      this.fx_add('text', this.px, this.py, 1.1, { text: `+${GRAY_COPPER_REWARD}G` });
+      await this.say(`That's good copper. Here's ${GRAY_COPPER_REWARD}G. Let me show you something about that watering can of yours.`, 'Gray');
+      const a = this.gray_advice();
+      if (!a) {
+        this.gray_quest = 3;
+        await this.say(this.gray_past_ore_line(this.can_level_soon()), 'Gray');
+        return true;
+      }
+      const { now, next, big } = a;
+      await this.say(
+        `${this.upgrading?.[0] === 'Watering Can' ? "Once Saibara's done, it" : 'Right now it'} holds ${now.cap} and waters ${now.tiles} tile${now.tiles === 1 ? '' : 's'} a pour. ${LEVELS[next.level]} is the one to save for: ${next.cost}G + 1 ${next.ore}, and it holds ${next.cap} and waters ${next.tiles}.`,
+        'Gray'
+      );
+      if (big) {
+        await this.say(
+          big.level > next.level + 1
+            ? `After that, skip worrying until ${LEVELS[big.level]}: that's the big jump, ${big.tiles} tiles a pour. Everything between is a small step.`
+            : `After that, ${LEVELS[big.level]} is the big jump: ${big.tiles} tiles a pour.`,
+          'Gray'
+        );
+      }
+      this.gray_quest = 2;
+      this.gray_note_level = next.level;
+      await this.say(`I wrote it down for you. "${this.gray_note()}" — Gray`, 'Note');
+      this.msg("Gray's note was added to Today's Plan.", '0C');
+      return true;
+    }
+    if (this.gray_quest === 2) {
+      if ((this.levels['Watering Can'] || 0) >= this.gray_note_level) {
+        this.gray_quest = 3;
+        this.friend['Gray'] = clamp((this.friend['Gray'] || 0) + GRAY_QUEST_FRIEND, 0, 100);
+        await this.say(
+          `There it is, a ${LEVELS[this.levels['Watering Can'] || 0]} can. Feels lighter on the wrist than you'd think, right? Saibara even nodded at my copper. Thanks for that.`,
+          'Gray'
+        );
+        return true;
+      }
+      if (this.talked.has('Gray')) return false;
+      await this.say(`Remember my note: ${this.gray_note()}`, 'Gray');
+      return true;
+    }
+    return false;
   }
 
   async propose(n: string): Promise<void> {
@@ -3209,7 +3370,11 @@ export class Game {
       ];
     }
     if (bid === 'inn') {
+      const scene = this.inn_evening_now() ? this.inn_scene() : null;
       return [
+        ...(scene && this.inn_evening_day !== this.absday()
+          ? ([[`Friday evening: ${scene.title}`, () => this.inn_evening()]] as [string, () => Promise<void>][])
+          : []),
         ['Eat Doug\'s Lunch (300G, +50 Stamina)', () => this.inn_lunch()],
         ['Use Inn Telephone (Order Saturday TV Shopping)', () => this.inn_phone_menu()],
       ];
@@ -3514,6 +3679,53 @@ export class Game {
     await this.say(`Leave your ${t} with me. It'll be ready tomorrow morning. Hmph.`, 'Saibara');
   }
 
+  /** True during the Friday-evening window at the inn. */
+  inn_evening_now(): boolean {
+    const [o, c] = INN_EVENING_HOURS;
+    return this.weekday === INN_EVENING_DAY && o * 60 <= this.minutes && this.minutes < c * 60;
+  }
+
+  /** This week's Friday scene: an unseen one if any are left, otherwise the rotation's pick. */
+  inn_scene(): (typeof INN_SCENES)[number] {
+    const week = Math.floor(this.absday() / 7);
+    const id = innSceneFor(week, INN_SCENES.map((s) => s.id), this.inn_scenes_seen || []);
+    return INN_SCENES.find((s) => s.id === id) || INN_SCENES[0];
+  }
+
+  /** One Friday scene per evening: listen in, or take part for a little more. */
+  async inn_evening(): Promise<void> {
+    const scene = this.inn_scene();
+    const sel = await this.menu(scene.title, ['Listen', scene.join, 'Not tonight']);
+    if (sel === null || sel === 2) return;
+    const joined = sel === 1;
+    for (const [who, line] of scene.listen) await this.say(line, who);
+    if (joined) {
+      for (const [who, line] of scene.joined) await this.say(line, who);
+      await this.inn_join_payoff(scene.id);
+    }
+    const pts = joined ? INN_JOIN_FRIEND : INN_LISTEN_FRIEND;
+    for (const n of scene.cast) {
+      if (n in NPCS) this.friend[n] = clamp((this.friend[n] || 0) + pts, 0, 100);
+    }
+    this.inn_evening_day = this.absday();
+    if (!this.inn_scenes_seen.includes(scene.id)) this.inn_scenes_seen.push(scene.id);
+    this.msg(`${joined ? 'You joined in' : 'You listened'}: ${scene.cast.join(', ')} +${pts} friendship.`, '0C');
+  }
+
+  async inn_join_payoff(id: string): Promise<void> {
+    if (id === 'cards') {
+      if (innCardsWin(this.absday())) {
+        this.gold += INN_CARDS_POT;
+        await this.say(`A full house! You take the pot. (+${INN_CARDS_POT}G)`, 'Gotz');
+      } else {
+        await this.say('Doug lays down four aces and grins. Better luck next Friday.', 'Doug');
+      }
+    } else if (id === 'recipes') {
+      this.give('Cookies', 1);
+      this.msg('Ann gave you a plate of Cookies.', '0B');
+    }
+  }
+
   async inn_lunch(): Promise<void> {
     if (this.gold < 300) {
       await this.say('Lunch is 300G, friend.', 'Doug');
@@ -3623,6 +3835,14 @@ export class Game {
       const extra = this.requests.length > 1 ? ` (+${this.requests.length - 1} more)` : '';
       lines.push(`  Board  ${r.npc} needs ${r.qty} × ${r.item}${extra}`);
     }
+    if (this.gray_quest === 1) {
+      lines.push(`  Gray   wants ${GRAY_COPPER_QTY} × Copper from the Spring Mine (have ${this.inv['Copper'] || 0})`);
+    } else if (this.gray_quest === 2) {
+      lines.push(`  Note   ${this.gray_note()}`);
+    }
+    const pinRoute = this.pin_route();
+    if (pinRoute) lines.push(`  Pin    ${pinRoute.landmark.name}: ${pinRoute.text}`);
+    lines.push(`  Forge  ${this.forge_status().text}`);
     lines.push('');
     const bdays = this.birthdays();
     if (bdays.length) lines.push(`  Birthday today: ${bdays.join(', ')} (5× gift bonus!)`);
@@ -3633,6 +3853,14 @@ export class Game {
     const festTomorrow = this.fest_on(1);
     if (festTomorrow) lines.push(`  Tomorrow’s festival: ${festTomorrow[0]}`);
     if (!bdays.length && !bdayTomorrow.length && !fest && !festTomorrow) lines.push('  No birthdays or festivals today.');
+    if (this.weekday === INN_EVENING_DAY) {
+      const [o, c] = INN_EVENING_HOURS;
+      lines.push(
+        this.inn_evening_day === this.absday()
+          ? '  Inn: you spent this Friday evening at Doug\'s.'
+          : `  Inn ${fmt_hour(o)}–${fmt_hour(c)}: ${this.inn_scene().title}`
+      );
+    }
     lines.push('');
     if (this.stamina <= 30 || this.fatigue >= 80) {
       lines.push('  Rest: stamina is low. Eat, soak at the Hot Spring, or sleep early.');
@@ -5135,6 +5363,7 @@ export class Game {
       indoor: !!this.map.indoor,
       minutes: this.minutes,
       season: this.season,
+      day: this.day,
       weather: this.map.indoor ? 'Sunny' : this.weather,
       wetness: this.wetness[this.mapname] || 0,
       cues: s.accessibleCues,
@@ -5150,6 +5379,7 @@ export class Game {
     if (!contour) this.draw_topbar(W);
     this.draw_map(0, mapY, vw, vh);
     if (this.show_minimap) this.draw_minimap(vw, vh);
+    this.draw_pin_hint(vw, mapY);
     if (compact) {
       s.put(0, H - 4, '-'.repeat(W), '01');
       this.draw_status(H - 4, W);
@@ -5190,12 +5420,33 @@ export class Game {
       s.put(x, row, text[0], '07', '00', true);
       s.tag(x, row, { t: 'ui', k: 'hud:label', label: { text, scale, w: width, h } });
     };
+    // Farm chrome: a post-and-rail fence between blocks, and ledger rows with dot leaders.
+    const rail = (row: number) => {
+      if (row >= end) return;
+      for (let i = 0; i < w; i++) {
+        s.put(x + i, row, fencePost(i, w) ? '╪' : '═', '01');
+        s.tag(x + i, row, { t: 'ui', k: 'hud:fence' });
+      }
+    };
+    const ledger = (row: number, name: string, value: string, col = '05') => {
+      if (row >= end) return;
+      pair(row, name, value, col);
+      const from = name.length + 1;
+      const to = w - Math.min(value.length, Math.max(1, w - name.length - 1)) - 1;
+      if (to - from >= 3) s.put(x + from, row, '·'.repeat(to - from), '01');
+    };
 
     const titleH = compact ? 1 : 2;
     label(y, 'HRVSTMN', compact ? 1 : 1.45, w, titleH);
     line(y + titleH, `${this.name} of ${this.farm} Farm`, '04');
+    rail(y + titleH + 1);
     y += titleH + 1 + gap;
-    line(y++, `${this.season_name.toUpperCase()} / YEAR ${this.year}`, '0C', true);
+    // the season glyph (blossom, clover, leaf, snowflake) is drawn by the renderer
+    if (y < end) {
+      s.put(x + 2, y, clip(`${this.season_name.toUpperCase()} / YEAR ${this.year}`, w - 2), '0C', '00', true);
+      s.ctx?.icons.push({ x, y, icon: 'season' });
+    }
+    y++;
     const dayH = compact ? 2 : 3;
     label(y, String(this.day).padStart(2, '0'), compact ? 1.8 : 2.6, 7, dayH);
     s.put(x + 8, y, WEEKDAYS[this.weekday].toUpperCase(), '07', '00', true);
@@ -5210,8 +5461,13 @@ export class Game {
     const cost = preview.cost > 0 ? `-${preview.cost}st${preview.faint ? '!' : ''}` : '';
     pair(y++, 'EQUIPPED', cost, preview.faint ? '08' : '04');
     const idx = TOOLS.includes(tool) ? `[${TOOLS.indexOf(tool) + 1}] ` : '';
-    line(y, idx + tool.toUpperCase(), '07', true);
-    if (idx) s.put(x, y, idx, '0C', '00', true);
+    // the equipped tool is a painted sign: one board the full width of the panel
+    if (y < end) {
+      s.put(x, y, ' '.repeat(w), '07');
+      s.put(x + 1, y, clip(idx + tool.toUpperCase(), w - 2), '07', '00', true);
+      if (idx) s.put(x + 1, y, idx.trimEnd(), '0C', '00', true);
+      for (let i = 0; i < w; i++) s.tag(x + i, y, { t: 'ui', k: 'hud:sign' });
+    }
     y++;
     if (UPGRADABLE.includes(tool)) {
       const level = this.levels[tool] || 0;
@@ -5224,7 +5480,7 @@ export class Game {
       pair(y, `${this.inv[tool] || 0} bags`, inSeason ? 'IN SEASON' : 'OFF-SEASON', inSeason ? '0B' : '08');
     }
     y++;
-    line(y++, '─'.repeat(Math.min(w, 18)), '0C');
+    rail(y++);
     y += gap - 1;
 
     const fraction = clamp(this.stamina / this.max_stamina, 0, 1);
@@ -5238,23 +5494,23 @@ export class Game {
     y++;
     pair(y++, 'FATIGUE', `${this.fatigue}/100`, this.fatigue < 50 ? '04' : this.fatigue < 80 ? '09' : '08');
     y += gap;
-    pair(y++, 'GOLD', `${this.gold}G`, '09');
+    ledger(y++, 'GOLD', `${this.gold}G`, '09');
     const binValue = py_sum(Object.entries(this.bin).map(([item, qty]) => (ITEMS[item] ? ITEMS[item][0] : 0) * qty));
-    pair(y++, 'BIN', `${binValue}G`, binValue ? '09' : '04');
+    ledger(y++, 'BIN', `${binValue}G`, binValue ? '09' : '04');
     const basket = getBasketTotal(this.basket);
     const held = this.held === 'Basket' ? `Basket ${basket}/${BASKET_CAPACITY}`
       : this.held ? `${this.held} x${this.inv[this.held] || 0}`
       : basket ? `Basket ${basket}/${BASKET_CAPACITY}` : '—';
-    pair(y++, 'HELD', held, this.held ? '0A' : basket ? '09' : '04');
+    ledger(y++, 'HELD', held, this.held ? '0A' : basket ? '09' : '04');
     y += gap;
     if (this.upgrading) line(y++, `FORGE  ${this.upgrading[0]}`, '09');
     if (this.riding_horse) line(y++, 'RIDING HORSE / 2x', '09');
-    if (this.chickens) pair(y++, 'COOP', `${this.chickens} hens / ${this.eggs} eggs`);
+    if (this.chickens) ledger(y++, 'COOP', `${this.chickens} hens / ${this.eggs} eggs`);
     if (this.animals.length) {
       const hungry = this.animals.filter((animal) => !animal.fed).length;
-      pair(y++, 'BARN', hungry ? `${hungry} hungry` : `${this.animals.length} fed`, hungry ? '08' : '04');
+      ledger(y++, 'BARN', hungry ? `${hungry} hungry` : `${this.animals.length} fed`, hungry ? '08' : '04');
     }
-    if (this.power_berries || this.has_mystic_berry) pair(y++, 'BERRIES', `${this.power_berries}${this.has_mystic_berry ? ' + Mystic' : ''}`);
+    if (this.power_berries || this.has_mystic_berry) ledger(y++, 'BERRIES', `${this.power_berries}${this.has_mystic_berry ? ' + Mystic' : ''}`);
     if (y + 2 < end) line(end - 1, this.map.title + (this.map.indoor ? ' / INDOORS' : ''), '04');
   }
 
@@ -5265,6 +5521,11 @@ export class Game {
     const compact = isCompact(W);
     const sep = compact ? ' ' : '  ';
     let x = 1;
+    if (s.style === 'enhanced') {
+      // the renderer draws the season glyph into this blank cell, like the weather icon
+      s.ctx?.icons.push({ x, y: 0, icon: 'season' });
+      x = 2;
+    }
     const segments: [string, string][] = [
       [`${sn} ${this.day}`, SEASON_COL[sn]],
       [` ${WEEKDAYS[this.weekday]}`, '05'],
@@ -5452,6 +5713,221 @@ export class Game {
     }
   }
 
+  /** Region links between the outdoor maps, read from their edge warps. */
+  valley_links(): Record<string, string[]> {
+    const links: Record<string, string[]> = {};
+    for (const name of OUTDOOR_MAPS) {
+      const m = this.maps[name];
+      if (!m) continue;
+      links[name] = [...new Set(Object.values(m.warps).map((w) => w[0]).filter((d) => OUTDOOR_MAPS.includes(d) && d !== name))];
+    }
+    return links;
+  }
+
+  /** Saibara's Forge today: open now, or when it next opens (festivals close it too). */
+  forge_status(): { open: boolean; text: string } {
+    return this.shop_status('blacksmith');
+  }
+
+  /** Any shop's hours from here, skipping festival days the way fest_closed() does. */
+  shop_status(bid: string): { open: boolean; text: string } {
+    const festShut = (d: number) => !['church', 'sprites'].includes(bid) && !!this.fest_on(d);
+    return shopStatus(HOURS[bid], this.weekday, this.minutes, festShut);
+  }
+
+  /** Where the pinned landmark is from here: the exit to take next, or the way to walk. */
+  pin_route(): {
+    landmark: (typeof VALLEY_LANDMARKS)[number];
+    /** The cell to head for on this map (an exit, or the landmark itself), if any. */
+    cell: [number, number] | null;
+    arrow: string;
+    short: string;
+    text: string;
+    /** A short form for narrow screens. */
+    brief: string;
+  } | null {
+    const lm = VALLEY_LANDMARKS.find((l) => l.id === this.map_pin);
+    if (!lm) return null;
+    const m = this.map;
+    const arrowFor = (dx: number, dy: number) =>
+      dx === 0 && dy === 0 ? '·' : Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? '<' : '>') : dy < 0 ? '^' : 'v';
+    const nearestWarp = (pred: (dest: string) => boolean): [number, number] | null => {
+      let best: [number, number] | null = null;
+      let bestD = Infinity;
+      for (const [k, w] of Object.entries(m.warps)) {
+        if (!pred(w[0])) continue;
+        const [x, y] = parseCoordKey(k);
+        const d = Math.abs(x - this.px) + Math.abs(y - this.py);
+        if (d < bestD) [best, bestD] = [[x, y], d];
+      }
+      return best;
+    };
+    const towards = (cell: [number, number] | null, short: string, text: string, brief: string = text) => {
+      const [dx, dy] = cell ? [cell[0] - this.px, cell[1] - this.py] : [0, 0];
+      return { landmark: lm, cell, arrow: arrowFor(dx, dy), short, text, brief };
+    };
+    const inside = this.interior_bid[this.mapname];
+    if ((inside && inside === lm.bid) || (this.mapname === 'house' && lm.id === 'farmhouse')) {
+      return towards(null, lm.name, "you're there");
+    }
+    if (this.mapname === 'mine') {
+      let up: [number, number] | null = null;
+      for (let y = 0; y < m.h && !up; y++) for (let x = 0; x < m.w && !up; x++) if (m.tile(x, y) === 'up') up = [x, y];
+      return towards(up, "Mother's Hill", up ? "climb out to Mother's Hill" : 'find your way out first', 'climb out');
+    }
+    if (!OUTDOOR_MAPS.includes(this.mapname)) {
+      const out = nearestWarp((d) => OUTDOOR_MAPS.includes(d));
+      if (!out) return towards(null, 'way out', 'find your way out first');
+      const dest = m.warps[pkey(out[0], out[1])][0];
+      return towards(out, 'outside', dest === lm.map ? 'step outside' : `step outside to ${this.maps[dest].title}`, 'step outside');
+    }
+    if (this.mapname === lm.map) {
+      const [dx, dy] = [lm.x - this.px, lm.y - this.py];
+      const dist = Math.abs(dx) + Math.abs(dy);
+      return towards(dist <= 1 ? null : [lm.x, lm.y], lm.name, dist <= 1 ? "you're there" : `${dist} steps ${compassWord(dx, dy)}`);
+    }
+    // of the neighbours on a shortest region walk, take the one whose exit is nearest you
+    const options = nextRegions(this.valley_links(), this.mapname, lm.map);
+    if (!options.length) return towards(null, lm.name, 'no path from here');
+    const exitDist = (n: string) => {
+      const c = nearestWarp((d) => d === n);
+      return c ? Math.abs(c[0] - this.px) + Math.abs(c[1] - this.py) : Infinity;
+    };
+    const next = options.reduce((best, n) => (exitDist(n) < exitDist(best) ? n : best));
+    const cell = nearestWarp((d) => d === next);
+    const side = !cell ? '' : cell[0] === 0 ? 'west' : cell[0] === m.w - 1 ? 'east' : cell[1] === 0 ? 'north' : cell[1] === m.h - 1 ? 'south' : compassWord(cell[0] - this.px, cell[1] - this.py);
+    const title = this.maps[next].title;
+    const exitWord = side ? `${side} exit` : 'exit';
+    return towards(cell, title, `${exitWord} to ${title}${next === lm.map ? '' : `, toward ${this.maps[lm.map].title}`}`, `${exitWord}: ${title}`);
+  }
+
+  /** One short pointer line at the top-left of the map view while something is pinned. */
+  draw_pin_hint(vw: number, y: number): void {
+    const r = this.pin_route();
+    if (!r || this.show_minimap) return;
+    const text = isCompact(this.scr.w) ? ` ${r.arrow} ${r.landmark.glyph} ${r.brief} ` : ` ${r.arrow} ${r.landmark.glyph} ${r.landmark.name}: ${r.text} `;
+    const clip = text.length > vw - 2 ? text.slice(0, Math.max(0, vw - 3)) + '…' : text;
+    this.scr.put(1, y, clip, '0E', '00');
+    for (let i = 0; i < clip.length; i++) this.scr.tag(1 + i, y, { t: 'ui', k: 'hud:pin' });
+  }
+
+  /** Task 33: the labeled Valley Map. Arrows choose a landmark, Enter pins it, Esc closes. */
+  async valley_map(): Promise<void> {
+    let sel = Math.max(0, VALLEY_LANDMARKS.findIndex((l) => l.id === this.map_pin));
+    if (!this.map_pin) {
+      const here = VALLEY_LANDMARKS.findIndex((l) => l.map === this.mapname);
+      if (here >= 0) sel = here;
+    }
+    const n = VALLEY_LANDMARKS.length;
+    const regionStep = (dir: 1 | -1): number => {
+      const cur = VALLEY_LANDMARKS[sel].map;
+      for (let i = 1; i <= n; i++) {
+        const j = (((sel + dir * i) % n) + n) % n;
+        if (VALLEY_LANDMARKS[j].map !== cur) {
+          // land on the first landmark of that region
+          let k = j;
+          while (VALLEY_LANDMARKS[(k - 1 + n) % n].map === VALLEY_LANDMARKS[j].map && (k - 1 + n) % n !== j) k = (k - 1 + n) % n;
+          return k;
+        }
+      }
+      return sel;
+    };
+    while (true) {
+      const k = await this.modal(() => this.draw_valley(sel));
+      if (['left', 'a', 'h', 'btab'].includes(k)) sel = (sel - 1 + n) % n;
+      else if (['right', 'd', 'l', 'tab'].includes(k)) sel = (sel + 1) % n;
+      else if (['up', 'w', 'k'].includes(k)) sel = regionStep(-1);
+      else if (['down', 's', 'j'].includes(k)) sel = regionStep(1);
+      else if (OK_KEYS.has(k)) {
+        const lm = VALLEY_LANDMARKS[sel];
+        this.map_pin = this.map_pin === lm.id ? null : lm.id;
+        this.msg(this.map_pin ? `Pinned ${lm.name} on your map.` : 'Map pin cleared.', '0E');
+      } else if (CANCEL_KEYS.has(k) || k === 'g' || k === 'G') return;
+    }
+  }
+
+  /** Draw the Valley Map overlay: region boxes in their real arrangement, then the legend. */
+  draw_valley(sel: number): void {
+    const s = this.scr;
+    const [W, H] = [s.w, s.h];
+    s.box(0, 0, W, H, '0D', '00', 'Valley Map');
+    const cw = Math.min(24, Math.floor((W - 2) / 4));
+    const bw = cw - 1;
+    const iw = bw - 2;
+    const ox = 1 + Math.floor((W - 2 - cw * 4 + 1) / 2);
+    const oy = 1;
+    const at = (name: string): [number, number] => {
+      const [c, r] = VALLEY_GRID[name];
+      return [ox + c * cw, oy + r * 4];
+    };
+    const picked = VALLEY_LANDMARKS[sel];
+    const curRegion = OUTDOOR_MAPS.includes(this.mapname) ? this.mapname : null;
+    // connectors first, so boxes sit on top of them
+    const links = this.valley_links();
+    for (const [a, bs] of Object.entries(links)) {
+      for (const b of bs) {
+        if (!(a in VALLEY_GRID) || !(b in VALLEY_GRID) || a > b) continue;
+        const [[ax, ay], [bx2, by2]] = [at(a), at(b)];
+        if (ay === by2) s.put(Math.max(ax, bx2) - 1, ay + 1, '═', '03');
+        else s.put(ax + Math.floor(bw / 2), Math.max(ay, by2) - 1, '║', '03');
+      }
+    }
+    for (const name of Object.keys(VALLEY_GRID)) {
+      const m = this.maps[name];
+      if (!m) continue;
+      const [x, y] = at(name);
+      const title = m.title.length <= iw ? m.title : (VALLEY_SHORT[name] || name).slice(0, iw);
+      const hot = name === picked.map;
+      s.box(x, y, bw, 3, hot ? '0D' : name === curRegion ? '0C' : '03', '00');
+      s.put(x + 1, y, title, hot ? '07' : '04', '00', hot);
+      const used = new Set<number>();
+      const place = (wx: number) => {
+        let gx = Math.round((wx * (iw - 1)) / Math.max(1, m.w - 1));
+        for (let d = 0; d < iw; d++) {
+          for (const c of [gx + d, gx - d]) {
+            if (c >= 0 && c < iw && !used.has(c)) {
+              used.add(c);
+              return c;
+            }
+          }
+        }
+        return null;
+      };
+      for (const lm of VALLEY_LANDMARKS.filter((l) => l.map === name)) {
+        const gx = place(lm.x);
+        if (gx === null) continue;
+        const isSel = lm === picked;
+        const pinned = lm.id === this.map_pin;
+        s.put(x + 1 + gx, y + 1, lm.glyph, isSel ? '00' : pinned ? '0E' : '0A', isSel ? '0D' : '00', isSel || pinned);
+      }
+      if (name === curRegion) {
+        const gx = place(this.px);
+        if (gx !== null) s.put(x + 1 + gx, y + 1, '@', '0D', '00', true);
+      }
+    }
+    // legend
+    const lines: [string, string][] = [];
+    const region = this.maps[picked.map]?.title || picked.map;
+    lines.push([`> ${picked.glyph} ${picked.name}, ${region}${picked.id === this.map_pin ? '  [pinned]' : ''}`, '07']);
+    if (picked.bid && HOURS[picked.bid] && picked.bid !== 'blacksmith') {
+      lines.push([`  ${this.shop_status(picked.bid).text}`, '04']);
+    }
+    const f = this.forge_status();
+    lines.push([`  ⚒ Forge ${f.text}`, f.open ? '0B' : '08']);
+    const r = this.pin_route();
+    if (r) lines.push([`  Pin: ${r.landmark.name}: ${r.text}`, '0E']);
+    lines.push([`  ${VALLEY_LANDMARKS.filter((l) => l.map === picked.map).map((l) => `${l.glyph} ${l.name}`).join('  ')}`, '05']);
+    const pinWord = picked.id === this.map_pin ? 'unpin' : 'pin';
+    const hintText = isCompact(W) ? `<> pick  ^v region  Enter ${pinWord}  Esc` : `Left/Right landmark  Up/Down region  Enter ${pinWord}  Esc close`;
+    const top = oy + 4 * 4 - 1;
+    const room = H - 1 - top;
+    const wrap = (items: [string, string][]) => items.flatMap(([text, col]) => wrapLines([text], W - 4).map((ln): [string, string] => [ln, col]));
+    // the key hint always shows in full; the body drops its later lines (the region list first) when space runs out
+    const hint = wrap([[`  ${hintText}`, '03']]);
+    const body = wrap(lines).slice(0, Math.max(0, room - hint.length));
+    [...body, ...hint].forEach(([text, col], i) => s.put(2, top + i, text.slice(0, W - 4), col));
+  }
+
   draw_minimap(vw: number, vh: number): void {
     if (vw < 30 || vh < 12) return;
     const s = this.scr;
@@ -5461,7 +5937,12 @@ export class Game {
     const bx = vw - gw - 3;
     const by = 2;
     if (bx < 0 || by + gh + 2 > s.h) return;
-    s.box(bx, by, gw + 2, gh + 2, '0C', '00', 'Map', '07', { accent: '0C' });
+    const route = this.pin_route();
+    // box() draws the title as ' title ' from two cells in, so it has gw - 3 cells before the corner
+    const room = gw - 3;
+    const pinTitle = route ? `${route.arrow} ${route.short}` : 'Map';
+    const title = pinTitle.length > room ? pinTitle.slice(0, room - 1) + '…' : pinTitle;
+    s.box(bx, by, gw + 2, gh + 2, '0C', '00', title, '07', { accent: '0C' });
     // Keep the map's aspect ratio and include its outer edges. Small interiors stay
     // 1:1; large outdoor maps sample the full extent without dropping the last row/column.
     const drawW = Math.min(gw, m.w);
@@ -5517,6 +5998,10 @@ export class Game {
     for (const [n, [x, y]] of Object.entries(this.npc_pos)) {
       if (NPCS[n]?.where?.[0] === this.mapname) mark(x, y, 'o', '0C', 'minimap:npc');
     }
+    if (route?.cell) {
+      const [ex, ey] = route.cell;
+      mark(ex, ey, route.arrow, '0E', 'minimap:pin');
+    }
     mark(this.px, this.py, '@', '0D', 'minimap:player');
   }
 
@@ -5540,7 +6025,10 @@ export class Game {
     const idx = TOOLS.includes(t) ? `[${TOOLS.indexOf(t) + 1}] ` : '';
     s.ctx?.icons.push({ x, y, icon: 'tool' });
     seg(' ', '02');
-    seg(`${idx}${t} `, '07', true);
+    const signX = x;
+    if (seg(`${idx}${t} `, '07', true)) {
+      for (let i = signX; i < x; i++) s.tag(i, y, { t: 'ui', k: 'hud:sign' });
+    }
     if (t === 'Watering Can') seg(`${this.water}/${CAN_CAP[this.levels[t] || 0]} `, '0D');
     else if (t.endsWith(' Seeds')) {
       const crop = t.slice(0, -6);
@@ -5705,20 +6193,26 @@ export class Game {
     const count = Math.min(3, this.scr.h - y0);
     if (count <= 0) return;
     const recent = this.msgs.slice(-count);
+    const enhanced = this.scr.style === 'enhanced';
     if (isCompact(this.scr.w)) {
       // Narrow screens wrap messages instead of cutting them off; the newest always shows.
       const lines = fitMessages(recent.map(([text]) => text), this.scr.w - 2, count);
+      const newest = lines.findIndex(({ age }) => age === 0);
       lines.forEach(({ text, age }, i) => {
         const fg = age === 0 ? recent[recent.length - 1][1] : age === 1 ? cols[1]! : cols[0]!;
         this.scr.put(1, y0 + i, text, fg);
       });
+      // no column to spare on a phone: the bullet takes the blank left margin
+      if (enhanced && newest >= 0) this.scr.ctx?.icons.push({ x: 0, y: y0 + newest, icon: 'note' });
       return;
     }
+    const x0 = enhanced ? 3 : 1;
     for (let i = 0; i < recent.length; i++) {
       const [text, col] = recent[i];
       const age = recent.length - 1 - i;
       const fg = age === 0 ? col : age === 1 ? cols[1]! : cols[0]!;
-      this.scr.put(1, y0 + i, text.slice(0, this.scr.w - 2), fg);
+      this.scr.put(x0, y0 + i, text.slice(0, this.scr.w - x0 - 1), fg);
+      if (enhanced && age === 0) this.scr.ctx?.icons.push({ x: 1, y: y0 + i, icon: 'note' });
     }
   }
 

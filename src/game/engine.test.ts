@@ -3,6 +3,7 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { Screen } from './screen';
 import { Game } from './engine';
+import { HEDGE_GATE } from './map';
 import {
   ITEMS,
   FORAGE,
@@ -18,6 +19,14 @@ import {
   DIG_CAP,
   DIG_MAPS,
   DIG_RELICS,
+  INN_SCENES,
+  INN_EVENING_DAY,
+  INN_LISTEN_FRIEND,
+  INN_JOIN_FRIEND,
+  GRAY_COPPER_QTY,
+  GRAY_COPPER_REWARD,
+  GRAY_QUEST_FRIEND,
+  VALLEY_LANDMARKS,
 } from './constants';
 
 const store: Record<string, string> = {};
@@ -431,3 +440,560 @@ function await_rare(g: any): string | null {
   for (let i = 0; i < 5000; i++) if (g.roll_catch() === rare) return rare;
   return null;
 }
+
+describe("Friday evenings at Doug's Inn (task 01)", () => {
+  // Spring 5, Year 1 is a Friday (absday 4).
+  const friday = (minutes = 19 * 60) => {
+    const g = fresh();
+    g.day = 5;
+    g.minutes = minutes;
+    assert.equal(g.weekday, INN_EVENING_DAY);
+    return g;
+  };
+  const labels = async (g: any) => (await g.shop_options('inn')).map((o: any) => o[0]);
+
+  test('the inn offers one scene on Friday evenings only', async () => {
+    const g = friday();
+    assert.ok((await labels(g))[0].startsWith('Friday evening: '));
+    assert.ok(!(await labels(friday(15 * 60))).some((l: string) => l.startsWith('Friday')), 'not in the afternoon');
+    assert.ok(!(await labels(friday(22 * 60))).some((l: string) => l.startsWith('Friday')), 'not after 10 PM');
+    const thu = friday();
+    thu.day = 4;
+    assert.ok(!(await labels(thu)).some((l: string) => l.startsWith('Friday')), 'not on Thursday');
+  });
+
+  test('listening raises friendship once and the scene leaves the menu for the night', async () => {
+    const g = friday();
+    const said = quiet(g);
+    g.menu = async () => 0; // Listen
+    const scene = g.inn_scene();
+    const before = scene.cast.map((n: string) => g.friend[n] || 0);
+    await g.inn_evening();
+    assert.deepEqual(scene.cast.map((n: string) => g.friend[n]), before.map((f: number) => f + INN_LISTEN_FRIEND));
+    assert.equal(said.length, scene.listen.length);
+    assert.ok(g.inn_scenes_seen.includes(scene.id));
+    assert.ok(!(await labels(g)).some((l: string) => l.startsWith('Friday')));
+  });
+
+  test('joining gives more friendship and the scene payoff', async () => {
+    const g = friday();
+    quiet(g);
+    g.menu = async () => 1; // join in
+    while (g.inn_scene().id !== 'recipes') g.inn_scenes_seen.push(g.inn_scene().id);
+    const before = g.friend['Ann'] || 0;
+    const cookies = g.inv['Cookies'] || 0;
+    await g.inn_evening();
+    assert.equal(g.friend['Ann'], before + INN_JOIN_FRIEND);
+    assert.equal(g.inv['Cookies'], cookies + 1);
+  });
+
+  test('a scene you have seen waits until the others have been seen', () => {
+    const g = friday();
+    const first = g.inn_scene().id;
+    g.day = 12; // the next Friday
+    g.inn_scenes_seen = [first];
+    assert.notEqual(g.inn_scene().id, first);
+    g.inn_scenes_seen = INN_SCENES.map((s) => s.id);
+    assert.ok(INN_SCENES.some((s) => s.id === g.inn_scene().id), 'all seen: the rotation repeats');
+  });
+
+  test("Today's Plan names the evening on Fridays, and the attendance survives a reload", async () => {
+    const g = friday();
+    assert.ok(g.today_lines().some((l: string) => l.includes(g.inn_scene().title)));
+    quiet(g);
+    g.menu = async () => 0;
+    await g.inn_evening();
+    assert.ok(g.today_lines().some((l: string) => l.includes("Friday evening at Doug's")));
+    const h = fresh();
+    h.applySaveData(JSON.parse(JSON.stringify(g.snapshot())));
+    assert.deepEqual(h.inn_scenes_seen, g.inn_scenes_seen);
+    assert.equal(h.inn_evening_day, g.absday());
+    const old = JSON.parse(JSON.stringify(g.snapshot()));
+    delete old.inn_scenes_seen;
+    delete old.inn_evening_day;
+    const k = fresh();
+    k.applySaveData(old);
+    assert.deepEqual(k.inn_scenes_seen, []);
+    assert.equal(k.inn_evening_day, -1);
+  });
+});
+
+describe("Gray's two-chapter copper request (task 04)", () => {
+  const talkGray = async (g: any) => {
+    const said: string[] = [];
+    g.say = async (text: string) => { said.push(text); };
+    await g.talk('Gray');
+    return said;
+  };
+
+  test('chapter one: Gray asks for copper, then reminds you once a day', async () => {
+    const g = fresh();
+    const ask = await talkGray(g);
+    assert.equal(g.gray_quest, 1);
+    assert.ok(ask[0].includes(`${GRAY_COPPER_QTY} Copper`));
+    g.talked.clear();
+    const remind = await talkGray(g);
+    assert.ok(remind[0].includes('Still need'));
+    assert.equal(g.gray_quest, 1, 'nothing delivered without copper');
+    assert.ok(g.today_lines().some((l: string) => l.includes('Copper from the Spring Mine')));
+  });
+
+  test('delivering copper pays, starts chapter two and leaves a note for the next can upgrade', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY + 1);
+    const [gold, friend, done] = [g.gold, g.friend['Gray'] || 0, g.requests_done];
+    g.talked.clear();
+    const said = await talkGray(g);
+    assert.equal(g.inv['Copper'], 1, 'takes exactly the copper asked for');
+    assert.equal(g.gold, gold + GRAY_COPPER_REWARD);
+    assert.ok(g.friend['Gray'] >= friend + GRAY_QUEST_FRIEND);
+    assert.equal(g.requests_done, done + 1);
+    assert.equal(g.gray_quest, 2);
+    assert.equal(g.gray_note_level, 1, 'a Basic can is pointed at Copper');
+    assert.ok(said.some((l) => l.includes('Copper is the one to save for') && l.includes('1000G')));
+    assert.ok(said.some((l) => l.includes('Mystrile') && l.includes('15 tiles')), 'names the big jump');
+    assert.ok(g.today_lines().some((l: string) => l.includes('Take Saibara 1000G + 1 Copper')));
+  });
+
+  test('chapter two closes once the can reaches the noted level', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.talked.clear();
+    await talkGray(g);
+    g.talked.clear();
+    assert.ok((await talkGray(g))[0].includes('Remember my note'));
+    g.levels['Watering Can'] = 1;
+    const friend = g.friend['Gray'];
+    const said = await talkGray(g);
+    assert.equal(g.gray_quest, 3);
+    assert.ok(said[0].includes('Copper can'));
+    assert.ok(g.friend['Gray'] >= friend + GRAY_QUEST_FRIEND);
+    assert.ok(!g.today_lines().some((l: string) => l.startsWith('  Note')));
+    g.talked.clear();
+    await talkGray(g); // ordinary chatter afterwards
+    assert.equal(g.gray_quest, 3);
+  });
+
+  for (const [lvl, words] of [[4, 'Lake Mine'], [5, 'Carter'], [6, 'Mythic'], [7, 'nothing left']] as const) {
+    test(`a level ${lvl} can gets a closing line about ${words}, and no note`, async () => {
+      const g = fresh();
+      g.levels['Watering Can'] = lvl;
+      await talkGray(g);
+      g.give('Copper', GRAY_COPPER_QTY);
+      g.talked.clear();
+      const said = await talkGray(g);
+      assert.equal(g.gray_quest, 3);
+      assert.ok(said.some((l) => l.includes(words)), said.join(' / '));
+      assert.ok(!g.today_lines().some((l: string) => l.startsWith('  Note')));
+    });
+  }
+
+  test('from a Silver can, Gold is next and Mystrile is named as the big jump without "everything between"', async () => {
+    const g = fresh();
+    g.levels['Watering Can'] = 2;
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.talked.clear();
+    const said = await talkGray(g);
+    assert.ok(said.some((l) => l.includes('Gold is the one to save for')));
+    const jump = said.find((l) => l.includes('Mystrile'))!;
+    assert.ok(jump && !jump.includes('Everything between'), jump);
+  });
+
+  test('a can already at the forge is counted: the advice and note point past it', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.upgrading = ['Watering Can', g.absday() + 1];
+    g.talked.clear();
+    const said = await talkGray(g);
+    assert.ok(said.some((l) => l.startsWith("Once Saibara's done") && l.includes('Silver is the one to save for')));
+    assert.equal(g.gray_note_level, 2);
+    assert.ok(g.today_lines().some((l: string) => l.includes('Take Saibara 2000G + 1 Silver')));
+    // paying for the noted upgrade turns the note into a pick-up reminder
+    g.upgrading = null;
+    g.levels['Watering Can'] = 1;
+    g.upgrading = ['Watering Can', g.absday() + 1];
+    assert.ok(g.today_lines().some((l: string) => l.includes('Saibara has your can')));
+  });
+
+  test('marrying Gray mid-quest does not strand it', async () => {
+    const g = fresh();
+    await talkGray(g);
+    g.married = 'Gray';
+    g.mapname = 'house';
+    g.give('Copper', GRAY_COPPER_QTY);
+    g.talked.clear();
+    await talkGray(g);
+    assert.equal(g.gray_quest, 2);
+    assert.equal(g.inv['Copper'] || 0, 0);
+  });
+
+  test("quest talks still check for the Mary & Gray rival event", async () => {
+    const g = fresh();
+    let checked = 0;
+    g.check_heart_and_rival_events = async () => { checked++; };
+    await talkGray(g);
+    assert.equal(checked, 1);
+  });
+
+  test('a held gift still goes to Gray as a gift, not to the quest', async () => {
+    const g = fresh();
+    g.give('Copper', 1);
+    g.held = 'Copper';
+    await talkGray(g);
+    assert.equal(g.gray_quest, 0);
+    assert.ok(g.gifted.has('Gray'));
+  });
+
+  test('quest progress survives a reload; old saves start before chapter one', () => {
+    const g = fresh();
+    g.gray_quest = 2;
+    g.gray_note_level = 2;
+    const h = fresh();
+    h.applySaveData(JSON.parse(JSON.stringify(g.snapshot())));
+    assert.equal(h.gray_quest, 2);
+    assert.equal(h.gray_note_level, 2);
+    const old = JSON.parse(JSON.stringify(g.snapshot()));
+    delete old.gray_quest;
+    delete old.gray_note_level;
+    const k = fresh();
+    k.applySaveData(old);
+    assert.equal(k.gray_quest, 0);
+  });
+});
+
+describe('labeled valley map (task 33)', () => {
+  const rowText = (g: any, y: number) => g.scr.buf[y].map((c: any) => c[0]).join('');
+  const screenText = (g: any) => g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).join('\n');
+
+  test('every landmark sits on a real door or sign of its map', () => {
+    const g = fresh();
+    for (const lm of VALLEY_LANDMARKS) {
+      const m = g.maps[lm.map];
+      assert.ok(m, `${lm.id}: map ${lm.map}`);
+      const k = `${lm.x},${lm.y}`;
+      assert.ok(k in m.doors || k in m.signs, `${lm.id} at ${k} on ${lm.map}`);
+      if (lm.bid) assert.equal(m.doors[k], lm.bid, `${lm.id} door is ${lm.bid}`);
+    }
+    const glyphs = VALLEY_LANDMARKS.map((l) => l.glyph);
+    assert.equal(new Set(glyphs).size, glyphs.length, 'symbols are distinct');
+  });
+
+  test('the pin points to the next map exit, then to the landmark itself', () => {
+    const g = fresh();
+    g.map_pin = 'forge';
+    g.warp('farm', 14, 10);
+    let r = g.pin_route();
+    assert.equal(r.text, 'west exit to Ironwood Grove');
+    assert.equal(r.cell[0], 0, 'the exit cell is on the west edge');
+    assert.equal(g.maps.farm.warps[`${r.cell[0]},${r.cell[1]}`][0], 'grove');
+    g.warp('woods', 30, 2);
+    assert.equal(g.pin_route().text, 'north exit to Your Farm, toward Ironwood Grove');
+    g.warp('grove', 30, 16);
+    r = g.pin_route();
+    assert.match(r.text, /^\d+ steps west$/);
+    assert.deepEqual(r.cell, [18, 16]);
+    g.warp('in_inn', ...g.interiors.inn.entry);
+    assert.equal(g.pin_route().text, 'step outside to Mineral Town');
+    g.map_pin = 'lookout';
+    g.warp('beach', 30, 5);
+    assert.equal(g.pin_route().text, "north exit to Mineral Town, toward Skyline Ridge");
+  });
+
+  test('the minimap and the map view show where to go while a pin is set', () => {
+    const g = fresh();
+    g.warp('farm', 14, 10);
+    g.map_pin = 'forge';
+    g.show_minimap = true;
+    g.render();
+    const tags = g.scr.tags.flat().filter(Boolean).map((t: any) => t.k);
+    assert.ok(tags.includes('minimap:pin'), 'exit marked on the minimap');
+    assert.ok(screenText(g).includes(' < Ironwood Grove '), 'minimap title names the next region');
+    // the title stays inside the minimap's frame: its top row ends in a corner, and nothing spills past it
+    const top = g.scr.buf.findIndex((r: any) => r.map((c: any) => c[0]).join('').includes('< Ironwood Grove'));
+    const row = rowText(g, top);
+    const start = row.indexOf('+-');
+    const end = row.indexOf('+', start + 1);
+    assert.ok(end > row.indexOf('Ironwood Grove'), row);
+    // a next region too long for the frame is clipped with an ellipsis, still inside the corner
+    g.map_pin = 'lighthouse';
+    g.warp('beach', 30, 5);
+    g.render();
+    const lrow = g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).find((r: string) => r.includes('> Lighthouse'));
+    assert.ok(lrow && lrow.includes('…'), lrow);
+    assert.ok(lrow.indexOf('+', lrow.indexOf('…')) === lrow.indexOf('…') + 2, lrow);
+    g.map_pin = 'forge';
+    g.warp('farm', 14, 10);
+    g.show_minimap = false;
+    g.render();
+    const hint = g.scr.buf[0].map((c: any) => c[0]).join('');
+    assert.ok(hint.includes("⚒ Saibara's Forge: west exit"), hint);
+    g.map_pin = null;
+    g.render();
+    assert.ok(!rowText(g, 0).includes("Saibara's Forge"), 'no pointer without a pin');
+  });
+
+  test('G opens the map; arrows pick a landmark, Enter pins and unpins, Esc closes', async () => {
+    const g = fresh();
+    g.warp('farm', 14, 10);
+    for (const k of ['right', 'enter', 'esc']) g.scr.pushKey(k);
+    await g.handle('g');
+    assert.equal(g.map_pin, 'forge', 'from the farmhouse, one step right is the forge');
+    for (const k of ['enter', 'esc']) g.scr.pushKey(k);
+    await g.handle('G');
+    assert.equal(g.map_pin, null, 'Enter on the pinned landmark clears it');
+    for (const k of ['down', 'enter', 'esc']) g.scr.pushKey(k);
+    await g.valley_map();
+    assert.equal(g.map_pin, 'forge', 'down moves to the next region');
+  });
+
+  for (const [w, h] of [[80, 24], [50, 24], [50, 28], [132, 40]]) {
+    test(`the valley map fits a ${w}x${h} screen with every symbol and the forge hours`, () => {
+      const g = fresh();
+      g.scr = new Screen(w, h);
+      g.warp('town', 30, 12);
+      g.render();
+      g.draw_valley(0);
+      const text = screenText(g);
+      for (const lm of VALLEY_LANDMARKS) assert.ok(text.includes(lm.glyph), `${lm.id} ${lm.glyph}`);
+      assert.ok(text.includes('Forge '), 'forge status line');
+      assert.ok(text.includes(w < 80 ? '<> pick  ^v region  Enter pin  Esc' : 'Left/Right landmark  Up/Down region  Enter pin  Esc close'), 'whole key hint');
+      for (const row of g.scr.buf) assert.equal(row.length, w);
+      // the right border of the overlay is intact on the region rows
+      for (let y = 1; y < 16; y++) assert.equal(g.scr.buf[y][w - 1][0], '|', `row ${y}: ${rowText(g, y)}`);
+    });
+  }
+
+  test("Today's Plan shows the forge hours always and the pin when set; the pin survives a reload", () => {
+    const g = fresh();
+    g.day = 2;
+    g.minutes = 12 * 60;
+    assert.ok(g.today_lines().includes('  Forge  open until 4PM'));
+    g.day = 4; // Thursday
+    assert.ok(g.today_lines().includes('  Forge  closed today (Thu); opens tomorrow 10AM'));
+    g.day = 7; // Spring 7, 5 PM: the eve of the Spring 8 festival
+    g.minutes = 17 * 60;
+    assert.ok(g.fest_on(1), 'Spring 8 is a festival');
+    assert.ok(!g.today_lines().includes('  Forge  closed for the day; opens tomorrow 10AM'), 'not "tomorrow" on a festival eve');
+    g.day = 2;
+    g.minutes = 12 * 60;
+    g.map_pin = 'museum';
+    g.warp('farm', 14, 10);
+    assert.ok(g.today_lines().some((l: string) => l.includes('Pin    Museum: east exit to Mineral Town')));
+    const h = fresh();
+    h.applySaveData(JSON.parse(JSON.stringify(g.snapshot())));
+    assert.equal(h.map_pin, 'museum');
+    const old = JSON.parse(JSON.stringify(g.snapshot()));
+    delete old.map_pin;
+    const k = fresh();
+    k.applySaveData(old);
+    assert.equal(k.map_pin, null);
+  });
+
+  test("inside the pinned building you're there; in a mine the pin points up the ladder", () => {
+    const g = fresh();
+    g.map_pin = 'museum';
+    g.warp('in_museum', ...g.interiors.museum.entry);
+    assert.equal(g.pin_route().text, "you're there");
+    g.map_pin = 'farmhouse';
+    g.warp('house', 5, 5);
+    assert.equal(g.pin_route().text, "you're there");
+    g.map_pin = 'forge';
+    g.enter_mine(3, 'spring');
+    const r = g.pin_route();
+    assert.equal(r.text, "climb out to Mother's Hill");
+    assert.equal(g.map.tile(r.cell[0], r.cell[1]), 'up');
+    assert.notEqual(r.arrow, '>', 'points at the ladder, not a default arrow');
+  });
+
+  test('at 50 columns the on-map pointer uses its short form, whole', () => {
+    const g = fresh();
+    g.scr = new Screen(50, 24);
+    g.warp('farm', 14, 10);
+    g.map_pin = 'forge';
+    g.render();
+    const row = g.scr.buf[1].map((c: any) => c[0]).join(''); // row 0 is the compact top bar
+    assert.ok(row.includes('⚒ west exit: Ironwood Grove'), row);
+    assert.ok(!row.includes('…'));
+  });
+
+  test('the forge reads as closed on its closed day and on festival days', () => {
+    const g = fresh();
+    g.day = 4; // absday 3: Thursday
+    g.minutes = 12 * 60;
+    assert.equal(g.weekday, 3);
+    assert.equal(g.forge_status().open, false);
+    g.day = 2;
+    g.fest_on = () => ['Test Festival', 9, 17];
+    assert.equal(g.forge_status().open, false);
+    g.fest_on = () => null;
+    assert.equal(g.forge_status().open, true);
+  });
+});
+
+describe('Cedar Hollow hedge gate (task 34)', () => {
+  const sign = (g: any, map: string, xy: readonly number[]) => g.maps[map].signs[`${xy[0]},${xy[1]}`];
+  const toBeach = (g: any) => Object.values(g.maps.woods.warps).filter((w: any) => w[0] === 'beach');
+  const toWoods = (g: any) => Object.values(g.maps.beach.warps).filter((w: any) => w[0] === 'woods');
+  /** Stand at the beach latch, answer the prompt with `keys`, and lift (or not). */
+  const atLatch = async (g: any, keys: string[]) => {
+    g.warp('beach', HEDGE_GATE.beachSign[0] + 1, HEDGE_GATE.beachSign[1], [-1, 0]);
+    for (const k of keys) g.scr.pushKey(k);
+    await g.interact();
+  };
+  const isOpen = (g: any) => g.shortcuts.includes('hollow_gate') && toBeach(g).length === 3 && toWoods(g).length === 3;
+
+  test('shut at first: the hedge is closed and the way to the beach runs through the farm', () => {
+    const g = fresh();
+    const m = g.maps.woods;
+    for (let y = HEDGE_GATE.at; y < HEDGE_GATE.at + 3; y++) {
+      assert.equal(g.walkable('woods', m.w - 1, y), false, `hedge at ${y}`);
+      assert.equal(m.tile(m.w - 3, y), 'grass', 'the clearing runs up to the hedge');
+    }
+    assert.equal(toBeach(g).length, 0);
+    assert.equal(toWoods(g).length, 0);
+    assert.ok(!g.valley_links().woods.includes('beach'));
+    g.map_pin = 'pier';
+    g.warp('woods', 45, 19);
+    assert.equal(g.pin_route().text, 'north exit to Your Farm, toward Mineral Beach');
+    assert.deepEqual(g.shortcuts, []);
+  });
+
+  test('the Cedar Hollow sign only describes the gate', async () => {
+    const g = fresh();
+    const said = quiet(g);
+    g.warp('woods', HEDGE_GATE.woodsSign[0], HEDGE_GATE.woodsSign[1] + 1, [0, -1]);
+    assert.equal(g.maps.woods.tile(g.px, g.py), 'grass', 'the sign is read from the clearing');
+    await g.interact();
+    assert.match(said[0], /latched fast from the other side/);
+    assert.deepEqual(g.shortcuts, []);
+    assert.equal(toBeach(g).length, 0);
+  });
+
+  test('declining at the latch leaves the gate shut', async () => {
+    const g = fresh();
+    await atLatch(g, ['down', 'enter']);
+    assert.deepEqual(g.shortcuts, []);
+    await atLatch(g, ['esc']);
+    assert.equal(isOpen(g), false);
+    assert.ok(g.msgs.some(([t]: [string]) => t.includes('leave the old gate latched')));
+  });
+
+  test('lifting the latch opens a 3-wide gate both ways, renames both signs and plays feedback', async () => {
+    const g = fresh();
+    await atLatch(g, ['enter']);
+    assert.ok(isOpen(g));
+    assert.ok(g.msgs.some(([t]: [string]) => t.includes('short way to Cedar Hollow')));
+    assert.ok(g.fx.some((f: any) => f.map === 'beach' && f.x === 0 && f.kind === 'dust'));
+    assert.equal(sign(g, 'woods', HEDGE_GATE.woodsSign), 'Hedge gate — the short way to Mineral Beach');
+    assert.equal(sign(g, 'beach', HEDGE_GATE.beachSign), 'Hedge gate — the short way to Cedar Hollow');
+    // walk east out of the hollow onto the beach...
+    const mid = HEDGE_GATE.at + 1;
+    g.warp('woods', g.maps.woods.w - 2, mid, [1, 0]);
+    await g.move(1, 0);
+    assert.equal(g.mapname, 'beach');
+    assert.ok(g.walkable('beach', g.px, g.py), `landed on open sand at ${g.px},${g.py}`);
+    // ...and west back again
+    await g.move(-1, 0);
+    assert.equal(g.mapname, 'woods');
+    assert.ok(g.walkable('woods', g.px, g.py));
+    assert.deepEqual([g.px, g.py], [g.maps.woods.w - 2, mid]);
+    // the latch sign now just names the shortcut; reading it again does not re-open anything
+    const said = quiet(g);
+    await atLatch(g, []);
+    assert.deepEqual(said, ['Hedge gate — the short way to Cedar Hollow']);
+    assert.deepEqual(g.shortcuts, ['hollow_gate']);
+  });
+
+  test('the valley map links the hollow and the beach, and the pin uses the gate', async () => {
+    const g = fresh();
+    g.scr = new Screen(80, 24);
+    g.warp('woods', 45, 19);
+    // with an 80-column screen the region boxes are 19 wide from x=2: the woods/beach gap is x=39, row 14
+    g.draw_valley(0);
+    assert.equal(g.scr.buf[14][39][0], ' ', 'no connector while shut');
+    await atLatch(g, ['enter']);
+    assert.ok(g.valley_links().woods.includes('beach'));
+    assert.ok(g.valley_links().beach.includes('woods'));
+    g.warp('woods', 45, 19);
+    g.map_pin = 'pier';
+    const r = g.pin_route();
+    assert.equal(r.text, 'east exit to Mineral Beach');
+    assert.equal(r.cell[0], g.maps.woods.w - 1);
+    g.render();
+    g.draw_valley(0);
+    assert.equal(g.scr.buf[14][39][0], '═', 'connector between the woods and beach boxes');
+  });
+
+  test('the gate stays open across a save and reload; old saves and new farms start shut', async () => {
+    const g = fresh();
+    await atLatch(g, ['enter']);
+    g.save(2);
+    const b = new Game(new Screen(132, 30), true) as any;
+    b.load(2);
+    assert.ok(isOpen(b), 'rebuilt maps carry the gate again');
+    assert.equal(sign(b, 'beach', HEDGE_GATE.beachSign), 'Hedge gate — the short way to Cedar Hollow');
+    // an old save without the field loads shut, even into a game whose gate was open
+    const old = JSON.parse(store['hrvstmn-save-2']);
+    delete old.shortcuts;
+    b.applySaveData(old);
+    assert.deepEqual(b.shortcuts, []);
+    assert.equal(toBeach(b).length, 0);
+    assert.equal(b.walkable('woods', b.maps.woods.w - 1, HEDGE_GATE.at + 1), false);
+    assert.equal(sign(b, 'beach', HEDGE_GATE.beachSign), 'hedge_latch');
+    // unknown ids are dropped
+    b.applySaveData({ ...old, shortcuts: ['hollow_gate', 'nowhere'] });
+    assert.deepEqual(b.shortcuts, ['hollow_gate']);
+    // a new farm starts with the gate shut
+    g.new_game('Pete', 'Moon');
+    assert.equal(isOpen(g), false);
+    assert.equal(toWoods(g).length, 0);
+  });
+
+  test('with the gate open, a pin with two equally short ways points to the exit nearer you', async () => {
+    const g = fresh();
+    await atLatch(g, ['enter']);
+    assert.ok(isOpen(g));
+    // Cedar Hollow -> town is two regions either way (via the farm, or via the beach)
+    g.map_pin = 'supermarket';
+    g.warp('woods', 30, 2); // by the north entrance
+    assert.equal(g.pin_route().text, 'north exit to Your Farm, toward Mineral Town');
+    g.warp('woods', g.maps.woods.w - 3, HEDGE_GATE.at + 1); // by the gate
+    assert.equal(g.pin_route().text, 'east exit to Mineral Beach, toward Mineral Town');
+    // town -> Poultry Farm: west through the farm from the west end, south through the beach from the south gate
+    g.map_pin = 'poultry';
+    g.warp('town', 3, 6);
+    assert.equal(g.pin_route().text, 'west exit to Your Farm, toward Cedar Hollow');
+    g.warp('town', 35, 29);
+    assert.equal(g.pin_route().text, 'south exit to Mineral Beach, toward Cedar Hollow');
+  });
+
+  test('the latch prompt reads cleanly at 50 columns', async () => {
+    const g = fresh();
+    g.scr = new Screen(50, 24);
+    g.warp('beach', HEDGE_GATE.beachSign[0] + 1, HEDGE_GATE.beachSign[1], [-1, 0]);
+    let shown = '';
+    const modal = g.modal.bind(g);
+    g.modal = async (draw: () => void) => {
+      g.render();
+      draw();
+      shown = g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).join('\n');
+      return 'esc';
+    };
+    await g.hedge_latch();
+    g.modal = modal;
+    for (const line of ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.']) {
+      assert.ok(shown.includes(line), `whole line: ${line}`);
+    }
+describe('renderer context', () => {
+  test('render() hands the renderer the day of the season, for late-season blending', () => {
+    const g = fresh();
+    g.day = 29;
+    g.warp('farm', 14, 10);
+    g.render();
+    assert.equal(g.scr.ctx.day, 29);
+  });
+});

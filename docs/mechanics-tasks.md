@@ -23,10 +23,10 @@ Pick an unchecked task that fits the current assignment. Keep its number stable 
 
 ## Neighbors and family
 
-- [ ] **01. Friday evenings at Doug’s Inn.** Rotate a card game, a recipe swap, and a story from an older villager. Let the player listen or join, and let unseen scenes recur.
+- [x] **01. Friday evenings at Doug’s Inn.** Rotate a card game, a recipe swap, and a story from an older villager. Let the player listen or join, and let unseen scenes recur.
 - [ ] **02. Short outings with villagers.** Meet Gray for a walk or Kai for a fishing session. A ten-minute in-game outing with two bits of dialogue is enough to try it.
 - [ ] **03. Villagers remember milestones.** Let Zack mention your first shipment, the curator mention a completed exhibit, and neighbors notice a path you helped repair.
-- [ ] **04. Requests with a second chapter.** Gray asks for copper from Spring Mine. After delivery, he shows you which watering-can upgrade is worth saving for and leaves a note about the next step.
+- [x] **04. Requests with a second chapter.** Gray asks for copper from Spring Mine. After delivery, he shows you which watering-can upgrade is worth saving for and leaves a note about the next step.
 - [ ] **05. Ask for a favor.** A close neighbor offers one specific favor on a free afternoon, such as carrying a shipment or checking shop hours. Put the promise in Today’s Plan so it feels like an arrangement.
 - [ ] **06. Invite people to dinner.** Pick two guests and serve an existing recipe. Give each pairing one short exchange, with different reactions to what you serve.
 - [ ] **07. Shared memories in Villager Notes.** Record moments like a first fishing trip, a favorite meal, or a request you finished together. Let the player reread the entries.
@@ -67,8 +67,8 @@ Pick an unchecked task that fits the current assignment. Keep its number stable 
 
 ## Trails, fishing, and mines
 
-- [ ] **33. A labeled valley map.** Give major landmarks distinct symbols and names. Pin one destination, point to the next map exit, and show whether the forge will be open.
-- [ ] **34. A shortcut earned on foot.** Open a gate from the far side of a trail or repair a crossing after seeing both banks. Make the route a permanent part of the valley once earned.
+- [x] **33. A labeled valley map.** Give major landmarks distinct symbols and names. Pin one destination, point to the next map exit, and show whether the forge will be open.
+- [x] **34. A shortcut earned on foot.** Open a gate from the far side of a trail or repair a crossing after seeing both banks. Make the route a permanent part of the valley once earned.
 - [ ] **35. Weather worth exploring.** After a rainy night, show a mushroom flush in Cedar Hollow or an unusual tide-pool find at Lighthouse Point. Put the hint in the morning forecast or a villager’s dialogue.
 - [ ] **36. People you meet along the trail.** Place a neighbor sketching the view or looking for a dropped scarf. A one-screen detour earns a story or clue.
 - [ ] **37. A field notebook.** Record the place, weather, and time for interesting observations. Give the next hint in words such as “near shallow water after rain.”

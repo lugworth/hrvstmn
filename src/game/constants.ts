@@ -2521,6 +2521,7 @@ export const HELP: string[] = [
   "SUMMARY   m   Ranch Summary, Memo, Sprites, Fish & Collectibles",
   "TODAY     y   daily checklist: crops, animals, shipping, events",
   "MINIMAP   n   toggle the corner map overlay",
+  "VALLEY    g   labeled valley map: pin a landmark, see the way",
   "VILLAGERS r   hearts, favourite gifts and usual whereabouts",
   "DIARY     esc Save/Load anywhere (2 slots), Teleport, Status",
   "",
@@ -3306,3 +3307,140 @@ export const LIGHTHOUSE_LOG: string[] = [
 /** What you see in a Lighthouse Point tide pool. */
 export const TIDE_POOL_TEXT =
   "A tide pool among the rocks. Tiny crabs scuttle under the weed, and a red anemone opens and closes like a slow heartbeat.";
+
+/** A Friday-evening scene at Doug's Inn (task 01). */
+export interface InnScene {
+  id: string;
+  title: string;
+  /** Villagers at the table; listening or joining raises friendship with each. */
+  cast: string[];
+  /** What you hear if you only listen. */
+  listen: [string, string][];
+  /** The menu label for taking part. */
+  join: string;
+  /** What happens when you take part. */
+  joined: [string, string][];
+}
+
+/** Friday evenings run 6 PM - 10 PM; the inn picks one scene per Friday. */
+export const INN_EVENING_DAY = 4; // WEEKDAYS index: Fri
+export const INN_EVENING_HOURS: [number, number] = [18, 22];
+export const INN_LISTEN_FRIEND = 1;
+export const INN_JOIN_FRIEND = 3;
+export const INN_CARDS_POT = 100;
+
+export const INN_SCENES: InnScene[] = [
+  {
+    id: 'cards',
+    title: 'Cards at the corner table',
+    cast: ['Doug', 'Gotz', 'Duke'],
+    listen: [
+      ['Gotz', 'Three of a kind. Read it and weep, Doug.'],
+      ['Doug', "That's the third Friday running. I'm checking that deck for sawdust."],
+      ['Duke', 'Deal me in again. A winemaker knows a hand improves with patience.'],
+    ],
+    join: 'Take the empty chair',
+    joined: [
+      ['Doug', 'Pull up a chair. House rules: no betting the farm, just the pot.'],
+    ],
+  },
+  {
+    id: 'recipes',
+    title: 'Recipe swap by the stove',
+    cast: ['Ann', 'Manna', 'Lillia'],
+    listen: [
+      ['Manna', 'A spoon of grape must in the stew. Duke swears he can taste it, he cannot.'],
+      ['Lillia', 'I fold a little honey into my bread dough. The crust browns like autumn leaves.'],
+      ['Ann', "Dad says recipes are for writing down. Mine are for changing every time."],
+    ],
+    join: 'Trade a recipe from the farm',
+    joined: [
+      ['Ann', 'Ooh, roasted with the skins on? I am trying that tomorrow. Here, take a plate of mine.'],
+    ],
+  },
+  {
+    id: 'story',
+    title: "Barley's harvest story",
+    cast: ['Barley', 'Saibara'],
+    listen: [
+      ['Barley', 'The year the valley flooded, we carried the seed sacks up to the mine road on our backs.'],
+      ['Saibara', 'Hmph. And I forged the hinges for the new barn doors that winter. Still swinging.'],
+      ['Barley', 'Every field you see started with somebody stubborn. Remember that.'],
+    ],
+    join: 'Ask what the valley was like',
+    joined: [
+      ['Barley', 'Before the town road, the only way in was the river trail. My father fished the bend every dawn.'],
+      ['Saibara', 'The old folk said the deep mine floors were warmer then. Bring me what you find down there.'],
+    ],
+  },
+];
+
+/** Task 04: Gray's two-chapter request. Chapter one asks for Spring Mine copper. */
+export const GRAY_COPPER_QTY = 3;
+export const GRAY_COPPER_REWARD = 300;
+export const GRAY_QUEST_FRIEND = 5;
+
+/** Task 33: the labeled Valley Map. Where each outdoor region sits on the schematic grid. */
+export const VALLEY_GRID: Record<string, [number, number]> = {
+  ridge: [2, 0],
+  mountain: [2, 1],
+  grove: [0, 2],
+  farm: [1, 2],
+  town: [2, 2],
+  river: [3, 2],
+  woods: [1, 3],
+  beach: [2, 3],
+  point: [3, 3],
+};
+
+/** Short region names for the narrow schematic boxes. */
+export const VALLEY_SHORT: Record<string, string> = {
+  farm: 'Your Farm',
+  town: 'Town',
+  mountain: "Mother's",
+  beach: 'Beach',
+  woods: 'Cedar',
+  ridge: 'Ridge',
+  river: 'Willow',
+  point: 'Point',
+  grove: 'Ironwood',
+};
+
+export interface ValleyLandmark {
+  id: string;
+  name: string;
+  glyph: string;
+  map: string;
+  x: number;
+  y: number;
+  /** The building it stands for, when it keeps shop hours. */
+  bid?: string;
+}
+
+/** Major landmarks, each with its own symbol. Positions are the door or sign on its map. */
+export const VALLEY_LANDMARKS: ValleyLandmark[] = [
+  { id: 'farmhouse', name: 'Your farmhouse', glyph: '▣', map: 'farm', x: 8, y: 5 },
+  { id: 'forge', name: "Saibara's Forge", glyph: '⚒', map: 'grove', x: 18, y: 16, bid: 'blacksmith' },
+  { id: 'quarry', name: 'Old Quarry', glyph: '▙', map: 'grove', x: 23, y: 5 },
+  { id: 'supermarket', name: 'Supermarket', glyph: '$', map: 'town', x: 8, y: 6, bid: 'supermarket' },
+  { id: 'mayor', name: "Mayor's house", glyph: '▦', map: 'town', x: 57, y: 6, bid: 'mayor' },
+  { id: 'church', name: 'Church', glyph: '†', map: 'town', x: 67, y: 6, bid: 'church' },
+  { id: 'square', name: 'Rose Square board', glyph: '✦', map: 'town', x: 42, y: 10 },
+  { id: 'clinic', name: 'Clinic', glyph: '♥', map: 'town', x: 8, y: 19, bid: 'clinic' },
+  { id: 'inn', name: "Doug's Inn", glyph: '☻', map: 'town', x: 22, y: 19, bid: 'inn' },
+  { id: 'library', name: 'Library', glyph: '▤', map: 'town', x: 50, y: 19, bid: 'library' },
+  { id: 'museum', name: 'Museum', glyph: '◉', map: 'town', x: 65, y: 19, bid: 'museum' },
+  { id: 'carpenter', name: "Gotz's workshop", glyph: '▮', map: 'mountain', x: 40, y: 6, bid: 'carpenter' },
+  { id: 'spring_mine', name: 'Spring Mine', glyph: '▼', map: 'mountain', x: 52, y: 4 },
+  { id: 'lake_mine', name: 'Lake Mine', glyph: '◣', map: 'mountain', x: 15, y: 8 },
+  { id: 'goddess', name: 'Goddess Pond', glyph: '❀', map: 'mountain', x: 44, y: 8 },
+  { id: 'hot_spring', name: 'Hot Spring', glyph: '≋', map: 'mountain', x: 5, y: 17 },
+  { id: 'lookout', name: 'Ridge lookout', glyph: '▲', map: 'ridge', x: 33, y: 6 },
+  { id: 'poultry', name: 'Poultry Farm', glyph: '●', map: 'woods', x: 44, y: 6, bid: 'poultry' },
+  { id: 'yodel', name: 'Yodel Ranch', glyph: '♉', map: 'woods', x: 57, y: 6, bid: 'yodel' },
+  { id: 'winery', name: 'Winery', glyph: '♠', map: 'woods', x: 35, y: 18, bid: 'winery' },
+  { id: 'pier', name: 'Beach pier', glyph: '≈', map: 'beach', x: 30, y: 12 },
+  { id: 'sprites', name: 'Sprite hut', glyph: '✿', map: 'river', x: 53, y: 9 },
+  { id: 'zack', name: 'Zack & Won', glyph: '¦', map: 'point', x: 23, y: 9, bid: 'zack' },
+  { id: 'lighthouse', name: 'Lighthouse', glyph: '☾', map: 'point', x: 45, y: 10 },
+];

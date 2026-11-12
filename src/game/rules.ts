@@ -1,4 +1,5 @@
 // Pure game rules and mechanics for Harvest Moon: Friends of Mineral Town (ASCII Edition)
+import { fmt_hour } from './constants';
 
 import type { CatchEntry, CatchTable } from './constants';
 
@@ -421,4 +422,155 @@ export function rollStoneSkips(rand: () => number, calm: boolean = true): number
   let n = 1;
   while (n < MAX_STONE_SKIPS && rand() < keep) n++;
   return n;
+}
+
+/**
+ * Which Friday scene the inn holds this week. Scenes you have not seen come first, starting
+ * from this week's place in the rotation, so a missed evening comes round again; once all
+ * have been seen the rotation simply repeats.
+ */
+export function innSceneFor(week: number, ids: string[], seen: string[]): string | null {
+  const n = ids.length;
+  if (!n) return null;
+  const start = ((week % n) + n) % n;
+  for (let i = 0; i < n; i++) {
+    const id = ids[(start + i) % n];
+    if (!seen.includes(id)) return id;
+  }
+  return ids[start];
+}
+
+/** Whether you win the inn's card game on a given day (deterministic, about two weeks in three). */
+export function innCardsWin(absday: number): boolean {
+  return ((absday * 2654435761) >>> 0) % 3 !== 0;
+}
+
+/** One watering-can step: the level it reaches, what Saibara charges, and what it waters. */
+export interface CanStep {
+  level: number;
+  cost: number;
+  ore: string;
+  tiles: number;
+  cap: number;
+}
+
+/**
+ * Gray's advice on the watering can (task 04). From the current level, `next` is the upgrade
+ * to save for now and `big` is the later Saibara upgrade that adds the most tiles per pour.
+ * Null once the can is Mystrile or beyond: Saibara's ore upgrades stop there.
+ */
+export function canUpgradeAdvice(
+  level: number,
+  upgrade: Record<number, [number, string]>,
+  caps: number[]
+): { now: CanStep; next: CanStep; big: CanStep | null } | null {
+  const step = (lvl: number): CanStep => ({
+    level: lvl,
+    cost: upgrade[lvl]?.[0] ?? 0,
+    ore: upgrade[lvl]?.[1] ?? '',
+    tiles: getToolArea('Watering Can', lvl, 0, 0, [0, 1]).length,
+    cap: caps[lvl] ?? 0,
+  });
+  const lvl = Math.max(0, Math.floor(level));
+  if (lvl >= 4) return null;
+  const next = step(lvl + 1);
+  let big: CanStep | null = null;
+  let bestGain = 0;
+  for (let l = lvl + 2; l <= 4; l++) {
+    const gain = step(l).tiles - step(l - 1).tiles;
+    if (gain > bestGain) {
+      bestGain = gain;
+      big = step(l);
+    }
+  }
+  return { now: step(lvl), next, big };
+}
+
+/**
+ * Task 33: the next region on the shortest walk from `from` to `to` over the valley's region
+ * links (breadth-first, neighbours in sorted order so the answer is stable). Null when you
+ * are already there or no route exists.
+ */
+export function nextRegion(links: Record<string, string[]>, from: string, to: string): string | null {
+  if (from === to) return null;
+  const prev: Record<string, string> = {};
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const n of [...(links[cur] || [])].sort()) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      prev[n] = cur;
+      if (n === to) {
+        let step = n;
+        while (prev[step] !== from) step = prev[step];
+        return step;
+      }
+      queue.push(n);
+    }
+  }
+  return null;
+}
+
+/**
+ * Every neighbour of `from` that starts a shortest region walk to `to` (sorted). Ties are
+ * common once shortcuts open; callers choose among them, e.g. by the nearest exit.
+ */
+export function nextRegions(links: Record<string, string[]>, from: string, to: string): string[] {
+  if (from === to) return [];
+  // distances to `to` over the (two-way) region links
+  const dist: Record<string, number> = { [to]: 0 };
+  const queue = [to];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const [a, bs] of Object.entries(links)) {
+      for (const b of bs) {
+        const [u, w] = a === cur ? [a, b] : b === cur ? [b, a] : [null, null];
+        if (u === null || w === null || w in dist) continue;
+        dist[w] = dist[cur] + 1;
+        queue.push(w);
+      }
+    }
+  }
+  if (!(from in dist)) return [];
+  return [...(links[from] || [])].filter((n) => dist[n] === dist[from] - 1).sort();
+}
+
+/** 'north', 'south-east', ... for a step of (dx, dy) on the map (y grows southward). */
+export function compassWord(dx: number, dy: number): string {
+  const ns = dy < 0 ? 'north' : dy > 0 ? 'south' : '';
+  const ew = dx < 0 ? 'west' : dx > 0 ? 'east' : '';
+  // Mostly-straight lines read as one direction.
+  if (ns && ew && Math.abs(dx) > 2 * Math.abs(dy)) return ew;
+  if (ns && ew && Math.abs(dy) > 2 * Math.abs(dx)) return ns;
+  return ns && ew ? `${ns}-${ew}` : ns || ew || 'here';
+}
+
+/**
+ * Whether a shop keeping `hours` ([open, close, closed weekdays]) is open, and when it next
+ * opens. `festOn(d)` says whether the day `d` days from today is a festival (shops shut then).
+ */
+export function shopStatus(
+  hours: [number, number, number[]],
+  weekday: number,
+  minutes: number,
+  festOn: (offset: number) => boolean = () => false
+): { open: boolean; text: string } {
+  const [o, c, closed] = hours;
+  const hr = fmt_hour;
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const nextOpen = (): string => {
+    for (let d = 1; d <= 14; d++) {
+      const wd = (weekday + d) % 7;
+      if (closed.includes(wd) || festOn(d)) continue;
+      return d === 1 ? `tomorrow ${hr(o)}` : d < 7 ? `${DAYS[wd]} ${hr(o)}` : `in ${d} days`;
+    }
+    return 'not soon';
+  };
+  if (festOn(0)) return { open: false, text: `closed for the festival; opens ${nextOpen()}` };
+  if (closed.includes(weekday)) return { open: false, text: `closed today (${DAYS[weekday]}); opens ${nextOpen()}` };
+  if (minutes < o * 60) return { open: false, text: `opens at ${hr(o)} today` };
+  if (minutes >= c * 60) return { open: false, text: `closed for the day; opens ${nextOpen()}` };
+  return { open: true, text: `open until ${hr(c)}` };
 }

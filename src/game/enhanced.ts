@@ -9,6 +9,7 @@
 import type { Cell, CellTag, EmoteKind, HudLabel, PaletteMode, RenderCtx, Screen } from './screen';
 import { PALETTE } from './constants';
 import { contourPattern, type ContourTexture } from './contour';
+import { FENCE_PITCH, SEASON_GLYPHS } from './chrome';
 
 export type OutCell = {
   ch: string;
@@ -394,6 +395,34 @@ export const THEMES: Theme[] = [
     snow: true,
   },
 ];
+
+/**
+ * Seasonal palette theme, blending smoothly toward the next season during the final
+ * three days of a season (days 28..30). Days 1..27 (and undefined day) return the exact
+ * season theme.
+ */
+export function themeFor(season: number, day?: number): Theme {
+  const s = ((season % 4) + 4) % 4;
+  const cur = THEMES[s];
+  if (!day || day < 28) return cur;
+  const next = THEMES[(s + 1) % 4];
+  const k = Math.min(0.6, Math.max(0, ((day - 27) / 4) * 0.72));
+  return {
+    ...cur,
+    grassBg: mix(cur.grassBg, next.grassBg, k),
+    grassBg2: mix(cur.grassBg2, next.grassBg2, k),
+    grassDetail: mix(cur.grassDetail, next.grassDetail, k),
+    tuft: mix(cur.tuft, next.tuft, k),
+    trees: cur.trees.map((c, i) => mix(c, next.trees[i % next.trees.length], k)),
+    treeBg: mix(cur.treeBg, next.treeBg, k),
+    soilBg: mix(cur.soilBg, next.soilBg, k),
+    soilDot: mix(cur.soilDot, next.soilDot, k),
+    weed: mix(cur.weed, next.weed, k),
+    waterBg: mix(cur.waterBg, next.waterBg, k),
+    waterBg2: mix(cur.waterBg2, next.waterBg2, k),
+    waterFg: mix(cur.waterFg, next.waterFg, k),
+  };
+}
 
 // ---------------------------------------------------------------- lighting
 
@@ -1060,6 +1089,16 @@ const ICONS: Record<string, [string, string]> = {
   bin: ['▣', '#c08a4a'],
   tool: ['⚒', '#c0c0c0'],
 };
+// Farm HUD chrome: weathered wood from the dark end of the Isotope orange ramp. The rails stay
+// about as quiet as the grey rules they replace; the sign board is dark enough for white text.
+const FENCE_RAIL = toIsotope(mix('#ff9900', '#000000', 0.6));
+const FENCE_POST = toIsotope(mix('#ff9900', '#000000', 0.42));
+const SIGN_BOARD = toIsotope(mix('#ff9900', '#000000', 0.74));
+/** The wood colours as drawn; the toolbar's CSS variables in globals.css mirror them. */
+export const FARM_CHROME = { rail: FENCE_RAIL, post: FENCE_POST, board: SIGN_BOARD } as const;
+const NOTE_ICON: [string, string] = ['❧', FENCE_POST];
+/** Season glyph colours follow SEASON_COL: pink blossom, green clover, orange leaf, cyan snowflake. */
+const SEASON_ICON_COL = ['#ff0099', '#33ff00', '#ff9900', '#00ffff'];
 const WEATHER_ICON: Record<string, [string, string]> = {
   Sunny: ['☀', '#ffcc33'],
   Rain: ['☂', '#7fb8ff'],
@@ -1240,7 +1279,7 @@ function styleMinimapCell(k: string, t: number): OutCell {
  * @param t seconds, used for animation (water, rain, snow, fireflies)
  */
 export function computeFrame(
-  scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'> & Partial<Pick<Screen, 'scene' | 'boxes' | 'paletteMode'>>,
+  scr: Pick<Screen, 'buf' | 'tags' | 'ctx' | 'w' | 'h'> & Partial<Pick<Screen, 'scene' | 'boxes' | 'paletteMode' | 'reducedMotion'>>,
   t: number,
 ): OutCell[][] {
   const { buf, tags, ctx } = scr;
@@ -1249,10 +1288,10 @@ export function computeFrame(
   const H = buf.length;
   const W = H ? buf[0].length : 0;
   const season = ctx ? ((ctx.season % 4) + 4) % 4 : 0;
-  const motion = !ctx?.reducedMotion;
+  const motion = !(ctx?.reducedMotion ?? scr.reducedMotion);
   const skyNow = ctx ? skyFor(ctx) : null;
   // with reduced motion every tile animation (sway, ripples, twinkles) holds its first frame
-  const F: Frame = { buf, tags, theme: THEMES[season], t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? ''), map: ctx?.mapName ?? '' };
+  const F: Frame = { buf, tags, theme: themeFor(season, ctx?.day), t: motion ? t : 0, indoor: !!ctx?.indoor, weather: ctx?.weather ?? 'Sunny', amb: skyNow?.amb ?? 1, minutes: ctx?.minutes ?? 720, wetness: ctx?.wetness ?? 0, sea: SEA_MAPS.has(ctx?.mapName ?? ''), map: ctx?.mapName ?? '' };
   const out: OutCell[][] = new Array(H);
 
   for (let y = 0; y < H; y++) {
@@ -1310,6 +1349,8 @@ export function computeFrame(
         else if (k.startsWith('minimap:')) o = styleMinimapCell(k, F.t);
         else if (k === 'bar') o = { ch: '█', fg: pal(cell[1]), bg: '#0c0c11', bold: false };
         else if (k === 'bar:empty') o = { ch: '░', fg: '#2c2c36', bg: '#0c0c11', bold: false };
+        else if (k === 'hud:fence') o = { ch: cell[0], fg: cell[0] === '═' ? FENCE_RAIL : FENCE_POST, bg: '#000000', bold: false };
+        else if (k === 'hud:sign') o = { ch: cell[0], fg: pal(cell[1]), bg: SIGN_BOARD, bold: cell[3] };
         else o = { ch: cell[0], fg: pal(cell[1]), bg: pal(cell[2], '#000000'), bold: cell[3] };
         if (tag.label) {
           const label = tag.label;
@@ -1370,7 +1411,7 @@ export function computeFrame(
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) out[y][x].ui = boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h); // prompts stay plain text
       }
-      titleScene(out, buf, tags, boxes, t, W, H);
+      titleScene(out, buf, tags, boxes, motion ? t : 0, W, H);
       if (palette !== 'isotope') {
         monochrome(out, boxes, palette === 'duotone' ? { warm: 0, cool: 1, light: null, tags, base: COOL_TONE } : undefined);
       }
@@ -1385,7 +1426,7 @@ export function computeFrame(
     if (buf[0][x][2] === '01') out[0][x].bg = '#000000';
   }
   for (let y = 0; y < Math.min(ctx.divY, H); y++) {
-    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: '#404040', bg: '#000000', bold: false, ui: true };
+    if (ctx.divX < W && buf[y][ctx.divX][0] === '|' && !tags[y][ctx.divX]) out[y][ctx.divX] = { ch: '│', fg: FENCE_RAIL, bg: '#000000', bold: false, ui: true };
     for (let x = ctx.divX + 1; x < W; x++) {
       if (!tags[y][x] && buf[y][x][2] === '00') out[y][x].bg = '#000000';
       else if (tags[y][x]?.t === 'ui' && (tags[y][x]?.k || '').startsWith('bar')) {
@@ -1395,7 +1436,15 @@ export function computeFrame(
     }
   }
   if (ctx.divY < H) {
-    for (let x = 0; x < W; x++) if (buf[ctx.divY][x][0] === '-' && !tags[ctx.divY][x]) out[ctx.divY][x] = { ch: '─', fg: '#3a3a48', bg: '#000000', bold: false };
+    // The divider is a post-and-rail fence: a post every FENCE_PITCH cells where the rail runs
+    // clear on both sides, and the panel's edge post standing on it.
+    const rail = (x: number) => x >= 0 && x < W && buf[ctx.divY][x][0] === '-' && !tags[ctx.divY][x];
+    for (let x = 0; x < W; x++) {
+      if (!rail(x)) continue;
+      const edge = x === ctx.divX && ctx.divY > 0 && out[ctx.divY - 1][x].ch === '│' && out[ctx.divY - 1][x].ui;
+      const post = x % FENCE_PITCH === 3 && rail(x - 1) && rail(x + 1) && (ctx.divX >= W || Math.abs(x - ctx.divX) > 2);
+      out[ctx.divY][x] = { ch: edge ? '╧' : post ? '╪' : '═', fg: edge || post ? FENCE_POST : FENCE_RAIL, bg: '#000000', bold: false, ui: true };
+    }
   }
   const v = ctx.view;
   const sky = skyFor(ctx);
@@ -1405,8 +1454,13 @@ export function computeFrame(
     if (boxes.some((b) => ic.x >= b.x && ic.x < b.x + b.w && ic.y >= b.y && ic.y < b.y + b.h)) continue; // under a dialog
     const clearNight = ctx.weather === 'Sunny' && sky.amb < 0.5 && !ctx.indoor;
     const [ch, col] =
-      ic.icon === 'weather' ? (clearNight ? ['☾', '#d8e0ff'] : WEATHER_ICON[ctx.weather] || ['☀', '#ffcc33']) : ICONS[ic.icon];
-    out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: true };
+      ic.icon === 'weather' ? (clearNight ? ['☾', '#d8e0ff'] : WEATHER_ICON[ctx.weather] || ['☀', '#ffcc33'])
+      : ic.icon === 'season' ? [SEASON_GLYPHS[season], SEASON_ICON_COL[season]]
+      : ic.icon === 'note' ? NOTE_ICON
+      : ICONS[ic.icon];
+    out[ic.y][ic.x] = { ...out[ic.y][ic.x], ch, fg: col, bold: ic.icon !== 'note', ui: true };
+    // an icon leading a painted sign sits on the same board
+    if (ic.x + 1 < W && tags[ic.y][ic.x + 1]?.k === 'hud:sign') out[ic.y][ic.x].bg = SIGN_BOARD;
   }
 
   // ---- contact shadows: buildings and trees throw away from the sun.
@@ -1489,12 +1543,13 @@ export function computeFrame(
     }
   }
 
-  // ---- chimney smoke, butterflies, falling leaves, wildlife, water life
+  // ---- chimney smoke, butterflies, falling leaves, wildlife, water life, hot spring steam
   if (outdoor && motion) {
     chimneys(out, tags, v, t, W, H, ctx.weather);
     critters(out, tags, v, t, W, H, season, ctx.weather, sky.amb);
     wildlife(out, tags, v, t, season, ctx.weather, ctx.mapName, sky.amb);
   }
+  if (motion && t > 0) hotSpringSteam(out, tags, v, t, W, H);
   if (outdoor) waterLife(out, tags, v, season, SEA_MAPS.has(ctx.mapName));
   if (outdoor && (ctx.weather === 'Rain' || ctx.weather === 'Typhoon')) {
     // everything looks wet and a touch darker in the rain
@@ -2181,6 +2236,60 @@ function wildlife(
   }
 }
 
+/** Rising vapour wisps over hot springs and indoor baths, plus warm embers above lit hearths. */
+function hotSpringSteam(out: OutCell[][], tags: (CellTag | null)[][], v: RenderCtx['view'], t: number, W: number, H: number) {
+  const step = Math.floor(t * 2.5);
+  for (let y = v.y + 1; y < v.y + v.h && y < H; y++) {
+    for (let x = v.x; x < v.x + v.w && x < W; x++) {
+      const tg = tags[y][x];
+      if (!tg) continue;
+      const wx = tg.wx ?? x;
+      const wy = tg.wy ?? y;
+      if (tg.t === 'spring' || tg.t === 'bath') {
+        for (let k = 1; k <= 2; k++) {
+          const yy = y - k;
+          if (yy < v.y) break;
+          const drift = k === 2 ? Math.round(Math.sin(t * 1.4 + wx * 0.9) * 0.65) : 0;
+          const xx = x + drift;
+          if (xx < v.x || xx >= v.x + v.w || xx >= W) continue;
+          const up = tags[yy]?.[xx];
+          if (!up || up.t === 'ui' || up.ent) continue;
+          if (hash(wx + k * 7, wy + step, 251) > (k === 1 ? 0.52 : 0.34)) continue;
+          const o = out[yy][xx];
+          out[yy][xx] = {
+            ...o,
+            ch: k === 1 ? '°' : '·',
+            fg: mix('#dceeff', o.bg, k === 1 ? 0.22 : 0.45),
+            bold: k === 1,
+            glow: undefined,
+            plain: true,
+            seed: undefined,
+          };
+        }
+      } else if (tg.t === 'fireplace') {
+        const yy = y - 1;
+        if (yy < v.y) continue;
+        const up = tags[yy]?.[x];
+        if (!up || up.t === 'ui' || up.ent) continue;
+        if (hash(wx, wy + Math.floor(t * 3), 252) < 0.48) {
+          const o = out[yy][x];
+          out[yy][x] = {
+            ...o,
+            ch: '·',
+            fg: '#ff9900',
+            bold: true,
+            glow: '#ff7a30',
+            glowR: 4,
+            accent: true,
+            plain: true,
+            seed: undefined,
+          };
+        }
+      }
+    }
+  }
+}
+
 /** Night-sky backdrop, hills and a gradient logo for the title screen. */
 function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][], boxes: Screen['boxes'], t: number, W: number, H: number) {
   const inBox = (x: number, y: number) => boxes.some((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h);
@@ -2223,6 +2332,36 @@ function titleScene(out: OutCell[][], buf: Cell[][], tags: (CellTag | null)[][],
         }
       } else if (hillNear && fromBottom === Math.floor(near(x)) - 1 && hash(x, 0, 8) < 0.05) {
         out[y][x] = { ch: '▪', fg: '#ffd27a', bg, bold: true, glow: '#ffb040', glowR: 6, accent: true };
+      }
+    }
+  }
+  // Periodic shooting star streaking across the upper night sky
+  if (t > 0 && W >= 20 && H >= 8) {
+    const period = 6;
+    const p = (t % period) / 1.2;
+    if (p < 1) {
+      const cycle = Math.floor(t / period);
+      const y0 = 1 + Math.floor(hash(cycle, 1, 260) * Math.max(1, Math.floor(H * 0.25)));
+      const x0 = Math.floor(W * (0.18 + hash(cycle, 2, 261) * 0.42));
+      const span = Math.max(6, Math.floor(W * 0.26));
+      const hx = Math.round(x0 + p * span);
+      const hy = y0 + Math.floor(p * 2);
+      for (let s = 0; s < 3; s++) {
+        const sx = hx - s;
+        const sy = hy - (s === 2 ? 1 : 0);
+        if (sx < 0 || sx >= W || sy < 0 || sy >= Math.floor(H * 0.5)) continue;
+        if (inBox(sx, sy) || tags[sy][sx]?.k === 'logo' || buf[sy][sx][0] !== ' ' || (sx === moonX && sy === 2)) continue;
+        const o = out[sy][sx];
+        out[sy][sx] = {
+          ...o,
+          ch: s === 0 ? '★' : s === 1 ? '─' : '·',
+          fg: s === 0 ? '#ffffff' : '#9ab8ff',
+          bold: s === 0,
+          glow: s === 0 ? '#cfe8ff' : undefined,
+          glowR: s === 0 ? 6 : undefined,
+          accent: true,
+          plain: true,
+        };
       }
     }
   }
@@ -2452,6 +2591,12 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
         } else if (o.bg === '#000000') {
           o.bg = '#0e0e16';
         }
+        if (o.bg === '#0066ff' && o.ch === '>') {
+          o.ch = '▸';
+          o.fg = '#ffffff';
+          o.glow = '#00ffff';
+          o.glowR = 4;
+        }
         if (accentHex && y === b.y && '─╭╮'.includes(o.ch)) {
           o.fg = mix(o.fg, accentHex, 0.65);
         } else if (b.kind === 'tv' && (y === b.y || y === b.y + b.h - 1 || x === b.x || x === b.x + b.w - 1) && '─│╭╮╰╯'.includes(o.ch)) {
@@ -2472,7 +2617,7 @@ function decorateBoxes(out: OutCell[][], boxes: Screen['boxes'], W: number, H: n
 
 // ---------------------------------------------------------------- drawing
 
-export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number; hires?: boolean };
+export type Metrics = { cw: number; ch: number; fontPx: number; font: string; dpr?: number; hires?: boolean; crt?: boolean };
 
 export type DirtyRect = { x0: number; y0: number; x1: number; y1: number };
 
@@ -2745,7 +2890,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         continue;
       }
       // Seamless vector box-drawing rules & rounded modal corners (no vertical/horizontal font gaps)
-      if (o.ui && !o.label && '─│╭╮╰╯'.includes(o.ch)) {
+      if (o.ui && !o.label && '─│╭╮╰╯═╪╧'.includes(o.ch)) {
         if (glowOn) { g.shadowBlur = 0; glowOn = false; }
         const cx = px + cw / 2;
         const cy = py + ch / 2;
@@ -2779,6 +2924,23 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
           g.moveTo(xL, cy);
           g.arcTo(cx, cy, cx, yT, rad);
           g.lineTo(cx, yT);
+        } else {
+          // fence: two rails ('═'), a post through them ('╪'), or the panel's edge post ending on them ('╧')
+          // The rails are whole-pixel rectangles that lap 1px into the cells either side, so they
+          // stay unbroken when a dirty-rect repaint lays its background over a neighbour's edge.
+          const lw = Math.max(1, Math.round(fontPx / 11));
+          const gap = Math.max(lw + 1, Math.round(ch * 0.11));
+          const top = Math.round(cy) - gap - (lw >> 1);
+          g.fillStyle = o.fg;
+          g.fillRect(xL - 1, top, xR - xL + 2, lw);
+          g.fillRect(xL - 1, top + gap * 2, xR - xL + 2, lw);
+          if (o.ch === '╪') {
+            g.moveTo(cx, top - gap);
+            g.lineTo(cx, top + gap * 3 + lw);
+          } else if (o.ch === '╧') {
+            g.moveTo(cx, yT);
+            g.lineTo(cx, top + lw);
+          }
         }
         g.stroke();
         continue;
@@ -2835,7 +2997,7 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       }
       if (o.glow) {
         g.shadowColor = o.glow;
-        g.shadowBlur = o.glowR ?? 6;
+        g.shadowBlur = (o.glowR ?? 6) * (m.crt ? 1.4 : 1);
         glowOn = true;
       } else if (glowOn) {
         g.shadowBlur = 0;
@@ -2845,6 +3007,9 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
       g.fillText(o.ch, px, py + ch / 2 + 1);
     }
   }
+  // a glyph's glow must not leak into the passes below (small glyphs, overlays, CRT scanlines)
+  g.shadowBlur = 0;
+  glowOn = false;
   // batched small glyphs (high-res textures and clusters)
   if (ms.length) {
     g.shadowBlur = 0;
@@ -2908,6 +3073,21 @@ export function drawFrame(g: CanvasRenderingContext2D, frame: OutCell[][], m: Me
         g.fillRect(X + Wc - aw, Y + Hc - tk, aw, tk);
       }
     }
+  }
+  if (m.crt && X1 > X0 && Y1 > Y0) {
+    g.shadowBlur = 0;
+    // cover exactly the pixels the background pass just repainted, including its 1px overlap
+    // past the rect's right and bottom edges, so partial repaints leave no unlined seams
+    const pxX = Math.floor(X0 * cw);
+    const pxW = Math.ceil((X1 - X0) * cw) + 1;
+    const py0 = Math.floor(Y0 * ch);
+    const py1 = Math.floor((Y1 - 1) * ch) + Math.ceil(ch) + 1;
+    g.fillStyle = '#000000';
+    g.globalAlpha = 0.22;
+    for (let sy = py0 + (py0 & 1); sy < py1; sy += 2) {
+      g.fillRect(pxX, sy, pxW, 1);
+    }
+    g.globalAlpha = 1;
   }
   g.restore();
 }

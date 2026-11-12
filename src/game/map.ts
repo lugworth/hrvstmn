@@ -517,6 +517,55 @@ export function link_regions(maps: Record<string, GameMap>): void {
   for (const name of ['woods', 'ridge', 'river', 'point', 'grove']) sealUnreachable(maps[name]);
 }
 
+/** Every outdoor map, built and joined: a fresh valley with no shortcuts opened. */
+export function build_valley(): Record<string, GameMap> {
+  const maps: Record<string, GameMap> = {
+    farm: build_farm(),
+    town: build_town(),
+    mountain: build_mountain(),
+    beach: build_beach(),
+    woods: build_woods(),
+    ridge: build_ridge(),
+    river: build_river(),
+    point: build_point(),
+    grove: build_grove(),
+  };
+  link_regions(maps);
+  add_hedge_gate_signs(maps);
+  return maps;
+}
+
+/**
+ * Task 34: an old field gate in the hedge between Cedar Hollow's clearing (east edge, rows 18-20)
+ * and Mineral Beach (west edge, rows 7-9). It is latched on the beach side; the signs stand just
+ * north of it, clear of the cells the opening carves.
+ */
+export const HEDGE_GATE = { at: 18, bAt: 7, woodsSign: [61, 17], beachSign: [0, 6] } as const;
+const HEDGE_SHUT = 'An old field gate in the hedge, grown over with briar. It is latched fast from the other side.';
+
+function add_hedge_gate_signs(maps: Record<string, GameMap>): void {
+  const [[wx, wy], [bx, by]] = [HEDGE_GATE.woodsSign, HEDGE_GATE.beachSign];
+  maps.woods.set(wx, wy, 'sign');
+  maps.woods.signs[pkey(wx, wy)] = HEDGE_SHUT;
+  maps.beach.set(bx, by, 'sign');
+  maps.beach.signs[pkey(bx, by)] = 'hedge_latch';
+}
+
+function open_hedge_gate(maps: Record<string, GameMap>): void {
+  link(maps.woods, maps.beach, 'e', HEDGE_GATE.at, HEDGE_GATE.bAt);
+  maps.woods.signs[pkey(...HEDGE_GATE.woodsSign)] = 'Hedge gate — the short way to Mineral Beach';
+  maps.beach.signs[pkey(...HEDGE_GATE.beachSign)] = 'Hedge gate — the short way to Cedar Hollow';
+}
+
+/** Shortcuts the player can open for good (saved by id in Game.shortcuts). */
+const SHORTCUTS: Record<string, (maps: Record<string, GameMap>) => void> = { hollow_gate: open_hedge_gate };
+export const SHORTCUT_IDS = Object.keys(SHORTCUTS);
+
+/** Carve an earned shortcut into the built maps (safe to repeat). */
+export function open_shortcut(maps: Record<string, GameMap>, id: string): void {
+  SHORTCUTS[id]?.(maps);
+}
+
 export function build_house(): GameMap {
   return GameMap.fromPrebuilt('house');
 }

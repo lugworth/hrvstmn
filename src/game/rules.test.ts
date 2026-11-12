@@ -2,6 +2,13 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { ITEMS } from './constants';
 import {
+  innSceneFor,
+  innCardsWin,
+  canUpgradeAdvice,
+  nextRegion,
+  nextRegions,
+  compassWord,
+  shopStatus,
   getMaxStamina,
   getToolArea,
   calculateStaminaSpend,
@@ -22,7 +29,7 @@ import {
   rollStoneSkips,
   MAX_STONE_SKIPS,
 } from './rules';
-import { REGION_CATCH } from './constants';
+import { REGION_CATCH, UPGRADE, CAN_CAP } from './constants';
 
 describe('Harvest Moon: Friends of Mineral Town Rules & Mechanics', () => {
   test('Power Berries scale max stamina from 150 to 250 (+10 each)', () => {
@@ -217,5 +224,87 @@ describe('outer-region fishing and stone skipping', () => {
     assert.equal(rollStoneSkips(() => 0.99), 1);
     assert.equal(rollStoneSkips(() => 0.6, true), MAX_STONE_SKIPS);
     assert.equal(rollStoneSkips(() => 0.6, false), 1);
+  });
+});
+
+describe('inn Friday scene rotation', () => {
+  const ids = ['cards', 'recipes', 'story'];
+  test('unseen scenes come first, starting from the week in the rotation', () => {
+    assert.equal(innSceneFor(0, ids, []), 'cards');
+    assert.equal(innSceneFor(1, ids, []), 'recipes');
+    assert.equal(innSceneFor(1, ids, ['recipes']), 'story');
+    assert.equal(innSceneFor(2, ids, ['story', 'cards']), 'recipes');
+  });
+  test('once everything is seen the rotation repeats', () => {
+    assert.equal(innSceneFor(4, ids, ids), 'recipes');
+    assert.equal(innSceneFor(0, [], []), null);
+  });
+  test('the card game is deterministic and winnable', () => {
+    const wins = Array.from({ length: 30 }, (_, d) => innCardsWin(d));
+    assert.ok(wins.some(Boolean) && wins.some((w) => !w));
+    assert.equal(innCardsWin(11), innCardsWin(11));
+  });
+});
+
+describe("Gray's watering-can advice", () => {
+  test('the next upgrade from Basic is Copper, and the big later jump is Mystrile', () => {
+    const a = canUpgradeAdvice(0, UPGRADE, CAN_CAP)!;
+    assert.deepEqual([a.now.tiles, a.next.level, a.next.cost, a.next.ore, a.next.tiles, a.next.cap], [1, 1, 1000, 'Copper', 3, 55]);
+    assert.equal(a.big?.level, 4);
+  });
+  test('each level 0-3 points one step up; the big jump is always Mystrile when it is still ahead', () => {
+    for (const lvl of [0, 1, 2, 3]) {
+      const a = canUpgradeAdvice(lvl, UPGRADE, CAN_CAP)!;
+      assert.equal(a.next.level, lvl + 1);
+      assert.equal(a.next.cost, UPGRADE[lvl + 1][0]);
+      assert.equal(a.big?.level ?? null, lvl + 1 < 4 ? 4 : null);
+    }
+  });
+  test('Mystrile and beyond get no ore-upgrade advice', () => {
+    for (const lvl of [4, 5, 6, 7]) assert.equal(canUpgradeAdvice(lvl, UPGRADE, CAN_CAP), null);
+  });
+});
+
+describe('valley map rules (task 33)', () => {
+  const links = {
+    farm: ['town', 'woods', 'grove'], town: ['farm', 'mountain', 'beach', 'river'], mountain: ['town', 'ridge'],
+    ridge: ['mountain'], beach: ['town', 'point'], point: ['beach'], river: ['town'], woods: ['farm'], grove: ['farm'],
+  };
+  test('the next region follows the shortest walk', () => {
+    assert.equal(nextRegion(links, 'farm', 'grove'), 'grove');
+    assert.equal(nextRegion(links, 'grove', 'ridge'), 'farm');
+    assert.equal(nextRegion(links, 'woods', 'point'), 'farm');
+    assert.equal(nextRegion(links, 'town', 'ridge'), 'mountain');
+    assert.equal(nextRegion(links, 'town', 'town'), null);
+    assert.equal(nextRegion({ a: [] }, 'a', 'b'), null);
+  });
+  test('every neighbour that starts a shortest walk is offered, so callers can break ties', () => {
+    const gated = { ...links, woods: ['farm', 'beach'], beach: ['town', 'point', 'woods'] };
+    assert.deepEqual(nextRegions(gated, 'woods', 'town'), ['beach', 'farm']);
+    assert.deepEqual(nextRegions(gated, 'woods', 'point'), ['beach']);
+    assert.deepEqual(nextRegions(gated, 'town', 'woods'), ['beach', 'farm']);
+    assert.deepEqual(nextRegions(links, 'woods', 'point'), ['farm']);
+    assert.deepEqual(nextRegions(links, 'town', 'town'), []);
+    assert.deepEqual(nextRegions({ a: [] }, 'a', 'b'), []);
+  });
+  test('compass words', () => {
+    assert.equal(compassWord(-5, 0), 'west');
+    assert.equal(compassWord(4, 4), 'south-east');
+    assert.equal(compassWord(10, -1), 'east');
+    assert.equal(compassWord(0, 0), 'here');
+  });
+  test('shop status: open, before opening, after closing, closed day, festival', () => {
+    const forge: [number, number, number[]] = [10, 16, [3]];
+    assert.deepEqual(shopStatus(forge, 0, 12 * 60), { open: true, text: 'open until 4PM' });
+    assert.equal(shopStatus(forge, 0, 9 * 60).text, 'opens at 10AM today');
+    assert.equal(shopStatus(forge, 0, 16 * 60).text, 'closed for the day; opens tomorrow 10AM');
+    assert.equal(shopStatus(forge, 2, 17 * 60).text, 'closed for the day; opens Fri 10AM', 'Wednesday evening skips closed Thursday');
+    assert.equal(shopStatus(forge, 3, 12 * 60).open, false);
+    assert.equal(shopStatus(forge, 3, 12 * 60).text, 'closed today (Thu); opens tomorrow 10AM');
+    assert.deepEqual(shopStatus(forge, 0, 12 * 60, (d) => d === 0), { open: false, text: 'closed for the festival; opens tomorrow 10AM' });
+    // festival eve: tomorrow is a festival, so the forge next opens the day after
+    assert.equal(shopStatus(forge, 0, 17 * 60, (d) => d === 1).text, 'closed for the day; opens Wed 10AM');
+    // a closed Thursday before a Friday festival
+    assert.equal(shopStatus(forge, 3, 12 * 60, (d) => d === 1).text, 'closed today (Thu); opens Sat 10AM');
   });
 });
