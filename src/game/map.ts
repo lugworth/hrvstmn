@@ -381,6 +381,22 @@ export function build_ridge(): GameMap {
   return m;
 }
 
+/** Willow Bend's river: the west edge of its 5-wide channel on row y. */
+function riverX(y: number): number {
+  return 36 + Math.round(5 * Math.sin(y / 4.5));
+}
+
+/** Rows of the old footbridge below the Willow Bend road (the east-bank dock is what's left). */
+const FOOTBRIDGE_ROWS = [18, 19, 20, 21];
+
+/** The footbridge sign on the west bank, beside the water on the bridge's first row. */
+export const FOOTBRIDGE_SIGN: [number, number] = [riverX(FOOTBRIDGE_ROWS[0]) - 1, FOOTBRIDGE_ROWS[0]];
+
+/** The washed-out water cells west of the dock planks; rebuilding the footbridge turns them to 'bridge'. */
+export function footbridge_cells(): [number, number][] {
+  return FOOTBRIDGE_ROWS.flatMap((y) => [0, 1, 2, 3].map((dx): [number, number] => [riverX(y) + dx, y]));
+}
+
 /** Willow Bend: a slow river east of town with a road bridge, a fishing dock and a meadow. */
 export function build_river(): GameMap {
   const m = new GameMap('river', 'Willow Bend', 64, 26, 'grass');
@@ -392,20 +408,20 @@ export function build_river(): GameMap {
     }
   }
   m.border('tree');
-  for (let y = 1; y < m.h - 1; y++) {
-    const cx = 36 + Math.round(5 * Math.sin(y / 4.5));
-    m.rect(cx, y, 5, 1, 'water');
-  }
+  for (let y = 1; y < m.h - 1; y++) m.rect(riverX(y), y, 5, 1, 'water');
   // the road from town crosses on a bridge
   for (let x = 0; x < m.w - 6; x++) {
     for (let y = 11; y < 14; y++) m.set(x, y, m.tile(x, y) === 'water' ? 'bridge' : 'path');
   }
   // a fishing dock on the far bank
-  for (let y = 18; y < 22; y++) {
-    const cx = 36 + Math.round(5 * Math.sin(y / 4.5));
-    m.set(cx + 4, y, 'bridge');
-    m.set(cx + 5, y, 'path');
+  for (const y of FOOTBRIDGE_ROWS) {
+    m.set(riverX(y) + 4, y, 'bridge');
+    m.set(riverX(y) + 5, y, 'path');
   }
+  // the dock was once a footbridge: its western planks washed out (task 12, see footbridge_cells)
+  const [sx, sy] = FOOTBRIDGE_SIGN;
+  m.set(sx, sy, 'sign');
+  m.signs[pkey(sx, sy)] = 'footbridge';
   // The Harvest Sprites' hut, in the meadow on the far bank, just off the road.
   m.building(49, 6, 9, 4, 4, 'sprites', 'SPRITES', '0A');
   m.set(53, 10, 'path');

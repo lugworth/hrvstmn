@@ -37,7 +37,7 @@ Pick an unchecked task that fits the current assignment. Keep its number stable 
 - [ ] **09. Saturday stall in Rose Square.** Stock three goods before noon and see who stops by. Display sales and shopper comments at closing.
 - [ ] **10. Shopper preferences.** Make one customer look for pantry staples and another buy an unusual flower or preserve. Offer clues ahead of time so choosing what to stock is a decision.
 - [ ] **11. Guest vendors who become regulars.** Start with a traveling seed seller or carpenter who visits occasionally. A successful market or completed project earns a repeat spot.
-- [ ] **12. Small public works.** Help Gotz and a neighbor repair one footbridge, orchard bench, or trail shelter. Ask for materials that different farm activities supply and show the finished work on the map.
+- [x] **12. Small public works.** Help Gotz and a neighbor repair one footbridge, orchard bench, or trail shelter. Ask for materials that different farm activities supply and show the finished work on the map.
 - [ ] **13. Pick a festival role.** At an existing festival, choose to cook, help set up, or join the competition. Reuse the scene and add one distinct interaction for each role.
 - [ ] **14. Tiny regional contests.** Try a two-hour evening catch at Willow Bend or a winter forage hunt. Reward one small decoration or an entry in the journal.
 - [ ] **15. Community pantry.** Turn surplus ingredients into a recurring shared meal. A neighbor can teach one new recipe after the first successful dinner.

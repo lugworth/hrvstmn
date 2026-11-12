@@ -27,7 +27,9 @@ import {
   GRAY_COPPER_REWARD,
   GRAY_QUEST_FRIEND,
   VALLEY_LANDMARKS,
+  PUBLIC_WORKS,
 } from './constants';
+import { footbridge_cells, FOOTBRIDGE_SIGN } from './map';
 
 const store: Record<string, string> = {};
 before(() => {
@@ -758,7 +760,7 @@ describe('labeled valley map (task 33)', () => {
       g.render();
       g.draw_valley(0);
       const text = screenText(g);
-      for (const lm of VALLEY_LANDMARKS) assert.ok(text.includes(lm.glyph), `${lm.id} ${lm.glyph}`);
+      for (const lm of g.valley_landmarks()) assert.ok(text.includes(lm.glyph), `${lm.id} ${lm.glyph}`);
       assert.ok(text.includes('Forge '), 'forge status line');
       assert.ok(text.includes(w < 80 ? '<> pick  ^v region  Enter pin  Esc' : 'Left/Right landmark  Up/Down region  Enter pin  Esc close'), 'whole key hint');
       for (const row of g.scr.buf) assert.equal(row.length, w);
@@ -834,6 +836,203 @@ describe('labeled valley map (task 33)', () => {
   });
 });
 
+describe('the Willow Bend footbridge (task 12)', () => {
+  const [SX, SY] = FOOTBRIDGE_SIGN;
+  /** Walk the river's south bank (below the road) from the sign's west side; can we reach the dock path? */
+  const crosses = (g: any): boolean => {
+    const seen = new Set<string>();
+    const queue: [number, number][] = [[SX - 1, SY]];
+    while (queue.length) {
+      const [x, y] = queue.pop()!;
+      const k = `${x},${y}`;
+      if (seen.has(k) || y < 15 || !g.walkable('river', x, y)) continue;
+      seen.add(k);
+      if (g.maps.river.tile(x, y) === 'path' && x > SX + 4) return true; // the far-bank path behind the dock
+      queue.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+    }
+    return false;
+  };
+  /** Hand Gotz everything the project needs, with Turnips as the crop. */
+  const deliverAll = (g: any) => {
+    g.give('Lumber', PUBLIC_WORKS.needs.Lumber);
+    g.give('Copper', PUBLIC_WORKS.needs.Copper);
+    g.give('Turnip', PUBLIC_WORKS.crop_qty);
+    for (const i of ['Lumber', 'Copper', 'Turnip']) g.works_deliver(i);
+  };
+  const sleep = async (g: any) => {
+    const said = quiet(g);
+    await g.new_day('passout');
+    return said;
+  };
+
+  test('a washed-out crossing beside a readable sign, reachable from the west bank', async () => {
+    const g = fresh();
+    const m = g.maps.river;
+    assert.equal(m.tile(SX, SY), 'sign');
+    assert.equal(m.signs[`${SX},${SY}`], 'footbridge');
+    assert.ok(footbridge_cells().some(([x, y]) => x === SX + 1 && y === SY), 'the sign stands beside the water');
+    for (const [x, y] of footbridge_cells()) {
+      assert.equal(m.tile(x, y), 'water', `${x},${y}`);
+      assert.equal(m.tile(x + 1, y) === 'bridge' || footbridge_cells().some(([a, b]) => a === x + 1 && b === y), true, 'the dock planks are east of the gap');
+    }
+    assert.equal(crosses(g), false, 'no way across below the road yet');
+    // read it in game: stand west of the sign, face it, press X
+    g.warp('river', SX - 1, SY);
+    g.face = [1, 0];
+    const said = quiet(g);
+    await g.handle('x');
+    assert.match(said.join(' '), /washed out.*Gotz could rebuild it/);
+  });
+
+  test("Gotz's menu offers the project; partial deliveries count and only what is missing is taken", () => {
+    const g = fresh();
+    g.give('Lumber', 5);
+    assert.equal(g.works_deliver('Lumber'), 5);
+    assert.equal(g.inv['Lumber'] ?? 0, 0);
+    g.give('Lumber', 10);
+    assert.equal(g.works_deliver('Lumber'), 7, 'only the 7 still needed');
+    assert.equal(g.inv['Lumber'], 3);
+    assert.equal(g.public_works.delivered['Lumber'], 12);
+    assert.equal(g.works_deliver('Lumber'), 0, 'lumber is done');
+    g.give('Copper', 1);
+    g.works_deliver('Copper');
+    assert.equal(g.works_line(), 'Gotz needs 1 Copper, 3 of one farm crop');
+    assert.equal(g.public_works.done_day, null);
+  });
+
+  test('the crop slot takes any one farm crop you carry, then sticks to it', () => {
+    const g = fresh();
+    g.give('Turnip', 2);
+    g.give('Potato', 5);
+    g.give('Egg', 4);
+    g.give('Grass', 9);
+    const offered = g.works_offers().map(([i]: [string, number]) => i).sort();
+    assert.deepEqual(offered, ['Potato', 'Turnip'], 'crops only');
+    assert.equal(g.works_deliver('Turnip'), 2);
+    assert.equal(g.public_works.crop, 'Turnip');
+    assert.deepEqual(g.works_offers(), [], 'Potatoes no longer count');
+    assert.equal(g.works_deliver('Potato'), 0);
+    g.give('Turnip', 4);
+    assert.equal(g.works_deliver('Turnip'), 1);
+    assert.equal(g.inv['Turnip'], 3);
+  });
+
+  test('the menu shows progress and hands over what you carry', async () => {
+    const g = fresh();
+    const opts = await g.shop_options('carpenter');
+    assert.equal(opts[0][0], `Village project: ${PUBLIC_WORKS.name}`);
+    g.give('Lumber', 4);
+    g.give('Potato', 3);
+    const said = quiet(g);
+    let info: string[] = [];
+    g.menu = async (_t: string, o: string[], _s: number, i: string[]) => {
+      info = i;
+      return o.indexOf('Hand over 4 Lumber') >= 0 ? o.indexOf('Hand over 4 Lumber') : null;
+    };
+    await g.works_menu();
+    assert.match(said[0], /Basil/, 'Gotz names the neighbour who wants the bridge');
+    assert.equal(g.public_works.delivered['Lumber'], 4);
+    assert.ok(info.some((l) => l.includes('Lumber 4/12')), info.join('|'));
+    assert.ok(info.some((l) => l.includes('Still needed: 8 Lumber')), info.join('|'));
+  });
+
+  test('the last delivery starts the build; two nights later the river can be crossed', async () => {
+    const g = fresh();
+    const f0 = { Gotz: g.friend['Gotz'], Basil: g.friend['Basil'] };
+    deliverAll(g);
+    assert.equal(g.public_works.done_day, g.absday() + PUBLIC_WORKS.days);
+    assert.match(g.works_line(), /^Gotz and Basil are building the footbridge \(done Spring 3\)$/);
+    assert.ok(g.today_lines().includes('  Bridge Gotz and Basil are building the footbridge (done Spring 3)'));
+    assert.equal(g.valley_landmarks().some((l: any) => l.id === 'footbridge'), false, 'no landmark yet');
+    await sleep(g);
+    assert.equal(g.public_works.built, false, 'one night is not enough');
+    assert.equal(crosses(g), false);
+    const said = await sleep(g);
+    assert.equal(g.public_works.built, true);
+    assert.ok(said.some((t) => t.includes('finished the Willow Bend footbridge')), said.join('|'));
+    for (const [x, y] of footbridge_cells()) {
+      assert.equal(g.maps.river.tile(x, y), 'bridge');
+      assert.equal(g.walkable('river', x, y), true);
+    }
+    assert.equal(crosses(g), true, 'the west bank reaches the dock path');
+    assert.equal(g.friend['Gotz'], f0.Gotz + PUBLIC_WORKS.friend);
+    assert.equal(g.friend['Basil'], f0.Basil + PUBLIC_WORKS.friend);
+    assert.equal(g.works_line(), null);
+    assert.ok(!g.today_lines().some((l: string) => l.includes('Bridge')));
+    assert.match(g.footbridge_sign(), /^Willow Bend footbridge — Rebuilt by Gotz, Basil and Pete, Spring 3, Year 1\.$/);
+    const opts = await g.shop_options('carpenter');
+    assert.ok(!opts.some(([o]: [string]) => o.startsWith('Village project')), 'the project leaves the menu');
+  });
+
+  test('the Valley Map shows the footbridge only once it is built', () => {
+    const g = fresh();
+    const lm = VALLEY_LANDMARKS.find((l) => l.id === 'footbridge')!;
+    assert.deepEqual([lm.map, lm.x, lm.y], ['river', SX, SY], 'it stands on the sign');
+    assert.ok(!VALLEY_LANDMARKS.some((l) => l !== lm && l.glyph === lm.glyph));
+    g.map_pin = 'footbridge';
+    assert.equal(g.pin_route(), null, 'cannot route to an unbuilt bridge');
+    g.map_pin = null;
+    // before the build the map neither draws nor lists it, whichever landmark is selected
+    for (const [w, h] of [[80, 24], [50, 24]]) {
+      for (let sel = 0; sel < g.valley_landmarks().length; sel++) {
+        g.scr = new Screen(w, h);
+        g.draw_valley(sel);
+        const text = g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).join('\n');
+        assert.ok(!text.includes('≡'), `no bridge symbol at ${w}x${h}, selection ${sel}`);
+        assert.ok(!text.includes('footbridge'), `no bridge name at ${w}x${h}, selection ${sel}`);
+      }
+    }
+    g.public_works.built = true;
+    g.map_pin = 'footbridge';
+    assert.ok(g.valley_landmarks().includes(lm));
+    assert.ok(g.pin_route());
+    for (const [w, h] of [[80, 24], [50, 24]]) {
+      g.scr = new Screen(w, h);
+      g.draw_valley(g.valley_landmarks().indexOf(lm));
+      const text = g.scr.buf.map((r: any) => r.map((c: any) => c[0]).join('')).join('\n');
+      assert.ok(text.includes('≡'), `${w}x${h}`);
+      assert.ok(text.includes('Willow Bend footbridge'), `${w}x${h}`);
+    }
+  });
+
+  test('the unbuilt footbridge cannot be chosen or pinned on the Valley Map', async () => {
+    const g = fresh();
+    g.warp('river', 10, 12);
+    // step right 0..N times from the starting landmark, pin whatever is selected, close
+    for (let steps = 0; steps <= VALLEY_LANDMARKS.length; steps++) {
+      g.map_pin = null;
+      for (let i = 0; i < steps; i++) g.scr.pushKey('right');
+      g.scr.pushKey('enter');
+      g.scr.pushKey('esc');
+      await g.valley_map();
+      assert.ok(g.map_pin, 'something was pinned');
+      assert.notEqual(g.map_pin, 'footbridge', `after ${steps} steps right`);
+    }
+  });
+
+  test('progress and the built bridge survive a reload; old saves start the project fresh', () => {
+    const a = fresh();
+    a.give('Lumber', 6);
+    a.works_deliver('Lumber');
+    const b = new Game(new Screen(132, 30), true) as any;
+    b.applySaveData(JSON.parse(JSON.stringify(a.snapshot())));
+    assert.deepEqual(b.public_works, a.public_works);
+    deliverAll(a);
+    a.public_works.done_day = a.absday();
+    a.works_day();
+    a.save(2);
+    const c = new Game(new Screen(132, 30), true) as any;
+    c.load(2);
+    assert.equal(c.public_works.built, true);
+    for (const [x, y] of footbridge_cells()) assert.equal(c.maps.river.tile(x, y), 'bridge', 'tiles re-applied on load');
+    assert.ok(c.valley_landmarks().some((l: any) => l.id === 'footbridge'));
+    // an older save, loaded into the same game: the project is open again and the water is back
+    const old = JSON.parse(store['hrvstmn-save-2']);
+    delete old.public_works;
+    c.applySaveData(old);
+    assert.deepEqual(c.public_works, { delivered: {}, crop: null, done_day: null, built: false });
+    for (const [x, y] of footbridge_cells()) assert.equal(c.maps.river.tile(x, y), 'water');
+    assert.equal(c.works_line(), 'Gotz needs 12 Lumber, 2 Copper, 3 of one farm crop');
 describe('Cedar Hollow hedge gate (task 34)', () => {
   const sign = (g: any, map: string, xy: readonly number[]) => g.maps[map].signs[`${xy[0]},${xy[1]}`];
   const toBeach = (g: any) => Object.values(g.maps.woods.warps).filter((w: any) => w[0] === 'beach');
