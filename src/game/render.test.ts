@@ -211,6 +211,30 @@ describe('engine + renderer', () => {
     assert.equal(sign, 'BLACKSMITH');
   });
 
+  test('the market stall is a grey booth on a weekday and lights up on a Saturday morning (task 09)', () => {
+    const { s, g } = farm();
+    const stallCell = () => {
+      g.render();
+      const frame = computeFrame(s, 0);
+      for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) if (s.tags[y][x]?.t === 'stall') return frame[y][x];
+      throw new Error('the stall is not on screen');
+    };
+    g.warp('town', 38, 18, [0, 1]); // near the stall, facing away so it is not the highlighted target
+    g.minutes = 9 * 60;
+    g.day = 5;
+    const shut = stallCell();
+    g.day = 6;
+    const ready = stallCell();
+    g.inv = { Turnip: 2 };
+    g.stall_open([['Turnip', 2]]);
+    const open = stallCell();
+    for (const cell of [shut, ready, open]) {
+      assert.equal(cell.ch, '⌂');
+      assert.ok(cell.accent, 'a thing of interest: it keeps its colour in the grey world');
+    }
+    assert.equal(new Set([shut.fg, ready.fg, open.fg]).size, 3, 'shut, ready and trading each look different');
+  });
+
   test('villagers whose homes moved wait outside their new front doors', () => {
     const { g } = farm();
     const homes: Record<string, [string, string]> = { Gray: ['grove', 'blacksmith'], Popuri: ['woods', 'poultry'], May: ['woods', 'yodel'], Duke: ['woods', 'winery'], Mary: ['town', 'library'] };

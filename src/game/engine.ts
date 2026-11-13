@@ -85,6 +85,15 @@ import {
   TIDE_POOL_TEXT,
   INN_SCENES,
   INN_EVENING_DAY,
+  STALL_DAY,
+  STALL_STOCK_BY,
+  STALL_CLOSE,
+  STALL_SLOTS,
+  STALL_SLOT_MAX,
+  STALL_SPOT,
+  STALL_CATEGORIES,
+  STALL_MARKUP,
+  STALL_SIGN,
   INN_EVENING_HOURS,
   INN_LISTEN_FRIEND,
   INN_JOIN_FRIEND,
@@ -143,6 +152,8 @@ import {
   rollRegionCatch,
   rollStoneSkips,
   innSceneFor,
+  stallVisit,
+  type StallGood,
   innCardsWin,
   canUpgradeAdvice,
   nextRegions,
@@ -381,6 +392,11 @@ export class Game {
   /** Friday evenings at Doug's Inn: scene ids seen so far, and the absday you last attended. */
   inn_scenes_seen: string[] = [];
   inn_evening_day: number = -1;
+  /** Saturday stall (task 09): today's goods, takings and callers while it is open, else null. */
+  stall: { day: number; goods: StallGood[]; gold: number; log: string[]; seen: string[] } | null = null;
+  /** The last market day you traded on, and what you took. */
+  stall_last: [number, number] = [-1, 0];
+  stall_earned: number = 0;
 
   /** Gray's two-chapter request: 0 not asked, 1 copper wanted, 2 note left, 3 finished. */
   gray_quest: number = 0;
@@ -413,6 +429,7 @@ export class Game {
     // outer-region landmarks
     'lookout_day', 'hollow_luck_day', 'skip_best', 'lighthouse_log', 'lighthouse_day',
     'inn_scenes_seen', 'inn_evening_day',
+    'stall', 'stall_last', 'stall_earned',
     'gray_quest', 'gray_note_level',
     'map_pin', 'public_works',
     'map_pin', 'shortcuts',
@@ -531,6 +548,9 @@ export class Game {
     this.lighthouse_day = -1;
     this.inn_scenes_seen = [];
     this.inn_evening_day = -1;
+    this.stall = null;
+    this.stall_last = [-1, 0];
+    this.stall_earned = 0;
     this.gray_quest = 0;
     this.gray_note_level = 0;
     this.map_pin = null;
@@ -871,6 +891,7 @@ export class Game {
   async advance(mins: number): Promise<void> {
     const before = this.minutes;
     this.minutes += mins;
+    if (this.stall) await this.stall_tick(before);
 
     // Equipped Gem of the Goddess / Gem of the Kappa passive regeneration
     if (this.held === 'Gem of the Goddess' || this.inv['Gem of the Goddess']) {
@@ -2098,6 +2119,8 @@ export class Game {
       await this.interior_interact(tile, [tx, ty]);
     } else if (tile === 'kitchen' || tile === 'bath' || tile === 'shelf' || tile === 'vase' || tile === 'fireplace') {
       await this.use_furniture(tile);
+    } else if (tile === 'stall') {
+      await this.stall_menu();
     } else if (tile === 'sign') {
       let text = m.signs[pKey] || '';
       if (text === 'farm') {
@@ -3939,6 +3962,22 @@ export class Game {
           : `  Inn ${fmt_hour(o)}–${fmt_hour(c)}: ${this.inn_scene().title}`
       );
     }
+    if (this.weekday === STALL_DAY) {
+      const st = this.stall_state();
+      lines.push(
+        st === 'open'
+          ? `  Market: your stall is open until ${fmt_hour(STALL_CLOSE)} (${this.stall!.gold}G so far).`
+          : st === 'ready'
+            ? `  Market: stock your stall in Rose Square before ${fmt_hour(STALL_STOCK_BY)} (up to ${STALL_SLOTS} goods).`
+            : st === 'done'
+              ? `  Market: you took ${this.stall_last[1]}G at your stall today.`
+              : this.fest_on()
+                ? '  Market: no stall today, it is a festival.'
+                : '  Market: too late to set up your stall today.',
+      );
+    } else if ((this.weekday + 1) % 7 === STALL_DAY && !this.fest_on(1)) {
+      lines.push('  Tomorrow: Saturday market in Rose Square. Set aside up to three goods to sell.');
+    }
     lines.push('');
     if (this.stamina <= 30 || this.fatigue >= 80) {
       lines.push('  Rest: stamina is low. Eat, soak at the Hot Spring, or sleep early.');
@@ -4038,6 +4077,10 @@ export class Game {
     if (tile === 'bed') return { label: 'SLEEP', summary: 'Sleep' };
     if (tile === 'tv') return { label: 'WATCH', summary: 'Watch the TV' };
     if (tile === 'cal') return { label: 'CALENDAR', summary: 'Check the calendar' };
+    if (tile === 'stall') {
+      const st = this.stall_state();
+      return { label: 'STALL', summary: st === 'ready' ? 'Stock your stall' : st === 'open' ? 'Check your stall' : 'Read the market sign' };
+    }
     if (['counter', 'bookcase', 'kitchen', 'bath', 'shelf', 'vase', 'fireplace', 'sign', 'doghouse', 'stable', 'mill', 'trash', 'phone'].includes(tile)) {
       return { label: 'USE', summary: 'Use the object' };
     }
@@ -4075,6 +4118,7 @@ export class Game {
     if (tile === 'bed') return { key: 'x', label: 'SLEEP' };
     if (tile === 'tv') return { key: 'x', label: 'WATCH' };
     if (tile === 'cal') return { key: 'x', label: 'CALENDAR' };
+    if (tile === 'stall') return { key: 'x', label: 'STALL' };
     if (['counter', 'bookcase', 'kitchen', 'bath', 'shelf', 'vase', 'fireplace', 'sign', 'doghouse', 'stable', 'mill', 'trash', 'phone'].includes(tile)) {
       return { key: 'x', label: 'USE' };
     }
@@ -4232,6 +4276,166 @@ export class Game {
     this.fx_add('text', this.px, this.py, 1.1, { text: `+${request.reward}G` });
     this.requests.splice(index, 1);
     return `${request.npc} got ${request.qty} × ${request.item}! You earned ${request.reward}G and +5 friendship.`;
+  }
+
+  // ---------------------------------------------------------------- Saturday stall (mechanics task 09)
+  /** Market day: every Saturday that is not a festival. */
+  stall_day(): boolean {
+    return this.weekday === STALL_DAY && !this.fest_on();
+  }
+
+  /** shut (not today, or past noon), ready (can be stocked), open (trading) or done (packed up today). */
+  stall_state(): 'shut' | 'ready' | 'open' | 'done' {
+    if (this.stall) return 'open';
+    if (!this.stall_day()) return 'shut';
+    if (this.stall_last[0] === this.absday()) return 'done';
+    return this.minutes < STALL_STOCK_BY * 60 ? 'ready' : 'shut';
+  }
+
+  /** Goods in the rucksack that can go on the stall: produce and food with a shipping price. */
+  stall_pool(): string[] {
+    return py_sorted(Object.keys(this.inv).filter((i) => (this.inv[i] || 0) > 0 && ITEMS[i] && ITEMS[i][0] > 0 && STALL_CATEGORIES.includes(ITEMS[i][2])));
+  }
+
+  /** Put the chosen goods out (up to three kinds, five of each) and open for the day. */
+  stall_open(picks: [string, number][]): boolean {
+    if (this.stall_state() !== 'ready') return false;
+    const goods: StallGood[] = [];
+    const pool = this.stall_pool();
+    for (const [item, n] of picks) {
+      if (goods.length >= STALL_SLOTS || !pool.includes(item) || goods.some((g) => g.item === item)) continue;
+      const qty = Math.min(n, STALL_SLOT_MAX, this.inv[item] || 0);
+      if (qty <= 0) continue;
+      this.take(item, qty);
+      goods.push({ item, qty, sold: 0 });
+    }
+    if (!goods.length) return false;
+    this.stall = { day: this.absday(), goods, gold: 0, log: [], seen: [] };
+    this.msg(`Your stall is open with ${goods.length} good${goods.length > 1 ? 's' : ''}. Shoppers come by on the hour until ${fmt_hour(STALL_CLOSE)}.`, '0B');
+    return true;
+  }
+
+  /** One villager stops at the stall (each comes by once a market; a wet square is a quiet one). */
+  stall_shopper(): void {
+    const st = this.stall;
+    if (!st) return;
+    const rng = py_rng();
+    if (this.weather !== 'Sunny' && rng.random() < 0.5) return;
+    const crowd = py_sorted(Object.keys(NPCS).filter((n) => NPCS[n].out && NPCS[n].where?.[0] !== 'mountain' && n !== this.married && !st.seen.includes(n)));
+    if (!crowd.length) return;
+    const who: string = rng.choice(crowd);
+    st.seen.push(who);
+    const visit = stallVisit(st.goods, NPCS[who], (item) => ITEMS[item]?.[0] || 0, STALL_MARKUP, rng.random());
+    if (visit.kind === 'pass') {
+      if (visit.reason !== 'empty') st.log.push(visit.reason === 'hate' ? `${who} looked your goods over and walked on.` : `${who} browsed a while, then kept walking.`);
+      return;
+    }
+    const good = st.goods[visit.index];
+    good.sold += visit.qty;
+    st.gold += visit.gold;
+    if (visit.pref === 'love') this.friend[who] = clamp((this.friend[who] || 0) + 2, 0, 100);
+    st.log.push(
+      visit.pref === 'love'
+        ? `${who}: "${good.item}! My favourite. I'll take ${visit.qty === 2 ? 'two' : 'it'}."`
+        : visit.pref === 'like'
+          ? `${who}: "That ${good.item} looks good. One, please."`
+          : `${who}: "I'll take a ${good.item}."`,
+    );
+    this.msg(`Market: ${who} bought ${visit.qty} ${good.item} (+${visit.gold}G).`, '09');
+    if (this.mapname === 'town') this.fx_add('coin', STALL_SPOT[0], STALL_SPOT[1], 0.8);
+  }
+
+  /** Shoppers come by on the hour while the stall is open; at closing time it pays out and reports. */
+  async stall_tick(before: number): Promise<void> {
+    for (let h = Math.floor(before / 60) + 1; h <= Math.floor(this.minutes / 60) && this.stall; h++) {
+      if (h >= STALL_CLOSE) {
+        await this.show_lines('Saturday Stall — Closing Time', this.stall_close());
+        return;
+      }
+      this.stall_shopper();
+    }
+  }
+
+  /** Close the stall: bank the takings, take unsold goods back, and return the closing report. */
+  stall_close(): string[] {
+    const st = this.stall;
+    if (!st) return [];
+    const lines: string[] = [];
+    let sold = 0;
+    let unsold = 0;
+    for (const g of st.goods) {
+      sold += g.sold;
+      unsold += g.qty - g.sold;
+      lines.push(`  ${g.item}: sold ${g.sold} of ${g.qty}`);
+      if (g.qty > g.sold) this.give(g.item, g.qty - g.sold);
+    }
+    this.gold += st.gold;
+    this.stall_earned += st.gold;
+    this.stall_last = [st.day, st.gold];
+    this.stall = null;
+    lines.push('', `  Takings: ${st.gold}G`);
+    if (st.log.length) lines.push('', ...st.log.slice(-6).map((l) => `  ${l}`));
+    if (unsold) lines.push('', '  Unsold goods are back in your rucksack.');
+    this.msg(`Market closed: ${sold} sold, +${st.gold}G.`, '09');
+    return lines;
+  }
+
+  async stall_menu(): Promise<void> {
+    const state = this.stall_state();
+    if (state === 'open') {
+      const st = this.stall!;
+      await this.show_lines('Your Stall', [
+        ...st.goods.map((g) => `  ${g.item}: sold ${g.sold} of ${g.qty}`),
+        '',
+        `  Takings so far: ${st.gold}G. Closing at ${fmt_hour(STALL_CLOSE)}.`,
+        ...(st.log.length ? ['', ...st.log.slice(-5).map((l) => `  ${l}`)] : []),
+      ]);
+      if (await this.confirm('Pack up the stall now?')) await this.show_lines('Saturday Stall — Closing Time', this.stall_close());
+      return;
+    }
+    if (state === 'done') {
+      await this.say(`You have packed up for today, with ${this.stall_last[1]}G in takings. See you next Saturday.`, 'Market Stall');
+      return;
+    }
+    if (state === 'shut') {
+      const why = this.weekday !== STALL_DAY ? '' : this.fest_on() ? ' No market today: it is a festival.' : ' It is past noon: too late to set up today.';
+      await this.say(STALL_SIGN + why, 'Market Stall');
+      return;
+    }
+    if (!this.stall_pool().length) {
+      await this.say('Market day! You have nothing to put out, though. Bring crops, forage, fish, animal goods or cooked food before noon.', 'Market Stall');
+      return;
+    }
+    const picks: [string, number][] = [];
+    while (true) {
+      const pool = this.stall_pool().filter((i) => !picks.some(([p]) => p === i));
+      const opts = [
+        ...picks.map(([i, n]) => `Take back: ${i} x${n}`),
+        ...(picks.length < STALL_SLOTS && pool.length ? ['Put out a good...'] : []),
+        ...(picks.length ? ['Open the stall'] : []),
+        'Leave it for now',
+      ];
+      const sel = await this.menu(`Your Stall: ${picks.length}/${STALL_SLOTS} goods`, opts, Math.min(picks.length, opts.length - 1), [
+        'Shoppers pay a little over the shipping price,',
+        `more for things they love. Up to ${STALL_SLOT_MAX} of each.`,
+      ]);
+      if (sel === null || opts[sel] === 'Leave it for now') return;
+      if (opts[sel] === 'Open the stall') {
+        this.stall_open(picks);
+        return;
+      }
+      if (sel < picks.length) {
+        picks.splice(sel, 1);
+        continue;
+      }
+      const isel = await this.menu('Put out which good?', pool.map((i) => `${i} x${this.inv[i]}  (ships for ${ITEMS[i][0]}G)`));
+      if (isel === null) continue;
+      const item = pool[isel];
+      const max = Math.min(STALL_SLOT_MAX, this.inv[item]);
+      const qsel = max > 1 ? await this.menu(`How many ${item}?`, Array.from({ length: max }, (_, k) => String(k + 1)), max - 1) : 0;
+      if (qsel === null) continue;
+      picks.push([item, qsel + 1]);
+    }
   }
 
   async request_menu(): Promise<void> {
@@ -5011,6 +5215,8 @@ export class Game {
     }
     this.zack_paid_today = false;
     this.honey_picked = false;
+    // Turned in before closing time: the stall packs up with whatever it sold.
+    if (this.stall) report.push('You packed up your stall early.', ...this.stall_close().map((l) => l.trim()).filter(Boolean));
 
     // Advance crops that were watered yesterday
     for (const [pKey, c] of Object.entries(this.crops)) {
@@ -5389,6 +5595,11 @@ export class Game {
   glyph(m: GameMap, x: number, y: number, t: string): [string, string, string, boolean] {
     const pKey = pkey(x, y);
     const name = m.name;
+    if (t === 'stall') {
+      // grey when shut, orange while it can be stocked, green while it is trading
+      const st = this.stall_state();
+      return [TILES.stall[0], st === 'open' ? '0B' : st === 'ready' ? '09' : '03', TILES.stall[2], st === 'open' || st === 'ready'];
+    }
     const obj = this.objs[name]?.[pKey];
     if (obj && OBJ_GLYPH[obj]) {
       let [ch, fg] = OBJ_GLYPH[obj];

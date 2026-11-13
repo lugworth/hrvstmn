@@ -603,3 +603,35 @@ export function worksSummary(rows: { item: string | null; got: number; need: num
     .map((r) => (missingOnly ? `${r.need - r.got} ${r.item ?? 'of one farm crop'}` : `${r.item ?? 'One farm crop'} ${r.got}/${r.need}`))
     .join(', ');
 }
+
+// ---------------------------------------------------------------- Saturday stall (mechanics task 09)
+export type StallGood = { item: string; qty: number; sold: number };
+export type StallTastes = { loves: string[]; likes: string[]; hates: string[] };
+export type StallVisit =
+  | { kind: 'sale'; index: number; qty: number; gold: number; pref: 'love' | 'like' | 'neutral' }
+  | { kind: 'pass'; reason: 'empty' | 'hate' | 'browse' };
+
+/**
+ * One shopper at the stall. They go for the good they like best that is still in stock: two of
+ * something they love, one of something they like. Plain goods sell about six times in ten
+ * (`roll` below 0.6), and nobody buys what they hate. `price` is the item's shipping price.
+ */
+export function stallVisit(
+  goods: StallGood[],
+  tastes: StallTastes,
+  price: (item: string) => number,
+  markup: Record<'love' | 'like' | 'neutral', number>,
+  roll: number,
+): StallVisit {
+  const left = goods.map((g, index) => ({ g, index })).filter(({ g }) => g.qty - g.sold > 0);
+  if (!left.length) return { kind: 'pass', reason: 'empty' };
+  const rank = (item: string) => (tastes.loves.includes(item) ? 3 : tastes.likes.includes(item) ? 2 : tastes.hates.includes(item) ? 0 : 1);
+  let best = left[0];
+  for (const c of left) if (rank(c.g.item) > rank(best.g.item)) best = c;
+  const r = rank(best.g.item);
+  if (r === 0) return { kind: 'pass', reason: 'hate' };
+  if (r === 1 && roll >= 0.6) return { kind: 'pass', reason: 'browse' };
+  const pref = r === 3 ? 'love' : r === 2 ? 'like' : 'neutral';
+  const qty = Math.min(best.g.qty - best.g.sold, pref === 'love' ? 2 : 1);
+  return { kind: 'sale', index: best.index, qty, gold: Math.round(price(best.g.item) * markup[pref]) * qty, pref };
+}

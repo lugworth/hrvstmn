@@ -6,6 +6,8 @@ import { Game } from './engine';
 import { HEDGE_GATE } from './map';
 import {
   ITEMS,
+  NPCS,
+  STALL_SPOT,
   FORAGE,
   FORAGE_GLYPH,
   PALETTE,
@@ -1206,6 +1208,143 @@ describe('Cedar Hollow hedge gate (task 34)', () => {
     for (const line of ['An old field gate in the hedge.', 'Its latch is on this side, stiff with salt.', 'Beyond it, the woods.']) {
       assert.ok(shown.includes(line), `whole line: ${line}`);
     }
+  });
+});
+
+describe('Saturday stall in Rose Square (task 09)', () => {
+  /** A fresh game on the first Saturday morning, standing at the stall with goods to sell. */
+  const saturday = () => {
+    const g = fresh();
+    g.day = 6;
+    g.minutes = 9 * 60;
+    g.weather = 'Sunny';
+    g.inv = { Turnip: 8, Egg: 3, 'Small Fish': 2, 'Turnip Seeds': 4 };
+    g.warp('town', STALL_SPOT[0], STALL_SPOT[1] + 1, [0, -1]);
+    return g;
+  };
+  /** Run fn with every random roll at zero: the first villager in the crowd comes, and plain goods sell. */
+  const steady = async (fn: () => Promise<void>) => {
+    const real = Math.random;
+    Math.random = () => 0;
+    try {
+      await fn();
+    } finally {
+      Math.random = real;
+    }
+  };
+
+  test('the stall stands in Rose Square and can be stocked only on a Saturday morning', () => {
+    const g = saturday();
+    assert.equal(g.weekday, 5, 'Spring 6 is a Saturday');
+    assert.equal(g.maps.town.tile(STALL_SPOT[0], STALL_SPOT[1]), 'stall');
+    assert.equal(g.walkable('town', STALL_SPOT[0], STALL_SPOT[1]), false);
+    for (const x of [35, 36, 37]) assert.equal(g.maps.town.tile(x, STALL_SPOT[1]), 'path', 'the road to the beach stays clear');
+    assert.deepEqual(g.context_action(), { key: 'x', label: 'STALL' });
+    assert.equal(g.stall_state(), 'ready');
+    g.minutes = 12 * 60;
+    assert.equal(g.stall_state(), 'shut', 'too late after noon');
+    g.minutes = 9 * 60;
+    g.day = 5;
+    assert.equal(g.stall_state(), 'shut', 'not on a Friday');
+    g.day = 6;
+    g.fest_on = () => ['Spring Fair', 10, 18, ''];
+    assert.equal(g.stall_state(), 'shut', 'no market on a festival day');
+  });
+
+  test('up to three kinds of produce or food go out, five of each at most', () => {
+    const g = saturday();
+    assert.deepEqual(g.stall_pool(), ['Egg', 'Small Fish', 'Turnip'], 'seed bags are not market goods');
+    g.inv.Potato = 2;
+    assert.equal(g.stall_open([['Turnip Seeds', 2]]), false, 'nothing sellable was picked');
+    assert.equal(g.stall_open([['Turnip', 9], ['Egg', 2], ['Small Fish', 2], ['Potato', 2]]), true);
+    assert.deepEqual(g.stall.goods, [
+      { item: 'Turnip', qty: 5, sold: 0 },
+      { item: 'Egg', qty: 2, sold: 0 },
+      { item: 'Small Fish', qty: 2, sold: 0 },
+    ]);
+    assert.deepEqual([g.inv.Turnip, g.inv.Egg, g.inv['Small Fish'], g.inv.Potato], [3, 1, undefined, 2], 'the goods left the rucksack');
+    assert.equal(g.stall_state(), 'open');
+    assert.equal(g.stall_open([['Potato', 1]]), false, 'one stall a day');
+  });
+
+  test('shoppers come by on the hour, and at 5 PM the stall pays out and reports', async () => {
+    const g = saturday();
+    const gold = g.gold;
+    g.stall_open([['Turnip', 5], ['Egg', 3], ['Small Fish', 2]]);
+    await steady(async () => {
+      await g.advance(30);
+      assert.equal(g.stall.seen.length, 0, 'nobody before the hour');
+      await g.advance(30);
+      assert.equal(g.stall.seen.length, 1, 'one caller at 10 AM');
+      await g.advance(6 * 60); // through 4 PM
+      assert.equal(g.stall.seen.length, 7);
+      assert.equal(new Set(g.stall.seen).size, 7, 'each villager comes by once');
+    });
+    const sold = g.stall.goods.reduce((n: number, x: any) => n + x.sold, 0);
+    const shipValue = g.stall.goods.reduce((n: number, x: any) => n + x.sold * ITEMS[x.item][0], 0);
+    const takings = g.stall.gold;
+    assert.ok(sold >= 1 && takings > shipValue, `the stall pays over the shipping price (${takings}G for ${shipValue}G of goods)`);
+    assert.equal(g.gold, gold, 'takings are banked at closing');
+    assert.match(g.today_lines().join('\n'), /Market: your stall is open until 5 ?PM/i);
+    for (let i = 0; i < 4; i++) g.scr.pushKey('enter');
+    await g.advance(60); // 5 PM
+    assert.equal(g.stall, null);
+    assert.equal(g.gold, gold + takings);
+    assert.deepEqual(g.stall_last, [g.absday(), takings]);
+    assert.equal(g.stall_earned, takings);
+    assert.equal(g.stall_state(), 'done');
+    const back = (g.inv.Turnip || 0) + (g.inv.Egg || 0) + (g.inv['Small Fish'] || 0);
+    assert.equal(back, 8 + 3 + 2 - sold, 'unsold goods are back in the rucksack');
+    assert.match(g.today_lines().join('\n'), new RegExp(`Market: you took ${takings}G`));
+  });
+
+  test('a villager who loves a good pays most for it and warms to you', async () => {
+    const g = saturday();
+    const fan = Object.keys(NPCS).sort().find((n) => NPCS[n].out && NPCS[n].where?.[0] !== 'mountain')!;
+    const loved = NPCS[fan].loves.find((i: string) => ITEMS[i] && ITEMS[i][0] > 0 && ['crop', 'forage', 'fish', 'animal', 'food', 'dish'].includes(ITEMS[i][2]));
+    assert.ok(loved, `${fan} loves something a stall can carry`);
+    g.inv = { [loved]: 3 };
+    g.friend[fan] = 10;
+    g.stall_open([[loved, 3]]);
+    await steady(async () => g.advance(60));
+    assert.deepEqual(g.stall.seen, [fan]);
+    assert.equal(g.stall.goods[0].sold, 2);
+    assert.equal(g.stall.gold, Math.round(ITEMS[loved][0] * 1.5) * 2);
+    assert.equal(g.friend[fan], 12);
+    assert.match(g.stall.log[0], /My favourite/);
+  });
+
+  test('stocking the stall through its menu, then packing up early from it', async () => {
+    const g = saturday();
+    for (const k of ['enter', 'enter', 'enter', 'down', 'enter']) g.scr.pushKey(k); // put out a good > first good > how many > open
+    await g.interact();
+    assert.equal(g.stall_state(), 'open');
+    assert.equal(g.stall.goods.length, 1);
+    assert.deepEqual(g.stall.goods[0], { item: 'Egg', qty: 3, sold: 0 });
+    for (const k of ['enter', 'enter', 'enter', 'enter']) g.scr.pushKey(k); // status page > yes, pack up > report
+    await g.interact();
+    assert.equal(g.stall, null);
+    assert.equal(g.inv.Egg, 3, 'nothing sold yet, so it all came back');
+    assert.equal(g.stall_state(), 'done');
+  });
+
+  test('an open stall survives a save, and turning in early packs it up', async () => {
+    const g = saturday();
+    g.stall_open([['Turnip', 4]]);
+    await steady(async () => g.advance(60));
+    g.save(2);
+    const b = new Game(new Screen(132, 30), true) as any;
+    b.load(2);
+    assert.deepEqual(b.stall, g.stall);
+    assert.equal(b.stall_state(), 'open');
+    const gold = b.gold;
+    const takings = b.stall.gold;
+    const left = b.stall.goods[0].qty - b.stall.goods[0].sold;
+    for (let i = 0; i < 12; i++) b.scr.pushKey('enter');
+    await b.new_day('sleep');
+    assert.equal(b.stall, null);
+    assert.equal(b.gold, gold + takings);
+    assert.equal(b.inv.Turnip || 0, 4 + left, 'the four still in the rucksack, plus what did not sell');
   });
 });
 

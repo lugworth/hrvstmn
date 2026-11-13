@@ -2584,6 +2584,7 @@ Object.assign(TILES, {
   "fireplace": ["^", "08", "01", false],
   "phone": ["P", "0C", "01", false],
   "trash": ["U", "03", "01", false],
+  "stall": ["⌂", "03", "01", false],
   "maker": ["M", "0C", "01", false],
   "incub": ["O", "09", "01", false],
 });
@@ -3464,3 +3465,19 @@ export const PUBLIC_WORKS = {
   friend: 5,
   helpers: ['Gotz', 'Basil'],
 };
+
+// ---------------------------------------------------------------- Saturday stall (mechanics task 09)
+export const STALL_DAY = 5; // WEEKDAYS index: Sat
+/** Stock the stall before noon; shoppers come by on the hour until it closes. */
+export const STALL_STOCK_BY = 12;
+export const STALL_CLOSE = 17;
+export const STALL_SLOTS = 3;
+export const STALL_SLOT_MAX = 5;
+/** Where the stall stands: the east side of Rose Square, clear of the road to the beach. */
+export const STALL_SPOT: [number, number] = [40, 16];
+/** What a market stall can carry: produce and food, by ITEMS category. */
+export const STALL_CATEGORIES = ['crop', 'forage', 'fish', 'animal', 'food', 'dish'];
+/** What shoppers pay over the shipping price, by how much they like the good. */
+export const STALL_MARKUP = { love: 1.5, like: 1.25, neutral: 1.1 } as const;
+export const STALL_SIGN =
+  'Saturday Market — On Saturdays this stall is yours. Put out up to three goods before noon; folk stop by on the hour until 5 PM and pay a little over the shipping price, more for the things they love.';
