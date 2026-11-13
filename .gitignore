@@ -3,6 +3,7 @@ __pycache__/
 .claude/worktrees/
 node_modules/
 .next/
+.next-dev/
 next-env.d.ts
 *.tsbuildinfo
 .env*
