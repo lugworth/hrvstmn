@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { ITEMS } from './constants';
 import {
+  stallVisit,
   innSceneFor,
   innCardsWin,
   canUpgradeAdvice,
@@ -330,5 +331,42 @@ describe('valley map rules (task 33)', () => {
     assert.deepEqual(rows.map((r) => r.got), [12, 1, 3]);
     assert.equal(worksSummary(rows), 'Lumber 12/12, Copper 1/2, Turnip 3/3');
     assert.equal(worksSummary(rows, true), '1 Copper');
+  });
+});
+
+describe('Saturday stall shoppers (task 09)', () => {
+  const price = (item: string) => ({ Turnip: 60, Egg: 50, 'Small Fish': 50 })[item] ?? 0;
+  const markup = { love: 1.5, like: 1.25, neutral: 1.1 };
+  const tastes = { loves: ['Egg'], likes: ['Turnip'], hates: ['Small Fish'] };
+  const stock = () => [
+    { item: 'Small Fish', qty: 2, sold: 0 },
+    { item: 'Turnip', qty: 3, sold: 0 },
+    { item: 'Egg', qty: 3, sold: 0 },
+  ];
+
+  test('a shopper takes two of what they love, at the best price', () => {
+    assert.deepEqual(stallVisit(stock(), tastes, price, markup, 0.99), { kind: 'sale', index: 2, qty: 2, gold: 150, pref: 'love' });
+    const oneLeft = stock();
+    oneLeft[2].sold = 2;
+    assert.deepEqual(stallVisit(oneLeft, tastes, price, markup, 0.99), { kind: 'sale', index: 2, qty: 1, gold: 75, pref: 'love' });
+  });
+
+  test('with their favourite gone they settle for one of something they like', () => {
+    const goods = stock();
+    goods[2].sold = 3;
+    assert.deepEqual(stallVisit(goods, tastes, price, markup, 0.99), { kind: 'sale', index: 1, qty: 1, gold: 75, pref: 'like' });
+  });
+
+  test('plain goods sell about six times in ten, a little over the shipping price', () => {
+    const plain = { loves: [], likes: [], hates: [] };
+    assert.deepEqual(stallVisit(stock(), plain, price, markup, 0.59), { kind: 'sale', index: 0, qty: 1, gold: 55, pref: 'neutral' });
+    assert.deepEqual(stallVisit(stock(), plain, price, markup, 0.6), { kind: 'pass', reason: 'browse' });
+  });
+
+  test('nobody buys what they hate, and a bare stall sells nothing', () => {
+    const onlyFish = [{ item: 'Small Fish', qty: 2, sold: 0 }];
+    assert.deepEqual(stallVisit(onlyFish, tastes, price, markup, 0), { kind: 'pass', reason: 'hate' });
+    assert.deepEqual(stallVisit([{ item: 'Egg', qty: 2, sold: 2 }], tastes, price, markup, 0), { kind: 'pass', reason: 'empty' });
+    assert.deepEqual(stallVisit([], tastes, price, markup, 0), { kind: 'pass', reason: 'empty' });
   });
 });

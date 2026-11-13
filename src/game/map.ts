@@ -1,4 +1,4 @@
-import { TILES, INTERIOR_LAYOUTS, INTERIOR_LEGEND, BUILDINGS, pkey } from './constants';
+import { TILES, INTERIOR_LAYOUTS, INTERIOR_LEGEND, BUILDINGS, STALL_SPOT, pkey } from './constants';
 import prebuiltMaps from './prebuilt_maps.json';
 import { py_rng } from './runtime_helpers';
 
@@ -225,6 +225,8 @@ export function build_town(): GameMap {
   m.signs[pkey(30, 15)] = 'Rose Square — Drop litter in the Trash Can (U) north of the plaza!';
   m.set(42, 10, 'sign');
   m.signs[pkey(42, 10)] = 'request_board';
+  // The player's Saturday market stall, on the east side of the square.
+  m.set(STALL_SPOT[0], STALL_SPOT[1], 'stall');
   // Add South path & bridge across the river to Mineral Beach (warp only at the south border y=31!)
   m.rect(35, 21, 3, 7, 'path');
   m.rect(35, 28, 3, 2, 'bridge');
